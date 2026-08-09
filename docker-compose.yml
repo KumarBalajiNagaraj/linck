@@ -1,0 +1,28 @@
+# Postgres 16 for parity with the deployment target.
+#
+# A local Homebrew Postgres 14 is fine for day-to-day work — everything Phase 1
+# uses (RLS, FORCE RLS, generated columns, gen_random_uuid, gist exclusion)
+# exists in 14. Phase 2 does not: the joint-costing and ledger work leans on
+# 15's MERGE and 16's logical-replication and partition improvements, so CI and
+# staging run 16 and local development should too before that lands.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: linck-db
+    environment:
+      POSTGRES_DB: linck_dev
+      POSTGRES_PASSWORD: linck
+      POSTGRES_USER: linck
+    ports:
+      - '5433:5432'
+    volumes:
+      - linck-pgdata:/var/lib/postgresql/data
+      - ./apps/api/scripts/init-roles.sql:/docker-entrypoint-initdb.d/10-init-roles.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U linck -d linck_dev']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  linck-pgdata:

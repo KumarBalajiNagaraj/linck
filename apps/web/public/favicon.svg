@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Linck">
+  <title>Linck</title>
+  <!--
+    The Linck mark, adapted for a favicon.
+
+    In the app (see Mark() in src/shell/AppShell.tsx) this is a hairline outline
+    - a 1.5px rule on a 20px square, in keeping with a design system whose whole
+    thesis is restraint. At 16x16 that stroke lands at roughly 1.2 device pixels
+    and turns to grey mush in a browser tab.
+
+    So the favicon is the FILLED variant of the same glyph: same rounded square,
+    same L, weights re-cut for the size. Same mark, different optical size - the
+    ordinary reason a wordmark and a favicon are not the same file.
+
+    Colours are literal because a favicon renders outside the document, where a
+    CSS custom property resolves to nothing. They are the token values from
+    packages/tokens/src/tokens.css:
+
+      brand   #1f5c57 light   #74b6ab dark
+      surface #fbf9f4 light   #1c1b17 dark
+
+    If those tokens change, change them here too. Nothing links the two files.
+
+    NOTE for future edits: this is XML, so a comment may never contain two
+    consecutive hyphens. Writing a CSS custom property with its leading dashes
+    in here makes the whole file fail to parse, and a browser drops an invalid
+    favicon silently - the tab just keeps the default globe.
+  -->
+  <style>
+    .plate { fill: #1f5c57; }
+    .glyph { stroke: #fbf9f4; }
+    /* Honoured by Firefox and Safari; Chrome ignores it and keeps the light
+       plate, which still reads on a dark tab strip. */
+    @media (prefers-color-scheme: dark) {
+      .plate { fill: #74b6ab; }
+      .glyph { stroke: #1c1b17; }
+    }
+  </style>
+  <rect class="plate" x="1" y="1" width="30" height="30" rx="5" />
+  <path class="glyph" d="M11.5 8.5 V22.5 H21.5" fill="none" stroke-width="3.25" stroke-linecap="square" stroke-linejoin="miter" />
+</svg>

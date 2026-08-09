@@ -1,0 +1,25 @@
+{
+  "name": "linck",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Linck — AI-native ERP for heavy machinery, quarry and fleet operations",
+  "packageManager": "pnpm@10.19.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @linck/web dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.6",
+    "typescript": "^5.9.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

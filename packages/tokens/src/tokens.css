@@ -1,0 +1,247 @@
+/* =========================================================================
+   LINCK DESIGN SYSTEM — "Quiet Paper — Ink on Warm Stock"
+   Warm paper, ink, hairlines. Colour is a budget, not a palette.
+
+   LAW 1  Nothing here is below 4.5:1 for text or 3:1 for a meaningful line,
+          on ANY surface it is allowed to sit on.
+   LAW 2  Status is never carried by hue. Every state = glyph + word +
+          rail pattern + fill weight. Hue is the fourth channel.
+   LAW 3  Dashed or hatched = asserted but not yet true. Everywhere.
+   LAW 4  --brand means "you are here / this is pressable". Never a status.
+
+   Ratios below are computed, not estimated.
+   ========================================================================= */
+
+:root {
+  color-scheme: light;
+
+  /* ---- SURFACES -------------------------------------------------------
+     Light mode inverts the usual ladder: BASE IS DARKER THAN SURFACE, so a
+     table panel reads as a sheet laid on a desk with zero shadow. This is
+     the whole trick of the direction. Do not "fix" it.                    */
+  --surface-base: #f2efe7;      /* app bg, nav rail, board gutter */
+  --surface: #fbf9f4;           /* THE reading surface: tables, cards, panels */
+  --surface-raised: #fffefa;    /* popover, dropdown, cmdk, side sheet, modal */
+  --surface-sunken: #ede9df;    /* totals footer, disabled input, audit block */
+  --surface-selected: #eaefed;  /* row hover + selection, active nav */
+  --surface-overlay: rgb(27 26 23 / 0.12); /* scrim — no backdrop-filter, ever */
+
+  /* ---- TEXT ------------------------------------------------------------ */
+  --text-primary: #1b1a17;      /* 16.54 surface / 15.14 base / 17.24 raised */
+  --text-secondary: #56514a;    /*  7.47 / 6.84 / 7.79 */
+  --text-tertiary: #6e695e;     /*  5.19 / 4.75 / 5.41 — AA everywhere; the floor */
+  --text-inverse: #fbf9f4;      /*  7.32 on brand, 6.47 on critical */
+
+  /* ---- BORDERS ---------------------------------------------------------
+     Every border is 1px. Weight is expressed by COLOUR, never thickness.   */
+  --border-subtle: #e6e1d6;     /* 1.24:1 — row separators. Texture, not grid */
+  --border-default: #d8d2c4;    /* 1.43:1 — THE FIVE-LINE RULE: tr:nth-child(5n) */
+  --border-strong: #c9c2b2;     /* 1.69:1 — inputs, sticky edges, pinned columns */
+
+  /* ---- BRAND — "you are here", never a status -------------------------- */
+  --brand: #1f5c57;             /* 7.32:1 — deep fjord petrol */
+  --brand-strong: #164843;      /* 9.77:1 — hover/pressed */
+  --brand-tint: #e3edea;        /* brand on it 6.44:1 */
+  --focus-ring: #1f5c57;        /* = brand. 2px solid, 1px offset. Never a glow */
+
+  /* ---- STATUS ----------------------------------------------------------
+     SEVEN families. Each ships FOUR redundant channels; hue is the fourth.
+     Channel 1 GLYPH · Channel 2 WORD · Channel 3 RAIL PATTERN · Channel 4 HUE */
+
+  /* READY — settled & good. ● filled circle · solid rail · tinted fill */
+  --status-ready: #3f6b44;      /* 5.87:1 */
+  --status-ready-tint: #e7efe4; /* fg on tint 5.26:1 */
+
+  /* ACTIVE — in motion, healthy. ▶ triangle · solid rail · tinted fill
+     Deliberately a BLUE, not the petrol brand: an in-motion status must
+     never be mistaken for a control. */
+  --status-active: #1c5b8c;     /* 6.82:1 */
+  --status-active-tint: #e2ecf6;/* fg on tint 6.01:1 */
+
+  /* ATTENTION — a human should act soon. ◐ half circle · dotted rail */
+  --status-attention: #8a5a11;  /* 5.62:1 */
+  --status-attention-tint: #f4eada; /* fg on tint 4.96:1 */
+
+  /* PLANNED — deliberate, scheduled, not a problem. ▣ · 45° hatched rail */
+  --status-planned: #44505c;    /* 7.83:1 */
+  --status-planned-tint: #e9eaec; /* fg on tint 6.85:1 */
+
+  /* CRITICAL — blocking or failed. ▲ · solid 5px rail (the only double-width
+     rail in the product) · ALWAYS carries an integer: "Overdue +14d" */
+  --status-critical: #9e3a24;   /* 6.47:1 — rust, not fire-engine */
+  --status-critical-tint: #f6e5e0; /* fg on tint 5.58:1 */
+
+  /* PENDING — in flight, ball in someone else's court. ◆ · dotted rail ·
+     FILL NONE. Normal progress consumes ZERO colour budget. Load-bearing. */
+  --status-pending: #56514a;    /* = text-secondary, 7.47:1 */
+
+  /* DORMANT — the absence of state. ▨ · 1px hollow rail · row carries hatch */
+  --status-dormant: #6e695e;    /* = text-tertiary, 5.19:1 */
+  --status-dormant-tint: #edeae2; /* fg on tint 4.54:1 — at the floor */
+
+  /* ---- PROVISIONAL / AI ------------------------------------------------
+     ONE texture for the whole epistemic class. Achromatic BY CONSTRUCTION
+     so it can never collide with a status hue; hatched rather than washed
+     so it survives greyscale printing and a sunlit phone in a quarry.     */
+  --hatch: rgb(27 26 23 / 0.055);
+  --hatch-pattern: repeating-linear-gradient(45deg, transparent 0 5px, var(--hatch) 5px 7px);
+  --provisional-rule: #8f887b;  /* 3.34:1 — clears the 3:1 non-text minimum */
+  --confidence-fill: #8f887b;   /* 3-segment discrete meter. NEVER R/A/G */
+
+  /* ---- CHARTS — monochrome by rule -------------------------------------
+     Single-hue ordinal ramp from --brand, so a series can never be mistaken
+     for a status. Emphasis = weight or a direct label, never a second hue. */
+  --chart-1: #1f5c57;
+  --chart-2: #3d7e77;
+  --chart-3: #61a099;
+  --chart-4: #8cc0ba;
+  --chart-5: #bcdcd8;
+  --chart-datum: #c9c2b2;
+
+  /* ---- ELEVATION -------------------------------------------------------
+     THE DISMISSIBILITY RULE: if you cannot close it with Escape, it does
+     not get a shadow. Tables, cards, KPI tiles, sticky headers and the nav
+     rail get --e0, permanently.                                           */
+  --e0: none;
+  --e1: 0 1px 2px -1px rgb(27 26 23 / 0.06), 0 2px 8px -4px rgb(27 26 23 / 0.05);
+  --e2: 0 2px 4px -2px rgb(27 26 23 / 0.07), 0 12px 28px -12px rgb(27 26 23 / 0.12);
+  --e3: -24px 0 48px -24px rgb(27 26 23 / 0.1);
+  --highlight-top: none;
+
+  /* ---- GEOMETRY --------------------------------------------------------
+     12px and 16px are rejected outright; this overrides shadcn's 0.5rem.  */
+  --r-0: 0px;      /* table cells, matrix cells, rails, gutter marks */
+  --r-1: 3px;      /* inputs, buttons, checkboxes, tabs, status stamps */
+  --r-2: 6px;      /* cards, side sheets, popovers, modals, thumbnails */
+  --r-3: 10px;     /* command palette and photo lightbox only */
+
+  /* ---- ROW HEIGHTS -----------------------------------------------------
+     28/32/40/48 so 40 rows stack to an exact pixel height with no
+     half-pixel hairlines. 48 is data-density="touch": the weighbridge
+     cabin, the stores counter and the driver — same components, same
+     tokens, one attribute.                                               */
+  --row-compact: 28px;
+  --row: 32px;
+  --row-comfortable: 40px;
+  --row-touch: 48px;
+
+  /* ---- MOTION ---------------------------------------------------------- */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-state: 120ms;
+  --dur-confirm: 160ms;
+  --dur-layer: 200ms;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Dark inverts the ladder to the conventional direction (base darkest)
+     because subtractive "paper on desk" lighting does not work in reverse.
+     This is warm charcoal — dark paper stock, not a terminal.             */
+  --surface-base: #14130f;
+  --surface: #1c1b17;
+  --surface-raised: #26241f;    /* text-tertiary floors at 4.71:1 here */
+  --surface-sunken: #100f0c;
+  --surface-selected: #17251f;
+  --surface-overlay: rgb(0 0 0 / 0.55);
+
+  --text-primary: #efebe1;      /* 14.48 surface / 15.61 base / 13.02 raised */
+  --text-secondary: #b0a99c;    /*  7.39 / 7.97 / 6.65 */
+  --text-tertiary: #948d80;     /*  5.24 / 5.65 / 4.71 */
+  --text-inverse: #14130f;      /*  7.99 on brand */
+
+  --border-subtle: #302e28;     /* 1.27:1 */
+  --border-default: #3b382f;    /* 1.47:1 */
+  --border-strong: #4a463c;     /* 1.83:1 */
+
+  --brand: #74b6ab;             /* 7.40:1 */
+  --brand-strong: #8fc7bc;      /* 9.08:1 */
+  --brand-tint: #17251f;        /* brand on it 6.83:1 */
+  --focus-ring: #74b6ab;
+
+  --status-ready: #8fbb86;      /* 7.90:1 */
+  --status-ready-tint: #1a2419;
+  --status-active: #7fb4e0;     /* 7.80:1 */
+  --status-active-tint: #14283a;
+  --status-attention: #d9a64a;  /* 7.80:1 */
+  --status-attention-tint: #261e12;
+  --status-planned: #96a6b4;    /* 6.90:1 */
+  --status-planned-tint: #1a1f24;
+  --status-critical: #e8907a;   /* 7.14:1 */
+  --status-critical-tint: #2a1a17;
+  --status-pending: #b0a99c;    /* 7.39:1 */
+  --status-dormant: #948d80;    /* 5.24:1 */
+  --status-dormant-tint: #201f1a;
+
+  --hatch: rgb(239 235 225 / 0.07);
+  --provisional-rule: #7c7669;  /* 3.82:1 */
+  --confidence-fill: #7c7669;
+
+  --chart-1: #74b6ab;
+  --chart-2: #5a968d;
+  --chart-3: #437770;
+  --chart-4: #2e5a54;
+  --chart-5: #1c403b;
+  --chart-datum: #4a463c;
+
+  /* Shadow alpha is halved in dark because shadow barely reads; elevation
+     is carried by the surface step plus a 1px top highlight.              */
+  --e1: 0 1px 2px -1px rgb(0 0 0 / 0.4), 0 2px 8px -4px rgb(0 0 0 / 0.35);
+  --e2: 0 2px 4px -2px rgb(0 0 0 / 0.45), 0 12px 28px -12px rgb(0 0 0 / 0.5);
+  --e3: -24px 0 48px -24px rgb(0 0 0 / 0.5);
+  --highlight-top: inset 0 1px 0 rgb(255 255 255 / 0.045);
+}
+
+/* ---- GLOBAL LAWS -------------------------------------------------------
+   Tabular figures everywhere a number can be compared to the number above
+   it. Without this, point alignment dies and a ledger stops being a ledger. */
+:where(td, th, .num, .kpi-value, input[inputmode='decimal'], input[inputmode='numeric']) {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Identifiers: reg no, GSTIN, IRN, UTR, HSN, tyre serial, chassis no.
+   Slashed zero because a clerk has to read TN38 AL 1I04 off a paper slip.
+   Money is NEVER mono. */
+.font-id {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: slashed-zero;
+  letter-spacing: 0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: inherit;
+}
+
+/* ---- LAYER ENTRANCES ---------------------------------------------------
+   The only two keyframes in the product. A layer arriving is the one moment
+   motion carries meaning — it says "this came from the edge, and it will go
+   back there" — and even that is 200ms and linear-ish. No page transitions,
+   no stagger, no parallax, no shimmer, no bounce. */
+@keyframes linck-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes linck-slide-in {
+  from { transform: translateX(12px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* The phone equivalent. A panel that owns the full width should arrive from
+   the bottom, because that is the edge the thumb came from. */
+@keyframes linck-rise {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* Nothing meaningful is ever carried by motion, so killing it breaks nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

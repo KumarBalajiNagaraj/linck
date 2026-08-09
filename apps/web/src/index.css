@@ -1,0 +1,115 @@
+@import 'tailwindcss';
+
+/* Self-hosted, no CDN — quarry-office connections are bad and a webfont that
+   fails to load turns a ledger into a fallback-serif mess. */
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/newsreader';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+@import '@linck/tokens/tokens.css';
+
+/* The design system lives in a sibling package, so Tailwind has to be told to
+   scan it or every utility used in @linck/ui gets tree-shaken away. */
+@source '../../../packages/ui/src';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-surface-base: var(--surface-base);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-selected: var(--surface-selected);
+
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-tertiary);
+  --color-ink-inverse: var(--text-inverse);
+
+  --color-line: var(--border-subtle);
+  --color-line-default: var(--border-default);
+  --color-line-strong: var(--border-strong);
+
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-tint: var(--brand-tint);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Newsreader Variable', ui-serif, Georgia, serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --radius-none: var(--r-0);
+  --radius-sm: var(--r-1);
+  --radius-md: var(--r-2);
+  --radius-lg: var(--r-3);
+
+  --shadow-e1: var(--e1);
+  --shadow-e2: var(--e2);
+  --shadow-e3: var(--e3);
+}
+
+@layer base {
+  html {
+    /* Inter's tailed l and serifed I — it matters when a clerk reads
+       TN38 AL 1I04 off a paper slip in bad light. */
+    font-feature-settings: 'cv05' 1, 'cv08' 1;
+    font-optical-sizing: auto;
+  }
+
+  body {
+    margin: 0;
+    background: var(--surface-base);
+    color: var(--text-primary);
+    font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Weight 600 appears exactly twice in the entire product and 700 never
+     exists. Hierarchy is size, colour and space. If a screen needs bold to be
+     readable, its layout is wrong. */
+  h1, h2, h3, h4 {
+    font-weight: 400;
+    margin: 0;
+  }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+  }
+
+  input, select, textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Scrollbars sized so a 40-row table does not gain a chunky grey stripe. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 6px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  .font-serif {
+    font-family: 'Newsreader Variable', ui-serif, Georgia, serif;
+  }
+  .hatch {
+    background-image: var(--hatch-pattern);
+  }
+}

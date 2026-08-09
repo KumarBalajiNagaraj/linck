@@ -1,0 +1,37 @@
+{
+  "name": "@linck/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.5",
+    "@fontsource-variable/newsreader": "^5.2.5",
+    "@fontsource/ibm-plex-mono": "^5.2.5",
+    "@linck/domain": "workspace:*",
+    "@linck/mock": "workspace:*",
+    "@linck/tokens": "workspace:*",
+    "@linck/ui": "workspace:*",
+    "@tanstack/react-query": "^5.62.7",
+    "@tanstack/react-router": "^1.95.1",
+    "clsx": "^2.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^6.0.5"
+  }
+}

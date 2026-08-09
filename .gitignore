@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.turbo/
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+routeTree.gen.ts
+coverage/
+.venv/
+__pycache__/
+*.pyc

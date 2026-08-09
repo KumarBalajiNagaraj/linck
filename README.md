@@ -8,6 +8,23 @@ The problem is not "we need software". It is that **the same fact is written dow
 
 Linck's job is to make each fact enter the system once — ideally by photographing the slip rather than typing it — and derive everything else.
 
+## Deploying
+
+The web app deploys to Vercel as a static SPA — `vercel.json` at the repo root wires the pnpm monorepo build (`pnpm --filter @linck/web build` → `apps/web/dist`).
+
+```bash
+vercel deploy --prod --yes
+```
+
+Two things in that config are load-bearing and easy to delete by accident:
+
+- **The catch-all rewrite to `/index.html`.** TanStack Router owns `/fleet/board` and every other path, so without it a refresh or a shared link on any route but `/` returns 404. Vercel checks the filesystem *before* applying rewrites, so `/assets/*` and `/favicon.svg` still serve the real files and never reach the rule.
+- **A year of immutable caching on `/assets/*` only.** Vite fingerprints those filenames, so a changed file is a changed URL. `favicon.svg` is not fingerprinted and gets an hour instead.
+
+Note `vercel.json` permits no comment keys — the schema rejects unknown properties — which is why this reasoning lives here.
+
+Only the frontend deploys. The API needs a Postgres with row-level security and is not a serverless target; the deployed site runs entirely on seeded mock data.
+
 ## Running it
 
 **Web app** — runs on seeded mock data, no backend required:

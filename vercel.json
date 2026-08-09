@@ -1,27 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @linck/web build",
   "outputDirectory": "apps/web/dist",
   "framework": null,
-
-  "rewrites": [
-    {
-      "comment": "Client-side routing. TanStack Router owns /fleet/board and the rest, so a cold load or a refresh on any route has to be served index.html. Vercel checks the filesystem BEFORE applying rewrites, so real files — /assets/*, /favicon.svg — still win and never reach this rule.",
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
-  ],
-
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
   "headers": [
     {
-      "comment": "Vite fingerprints these filenames, so a changed file is a changed URL and a year of caching is safe.",
       "source": "/assets/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "comment": "Not fingerprinted, so it gets an hour rather than a year.",
       "source": "/favicon.svg",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
     }

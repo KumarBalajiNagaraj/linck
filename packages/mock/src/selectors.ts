@@ -714,8 +714,10 @@ export function expensesForSite(
 }
 
 /**
- * The seven counts the fleet manager's command board leads with. As with the
- * sales desk, each uses the predicate its destination list filters by.
+ * Six of the seven counts the fleet manager's command board leads with. As
+ * with the sales desk, each uses the predicate its destination list filters
+ * by. The seventh, expenses awaiting validation, is counted on the live bill
+ * store instead — bills uploaded this session are not in the seed.
  */
 export function fleetAttention(siteId: string | null) {
   const vehicles = vehiclesForSite(siteId);
@@ -728,7 +730,6 @@ export function fleetAttention(siteId: string | null) {
     serviceOverdue: vehicles.filter(isServiceOverdue).length,
     docsExpired: vehicles.filter((v) => expired.has(v.id)).length,
     driversAbsent: drivers.filter(isDriverAbsent).length,
-    expensesAwaiting: expensesForSite(siteId, 'fleet').filter((e) => e.status === 'submitted').length,
     openStoreRequests: indents.filter(isIndentOpen).length,
   };
 }

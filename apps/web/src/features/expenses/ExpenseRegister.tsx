@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
-import { businessDate, can, formatDate, formatINRCompact } from '@linck/domain';
+import { businessDate, can, formatDate, formatINRCompact, parseTypedAmount } from '@linck/domain';
 import {
   DRIVERS,
   EXPENSE_KIND_LABEL,
   EXPENSE_STATUS_FAMILY,
   EXPENSE_STATUS_LABEL,
   expensesForSite,
+  NOW,
   VEHICLES,
   type ExpenseBill,
 } from '@linck/mock';
+import type { StatusFamily } from '@linck/tokens';
 import {
   AsOfStamp,
   Button,
@@ -23,6 +25,7 @@ import {
   Note,
   PageHeader,
   QuantityCell,
+  Rail,
   Section,
   SheetSection,
   SideSheet,
@@ -47,9 +50,14 @@ import { UploadBillSheet } from './UploadBillSheet.js';
 const STATUS_ORDER: ExpenseBill['status'][] = ['submitted', 'validated', 'approved', 'paid', 'rejected'];
 const VIEWS = ['all', ...STATUS_ORDER, 'corrected'] as const;
 
-const DESK_COPY: Record<ExpenseBill['desk'], { eyebrow: string; upload: string }> = {
-  fleet: { eyebrow: 'Fleet', upload: 'fleet.expense.upload' },
-  stores: { eyebrow: 'Stores', upload: 'stores.expense.upload' },
+/**
+ * Each desk's keys. Who validates a stores bill is settled with the approval
+ * chain (LIN-14); until then nobody holds it, and a stores bill waiting for
+ * validation reads as someone else's turn to every viewer.
+ */
+const DESK_COPY: Record<ExpenseBill['desk'], { eyebrow: string; upload: string; validate: string | null }> = {
+  fleet: { eyebrow: 'Fleet', upload: 'fleet.expense.upload', validate: 'fleet.expense.validate' },
+  stores: { eyebrow: 'Stores', upload: 'stores.expense.upload', validate: null },
 };
 
 export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
@@ -60,6 +68,12 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const mayUpload = can(persona.grants, DESK_COPY[desk].upload, { siteId: siteScope });
+  const validate = DESK_COPY[desk].validate;
+  const mayValidate = validate !== null && can(persona.grants, validate, { siteId: siteScope });
+  // "Awaiting validation" asks for action only from someone who can validate;
+  // to everyone else it is in flight, with the ball in another court.
+  const family = (e: ExpenseBill) => (e.status === 'submitted' && !mayValidate ? 'pending' : EXPENSE_STATUS_FAMILY[e.status]);
+  const columns = useMemo(() => columnsFor(desk, family), [desk, mayValidate]);
 
   const all = useMemo(
     () => [...expensesForSite(siteScope, desk, bills)].sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)),
@@ -115,7 +129,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
           selectedKey={selectedId ?? undefined}
           onRowClick={(e) => setSelectedId(e.id)}
           isDormant={(e) => e.status === 'rejected'}
-          rail={(e) => ({ status: EXPENSE_STATUS_FAMILY[e.status], provenance: e.provenance })}
+          rail={(e) => ({ status: family(e), provenance: e.provenance })}
           empty={
             all.length === 0 ? (
               <EmptyState fact="No expense bills at this site." because="Nothing has been submitted here yet." />
@@ -137,11 +151,11 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
         open={selected !== null}
         onClose={() => setSelectedId(null)}
         width="form"
-        title={selected?.billNumber ?? ''}
-        identifier={selected ? `${EXPENSE_KIND_LABEL[selected.kind]} · ${selected.vendor}` : undefined}
-        {...(selected
-          ? { status: { family: EXPENSE_STATUS_FAMILY[selected.status], label: EXPENSE_STATUS_LABEL[selected.status] } }
-          : {})}
+        // The vendor reads as a title; the bill number is an identifier, set in
+        // the mono face where 0 and O cannot be confused against the paper.
+        title={selected ? `${EXPENSE_KIND_LABEL[selected.kind]} · ${selected.vendor}` : ''}
+        identifier={selected?.billNumber}
+        {...(selected ? { status: { family: family(selected), label: EXPENSE_STATUS_LABEL[selected.status] } } : {})}
       >
         {selected ? <BillDetail key={selected.id} bill={selected} mayCorrect={mayUpload && selected.status === 'submitted'} /> : null}
       </SideSheet>
@@ -160,6 +174,8 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
   const { persona } = useApp();
   const update = useExpenses((s) => s.update);
   const [editing, setEditing] = useState(false);
+  const [unviewable, setUnviewable] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<EditableKey, string>>(() => ({
     billNumber: bill.billNumber,
     // The IST calendar date the bill carries, not the UTC date of IST midnight.
@@ -170,9 +186,27 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
   }));
 
   const saveCorrection = () => {
-    const amount = Number.parseFloat(draft.amount);
-    const litres = draft.litres.trim() === '' ? null : Number.parseFloat(draft.litres);
-    if (!Number.isFinite(amount) || amount <= 0 || (litres !== null && !Number.isFinite(litres))) return;
+    // Read as strictly as at upload: "12,500" is twelve and a half thousand,
+    // and a figure that cannot be read is refused, not rounded to a guess.
+    const amount = parseTypedAmount(draft.amount);
+    const litres = draft.litres.trim() === '' ? null : parseTypedAmount(draft.litres, 3);
+    const today = businessDate(NOW);
+    const why =
+      amount === null || amount <= 0
+        ? 'Type the amount as printed, such as 12,500.00.'
+        : litres !== null && litres <= 0
+          ? 'Type the litres as printed, such as 120.45.'
+          : draft.litres.trim() !== '' && litres === null
+            ? 'Type the litres as printed, such as 120.45.'
+            : !/^\d{4}-\d{2}-\d{2}$/.test(draft.billDate)
+              ? 'Pick the date printed on the bill.'
+              : draft.billDate > today
+                ? 'A bill cannot be dated after today.'
+                : !draft.billNumber.trim() || !draft.vendor.trim()
+                  ? 'The bill number and vendor cannot be blank.'
+                  : null;
+    setProblem(why);
+    if (why || amount === null) return;
     const next: Record<EditableKey, string> = { ...draft, amount: amount.toFixed(2), litres: litres === null ? '' : String(litres) };
     const capture = bill.capture
       ? {
@@ -183,7 +217,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
             const differs =
               f.captured !== null &&
               (f.key === 'amount' || f.key === 'litres'
-                ? Number.parseFloat(value) !== Number.parseFloat(f.captured)
+                ? parseTypedAmount(value, 3) !== parseTypedAmount(f.captured, 3)
                 : value.trim().toUpperCase() !== f.captured.trim().toUpperCase());
             return { ...f, value, overridden: differs, overriddenBy: differs ? persona.name : null };
           }),
@@ -205,12 +239,17 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
     <>
       <SheetSection caption="The scan">
         {bill.attachment ? (
-          bill.attachment.mimeType === 'application/pdf' ? (
+          bill.attachment.mimeType === 'application/pdf' || unviewable ? (
             <a href={bill.attachment.url} target="_blank" rel="noreferrer" className="text-[13px]" style={{ color: 'var(--brand)' }}>
               Open {bill.attachment.fileName} ({bill.attachment.sizeKb} KB)
             </a>
           ) : (
-            <img src={bill.attachment.url} alt={`Scan of bill ${bill.billNumber}`} className="max-h-[420px] w-full object-contain" />
+            <img
+              src={bill.attachment.url}
+              alt={`Scan of bill ${bill.billNumber}`}
+              className="max-h-[420px] w-full object-contain"
+              onError={() => setUnviewable(true)}
+            />
           )
         ) : (
           <Note>No scan on file for this bill. It was keyed before uploads existed, or came in through WhatsApp.</Note>
@@ -279,6 +318,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
                 </span>
                 <input
                   type={type}
+                  {...(type === 'date' ? { max: businessDate(NOW) } : {})}
                   value={draft[key]}
                   onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
                   className="h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[13px]"
@@ -287,11 +327,24 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
               </label>
             ))}
           </div>
+          {problem ? (
+            <p className="relative mt-2 pl-3 text-[12px]" style={{ color: 'var(--status-critical)' }}>
+              <Rail status="critical" />
+              {problem}
+            </p>
+          ) : null}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={saveCorrection}>
               Save correction
             </Button>
-            <Button onClick={() => setEditing(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                setEditing(false);
+                setProblem(null);
+              }}
+            >
+              Cancel
+            </Button>
           </div>
         </SheetSection>
       ) : mayCorrect ? (
@@ -307,7 +360,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           <Detail label="Bill date">{formatDate(bill.billDate)}</Detail>
           <Detail label="Vendor">{bill.vendor}</Detail>
           <Detail label="What for">{bill.description}</Detail>
-          <Detail label="Vehicle">{VEHICLES.find((v) => v.id === bill.vehicleId)?.displayReg ?? '–'}</Detail>
+          {bill.desk === 'fleet' ? <Detail label="Vehicle">{VEHICLES.find((v) => v.id === bill.vehicleId)?.displayReg ?? '–'}</Detail> : null}
           {bill.litres !== null ? (
             <Detail label="Litres">
               <QuantityCell value={bill.litres} decimals={1} uom="L" />
@@ -323,77 +376,92 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
   );
 }
 
-const columns: Column<ExpenseBill>[] = [
-  {
-    key: 'bill',
-    header: 'Bill',
-    type: 'id',
-    sticky: true,
-    width: 160,
-    group: 'Bill',
-    // IST calendar date. A bill dated 06-08 is stored as IST midnight, which
-    // is 18:30 on 05-08 in UTC — slicing the ISO string shows the wrong day.
-    render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={formatDate(e.billDate)} />,
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    type: 'status',
-    width: 200,
-    group: 'Bill',
-    render: (e) => <StatusStamp status={EXPENSE_STATUS_FAMILY[e.status]} label={EXPENSE_STATUS_LABEL[e.status]} />,
-  },
-  {
-    key: 'kind',
-    header: 'Type',
-    width: 90,
-    group: 'Bill',
-    render: (e) => EXPENSE_KIND_LABEL[e.kind],
-  },
-  { key: 'vendor', header: 'Vendor', group: 'Bill', render: (e) => <Stacked primary={e.vendor} secondary={e.description} /> },
-  {
-    key: 'scan',
-    header: 'Scan',
-    width: 70,
-    group: 'Bill',
-    render: (e) =>
-      e.attachment ? (
-        <span title={e.attachment.fileName} style={{ color: 'var(--text-secondary)' }}>
-          ▣
-        </span>
-      ) : null,
-  },
-  {
-    key: 'vehicle',
-    header: 'Vehicle',
-    type: 'id',
-    width: 140,
-    group: 'Against',
-    render: (e) => <IdCell>{VEHICLES.find((v) => v.id === e.vehicleId)?.displayReg ?? null}</IdCell>,
-  },
-  {
-    key: 'driver',
-    header: 'Driver',
-    group: 'Against',
-    render: (e) => DRIVERS.find((d) => d.id === e.driverId)?.name ?? null,
-  },
-  {
-    key: 'litres',
-    header: 'Litres',
-    unit: 'L',
-    type: 'num',
-    width: 90,
-    group: 'Amount',
-    render: (e) => (e.litres === null ? null : <QuantityCell value={e.litres} decimals={1} />),
-  },
-  {
-    key: 'amount',
-    header: 'Amount',
-    unit: '₹',
-    type: 'money',
-    width: 120,
-    group: 'Amount',
-    render: (e) => <MoneyCell value={e.amount} />,
-  },
-  { key: 'by', header: 'Submitted by', group: 'Amount', render: (e) => e.submittedBy },
-];
+/**
+ * The register's columns. A stores bill is against no vehicle and no driver
+ * and is never counted in litres, so its register does not carry those
+ * columns — a column of dashes on every row is noise, not information.
+ */
+function columnsFor(desk: ExpenseBill['desk'], family: (e: ExpenseBill) => StatusFamily): Column<ExpenseBill>[] {
+  const all: (Column<ExpenseBill> & { fleetOnly?: true })[] = [
+    {
+      key: 'bill',
+      header: 'Bill',
+      type: 'id',
+      sticky: true,
+      width: 160,
+      group: 'Bill',
+      // IST calendar date. A bill dated 06-08 is stored as IST midnight, which
+      // is 18:30 on 05-08 in UTC — slicing the ISO string shows the wrong day.
+      render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={formatDate(e.billDate)} />,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      type: 'status',
+      width: 200,
+      group: 'Bill',
+      render: (e) => <StatusStamp status={family(e)} label={EXPENSE_STATUS_LABEL[e.status]} />,
+    },
+    {
+      key: 'kind',
+      header: 'Type',
+      width: 90,
+      group: 'Bill',
+      render: (e) => EXPENSE_KIND_LABEL[e.kind],
+    },
+    { key: 'vendor', header: 'Vendor', group: 'Bill', render: (e) => <Stacked primary={e.vendor} secondary={e.description} /> },
+    {
+      key: 'scan',
+      header: 'Scan',
+      width: 70,
+      group: 'Bill',
+      // A word, not a mark: the square glyphs belong to status.
+      render: (e) =>
+        e.attachment ? (
+          <span title={e.attachment.fileName} className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+            {e.attachment.mimeType === 'application/pdf' ? 'PDF' : 'Photo'}
+          </span>
+        ) : null,
+    },
+    {
+      key: 'vehicle',
+      header: 'Vehicle',
+      type: 'id',
+      width: 140,
+      group: 'Against',
+      fleetOnly: true,
+      render: (e) => {
+        const reg = VEHICLES.find((v) => v.id === e.vehicleId)?.displayReg;
+        return reg ? <IdCell>{reg}</IdCell> : null;
+      },
+    },
+    {
+      key: 'driver',
+      header: 'Driver',
+      group: 'Against',
+      fleetOnly: true,
+      render: (e) => DRIVERS.find((d) => d.id === e.driverId)?.name ?? null,
+    },
+    {
+      key: 'litres',
+      header: 'Litres',
+      unit: 'L',
+      type: 'num',
+      width: 90,
+      group: 'Amount',
+      fleetOnly: true,
+      render: (e) => (e.litres === null ? null : <QuantityCell value={e.litres} decimals={1} />),
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      unit: '₹',
+      type: 'money',
+      width: 120,
+      group: 'Amount',
+      render: (e) => <MoneyCell value={e.amount} />,
+    },
+    { key: 'by', header: 'Submitted by', group: 'Amount', render: (e) => e.submittedBy },
+  ];
+  return all.filter((c) => desk === 'fleet' || !c.fleetOnly).map(({ fleetOnly: _fleetOnly, ...c }) => c);
+}

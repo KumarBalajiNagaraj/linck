@@ -14,7 +14,7 @@ It is written from an audit of the code, not from memory. Where something is hal
 | **Designed** | Specified in [DATABASE.md](DATABASE.md) with column-level detail, not migrated. |
 | **Not started** | Nothing. |
 
-**One caveat applies to every screen: nothing in the web app is wired to the API.** All twelve screens read `@linck/mock`. Every action that appears to save something writes React state and loses it on reload. The session contract is written in `apps/web/src/auth/session.ts` and deliberately unimported — a half-wired session that failed at boot would take down all twelve screens.
+**One caveat applies to every screen: nothing in the web app is wired to the API.** Every screen reads `@linck/mock`. Every action that appears to save something writes React state and loses it on reload. The session contract is written in `apps/web/src/auth/session.ts` and deliberately unimported — a half-wired session that failed at boot would take down every screen.
 
 What *is* real: Google sign-in, tenancy, scoped RBAC and row-level security all run against Postgres and are proven by tests. Everything else is a working interface over fixtures.
 
@@ -26,13 +26,13 @@ Counting the individual asks in the original brief: **15 built, 16 mock-only, 38
 
 | Persona | Screens they can open | State of their job |
 |---|---|---|
-| Executive | 10 — all of them | Can see the business. Cannot see a P&L, because there is no ledger. |
+| Executive | All of them | Can see the business. Cannot see a P&L, because there is no ledger. |
 | Accounts | 5 | The receivables half is the strongest thing in the product. The expenses half does not exist. |
 | Fleet | 6 | Status, diesel and documents are solid. Tyres, services and attendance are not built. |
 | Maintenance | 7 (borrowed) | No role of their own, and nowhere to record a repair. |
 | Stores | 3 | Approves indents. Cannot raise one, receive goods, or see an item or a vendor. |
 | Production | 3 | The joint-production model is the best-served thing here. Boulder receipt is missing. |
-| Sales | 5 | Can run the yard. Cannot take an order or raise an invoice. |
+| Sales | 8 | Lands on their own command board. Can review and approve customer orders; cannot take a new order or raise an invoice. |
 | Driver | 1 (plus one 404) | Effectively not built. |
 | Team admin | 1 | Backend finished, frontend absent. |
 
@@ -42,7 +42,7 @@ Counting the individual asks in the original brief: **15 built, 16 mock-only, 38
 
 **The job.** He owns the plants and the fleet and is the only person who sees all three sites at once. His job on this system is to spot where money, material or paperwork has quietly gone missing. He is also routinely the second pair of eyes on cash.
 
-**Built for him.** The executive dashboard is his landing screen: cash position, receivables, reported-but-unverified money, and fleet uptime, then a fourteen-day revenue and margin trend, the material reconciliation, receivables ageing, a downtime Pareto, product mix, and compliance exposure. He can open all ten screens.
+**Built for him.** The executive dashboard is his landing screen: cash position, receivables, reported-but-unverified money, and fleet uptime, then a fourteen-day revenue and margin trend, the material reconciliation, receivables ageing, a downtime Pareto, product mix, and compliance exposure. He can open every screen.
 
 Three things on it are sharper than a normal ERP dashboard:
 
@@ -272,7 +272,7 @@ This is the best-served domain model in the product:
 | Transport costing in detail | Partial — the numbers are pre-computed, not derived from a duty log |
 | e-Way bill after loading | Partial — Part B can be keyed; **Part A cannot be raised**, which is literally the ask |
 | Coordinate with production on loading | Partial |
-| **Receives orders** | **Not started** — the dispatch board can only move pre-seeded trips |
+| **Receives orders** | Partial — customer purchase orders can be listed, approved and rejected (mock data); taking a new order is not built |
 | **Orders drivers to do the transport** | **Not started** — the driver is inherited from the vehicle and rendered read-only |
 | Generates invoices | Not started — and neither the persona nor the backend role grants invoice-write to sales |
 | Payment type flexibility | Partial — only a method field |

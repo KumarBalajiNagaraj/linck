@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { can } from '@linck/domain';
-import { StatusStamp } from '@linck/ui';
+import { WORKSPACES } from './nav-manifest.js';
 import { useApp } from './store.js';
 
 /**
@@ -8,53 +8,78 @@ import { useApp } from './store.js';
  * what needs this person now, and a row of plain links to the databases they
  * work in.
  *
- * Both are permission-filtered with the same rule as the nav rail. A card or a
- * button that opens onto a Forbidden screen is worse than no card at all, so
- * anything this persona cannot open simply is not drawn.
+ * GATED EXACTLY LIKE THE NAV RAIL. A destination is drawn only if the nav
+ * manifest lists its route and both of the rail's gates pass: the tenant has
+ * the workspace's module switched on, and this person holds the item's
+ * permission at the current scope. The board therefore cannot become a side
+ * door into a module the tenant never bought — and a destination missing from
+ * the manifest is a bug that hides the card rather than one that shows a
+ * Forbidden screen.
  */
 
 export interface BoardDestination {
   label: string;
+  /** Must be a route listed in the nav manifest; the gates are read from there. */
   to: string;
-  /** The grant needed to open `to`. Mirrors the route's own gate in router.tsx. */
-  permission: string;
 }
 
 export interface UrgentAction extends BoardDestination {
-  /** What is being counted, as the card's headline noun: "Unraised invoices". */
   count: number;
   /** One line saying exactly which rows are in the count. */
   definition: string;
-  /**
-   * Highest and high spend colour; medium stays neutral. The word travels with
-   * the stamp, so the priority still reads with every hue stripped.
-   */
   priority: 'highest' | 'high' | 'medium';
+  /**
+   * The colour the count earns while it is non-zero. Separate from priority
+   * because the briefs differ: the sales desk wants every card red or amber,
+   * the fleet desk wants a medium card neutral.
+   */
+  accent: 'critical' | 'attention' | 'neutral';
   /** The saved view on the destination that shows exactly these rows. */
   view?: string;
 }
 
-const PRIORITY_STAMP = {
-  highest: { status: 'critical', label: 'Highest' },
-  high: { status: 'attention', label: 'High' },
-  medium: { status: 'pending', label: 'Medium' },
+/** Priority is not a status, so it is a word and a glyph rather than a stamp. */
+const PRIORITY = {
+  highest: { glyph: '▲', word: 'Highest' },
+  high: { glyph: '◐', word: 'High' },
+  medium: { glyph: '◇', word: 'Medium' },
 } as const;
 
-function useCanOpen() {
-  const { persona, siteScope } = useApp();
-  return (permission: string) => can(persona.grants, permission, { siteId: siteScope });
+const ACCENT_COLOR = {
+  critical: 'var(--status-critical)',
+  attention: 'var(--status-attention)',
+  neutral: 'var(--text-secondary)',
+} as const;
+
+/** The two gates the rail applies, looked up from the manifest by route. */
+export function useCanOpen(): (to: string) => boolean {
+  const { persona, siteScope, enabledModules } = useApp();
+  return (to: string) => {
+    for (const ws of WORKSPACES) {
+      const item = ws.items.find((i) => i.route === to);
+      if (!item) continue;
+      const moduleOn = ws.module === null || enabledModules.includes(ws.module);
+      return moduleOn && can(persona.grants, item.permission, { siteId: siteScope });
+    }
+    return false;
+  };
 }
 
 /**
  * URGENT ACTIONS.
  *
- * A card is a count, the noun it counts and the rule it counts by — nothing
- * else. The count is coloured only while it is non-zero: a zero is good news
- * and must not shout in the same red as four unbilled loads.
+ * Built like the product's other count cards: the number in ink at full
+ * weight, and the colour spent on the line beneath it — the way the fleet
+ * board's "Broken down" tile does it — and only while the count is non-zero.
+ * A zero is good news and must not shout in the same red as four unbilled
+ * loads.
+ *
+ * Each card lands on its list, not on the top of the destination page: the
+ * link carries `#list`, which every destination puts on its filtered table.
  */
 export function UrgentActionsRow({ caption, actions }: { caption: string; actions: UrgentAction[] }) {
   const canOpen = useCanOpen();
-  const shown = actions.filter((a) => canOpen(a.permission));
+  const shown = actions.filter((a) => canOpen(a.to));
   if (shown.length === 0) return null;
 
   return (
@@ -62,42 +87,36 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
       <p className="pb-2 font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
         {caption}
       </p>
-      <div className="grid gap-3"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 230px), 1fr))' }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 172px), 1fr))' }}>
         {shown.map((a) => {
-          const stamp = PRIORITY_STAMP[a.priority];
           const live = a.count > 0;
-          const tone =
-            !live || a.priority === 'medium'
-              ? 'var(--text-primary)'
-              : a.priority === 'highest'
-                ? 'var(--status-critical)'
-                : 'var(--status-attention)';
+          const tone = live ? ACCENT_COLOR[a.accent] : 'var(--text-tertiary)';
+          const p = PRIORITY[a.priority];
           return (
             <Link
               key={a.label}
               to={a.to}
               search={a.view ? { view: a.view } : {}}
+              hash="list"
               className="group flex flex-col gap-1.5 px-4 py-3.5 text-left"
               style={{
-                borderRadius: 'var(--r-1)',
+                borderRadius: 'var(--r-2)',
                 background: 'var(--surface)',
-                boxShadow: `inset 0 0 0 1px ${live && a.priority !== 'medium' ? tone : 'var(--border-default)'}`,
+                boxShadow: 'inset 0 0 0 1px var(--border-subtle)',
               }}
             >
-              <span className="flex items-center justify-between gap-2">
-                <StatusStamp
-                  status={live ? stamp.status : 'ready'}
-                  label={live ? stamp.label : 'Clear'}
-                />
-                <span className="text-[12px] opacity-0 transition-opacity group-hover:opacity-100" style={{ color: 'var(--brand)' }}>
+              <span className="flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.04em]">
+                <span style={{ color: tone }}>
+                  <span aria-hidden="true">{p.glyph}</span> {p.word}
+                </span>
+                <span className="normal-case tracking-normal opacity-0 transition-opacity group-hover:opacity-100" style={{ color: 'var(--brand)' }}>
                   Open list →
                 </span>
               </span>
               <span className="flex items-baseline gap-2">
                 <span
                   className="num tabular-nums leading-none"
-                  style={{ fontSize: '2rem', letterSpacing: '-0.02em', color: tone }}
+                  style={{ fontSize: '2rem', letterSpacing: '-0.02em', color: 'var(--text-primary)' }}
                 >
                   {a.count}
                 </span>
@@ -105,8 +124,8 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
                   {a.label}
                 </span>
               </span>
-              <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                {a.definition}
+              <span className="text-[12px]" style={{ color: live ? tone : 'var(--text-secondary)' }}>
+                {live ? a.definition : `None right now — ${a.definition.charAt(0).toLowerCase()}${a.definition.slice(1)}`}
               </span>
             </Link>
           );
@@ -119,13 +138,14 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
 /**
  * NAVIGATION BUTTONS.
  *
- * Pure links to a module's full database view — not filters. They borrow the
- * chip's shape and type so the page does not introduce a third kind of button,
- * but carry an arrow because they leave the page and a chip never does.
+ * Pure links to a module's full database view — not filters. Set in exactly
+ * the filter chip's shape, type and spacing, as the brief asks, with a
+ * trailing arrow as the one difference: a chip filters the page, these leave
+ * it.
  */
 export function DestinationRow({ caption, destinations }: { caption: string; destinations: BoardDestination[] }) {
   const canOpen = useCanOpen();
-  const shown = destinations.filter((d) => canOpen(d.permission));
+  const shown = destinations.filter((d) => canOpen(d.to));
   if (shown.length === 0) return null;
 
   return (
@@ -138,15 +158,15 @@ export function DestinationRow({ caption, destinations }: { caption: string; des
           <Link
             key={d.label}
             to={d.to}
-            className="inline-flex h-9 items-center gap-1.5 px-3 text-[12px] [@media(hover:hover)]:h-8"
+            className="inline-flex h-9 items-center gap-1.5 px-3 text-[12px] [@media(hover:hover)]:h-7 [@media(hover:hover)]:px-2.5"
             style={{
               borderRadius: 'var(--r-1)',
-              color: 'var(--text-primary)',
+              color: 'var(--text-secondary)',
               boxShadow: 'inset 0 0 0 1px var(--border-default)',
             }}
           >
             {d.label}
-            <span aria-hidden="true" style={{ color: 'var(--text-tertiary)' }}>
+            <span aria-hidden="true" className="opacity-70">
               →
             </span>
           </Link>

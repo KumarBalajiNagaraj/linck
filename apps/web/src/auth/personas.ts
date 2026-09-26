@@ -50,6 +50,7 @@ export const PERSONAS: Persona[] = [
       'sales.dispatch.read',
       'sales.trip.read',
       'sales.invoice.read',
+      'sales.board.read',
       'sales.customer.read',
       'sales.order.read',
       'sales.order.approve',

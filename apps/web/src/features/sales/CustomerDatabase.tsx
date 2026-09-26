@@ -3,8 +3,9 @@ import {
   CUSTOMERS_MASTER,
   invoicesForSite,
   isInvoiceOverdue,
-  PURCHASE_ORDERS,
+  purchaseOrdersForSite,
   SITES,
+  tripsForSite,
   type Customer,
 } from '@linck/mock';
 import {
@@ -29,6 +30,13 @@ import { useViewParam } from '../../shell/useViewParam.js';
  * coordinator checks before promising a lorry on the phone: what they still
  * owe us, whether any of it is overdue, and whether an order of theirs is
  * sitting unapproved.
+ *
+ * SCOPED BY ACTIVITY, like every other sales screen. At a site the list is the
+ * customers who have a load, an invoice or an order there — the same trips,
+ * invoices and orders the dispatch board, ledger and order list show at that
+ * scope — so a customer counted on the command board is always findable here.
+ * "Served from" is the customer's usual plant, a fact about them, not a
+ * filter.
  */
 
 type View = 'all' | 'overdue' | 'open_orders';
@@ -48,13 +56,16 @@ export function CustomerDatabase() {
 
   const rows = useMemo<CustomerRow[]>(() => {
     const invoices = invoicesForSite(siteScope);
-    return CUSTOMERS_MASTER.filter((c) => siteScope === null || c.servedFromSiteId === siteScope).map((c) => {
+    const orders = purchaseOrdersForSite(siteScope);
+    const trips = tripsForSite(siteScope);
+    const active = new Set([...invoices, ...orders, ...trips].map((x) => x.customerId));
+    return CUSTOMERS_MASTER.filter((c) => siteScope === null || active.has(c.id)).map((c) => {
       const theirs = invoices.filter((i) => i.customerId === c.id && i.status !== 'draft' && i.status !== 'closed');
       return {
         customer: c,
         outstanding: theirs.reduce((s, i) => s + Number.parseFloat(i.balanceDue), 0),
         overdueCount: theirs.filter(isInvoiceOverdue).length,
-        openOrders: PURCHASE_ORDERS.filter(
+        openOrders: orders.filter(
           (p) => p.customerId === c.id && (p.status === 'pending_approval' || p.status === 'approved' || p.status === 'part_dispatched'),
         ).length,
         siteName: SITES.find((s) => s.id === c.servedFromSiteId)?.name ?? '–',
@@ -91,11 +102,17 @@ export function CustomerDatabase() {
           rowKey={(r) => r.customer.id}
           rail={(r) => (r.overdueCount > 0 ? { status: 'critical' } : undefined)}
           empty={
-            <EmptyState
-              fact="No customers match this view."
-              because="Nobody at this site is overdue or waiting on an order."
-              action={{ label: 'Show all customers', onClick: () => setView('all') }}
-            />
+            // Genuinely empty and filtered-empty are different problems and
+            // never share copy (see EmptyState).
+            rows.length === 0 ? (
+              <EmptyState fact="No customers at this site." because="Nobody has a load, an invoice or an order here yet." />
+            ) : (
+              <EmptyState
+                fact="No customers match this view."
+                because={view === 'overdue' ? 'Nobody at this site is overdue.' : 'Nobody at this site has an order open.'}
+                action={{ label: 'Show all customers', onClick: () => setView('all') }}
+              />
+            )
           }
         />
       </Section>

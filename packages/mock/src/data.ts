@@ -1,4 +1,4 @@
-import { PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
+import { buildGstin, PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
 import type {
   Alert,
   ComplianceDocument,
@@ -812,7 +812,12 @@ export const CUSTOMERS_MASTER: Customer[] = CUSTOMERS.map((c, i) => {
     id: c.id,
     name: c.name,
     site: c.site,
-    gstin: counter ? null : `33AA${String.fromCharCode(65 + i)}C${Math.floor(between(salesRng, 1000, 9999))}K1Z${i + 1}`,
+    // A real PAN shape (5 letters, 4 digits, 1 letter; 4th letter C = company,
+    // 5th = the name's initial) and a computed check character, so the seed
+    // passes the same validation the e-invoice console will apply.
+    gstin: counter
+      ? null
+      : buildGstin('33', `AA${String.fromCharCode(65 + i)}C${c.name[0]!.toUpperCase()}${Math.floor(between(salesRng, 1000, 9999))}K`),
     contactName: CONTACTS[i % CONTACTS.length]!,
     phone: counter ? '–' : `9${Math.floor(between(salesRng, 100000000, 999999999))}`,
     creditLimit: money(counter ? 0 : between(salesRng, 5, 40, 0) * 100_000),

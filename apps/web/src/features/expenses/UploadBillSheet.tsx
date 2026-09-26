@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { businessDate } from '@linck/domain';
 import { EXPENSE_KIND_LABEL, NOW, vehiclesForSite, type ExpenseBill } from '@linck/mock';
 import { Button, Note, SheetSection, SideSheet } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
@@ -50,7 +51,7 @@ const blank = (desk: ExpenseBill['desk']): Draft => ({
   file: null,
   kind: KINDS_BY_DESK[desk][0]!,
   billNumber: '',
-  billDate: NOW.toISOString().slice(0, 10),
+  billDate: businessDate(NOW),
   vendor: '',
   description: '',
   amount: '',

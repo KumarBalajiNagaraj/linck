@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { formatQty } from '@linck/domain';
+import { formatDate, formatQty } from '@linck/domain';
 import {
   BREAKDOWN_STATUS_FAMILY,
   BREAKDOWN_STATUS_LABEL,
@@ -62,7 +62,7 @@ export function BreakdownRegister() {
           </span>
         }
       />
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
           All breakdowns
         </Chip>
@@ -81,17 +81,26 @@ export function BreakdownRegister() {
           rowKey={(b) => b.id}
           rail={(b) => ({ status: BREAKDOWN_STATUS_FAMILY[b.status] })}
           empty={
-            <EmptyState
-              fact="No breakdowns match this view."
-              because="Nothing is on the hard shoulder at this site."
-              action={{ label: 'Show all breakdowns', onClick: () => setView('all') }}
-            />
+            all.length === 0 ? (
+              <EmptyState fact="No breakdowns on record at this site." because="None of the vehicles based here has broken down." />
+            ) : (
+              <EmptyState
+                fact="No breakdowns match this view."
+                because={view === 'live' ? 'Nothing is on the hard shoulder or in the workshop right now.' : 'Nothing here has been resolved yet.'}
+                action={{ label: 'Show all breakdowns', onClick: () => setView('all') }}
+              />
+            )
           }
         />
       </Section>
       <div className="h-10" />
     </>
   );
+}
+
+/** `11h`, `3d` — the integer that goes beside a critical stamp. */
+function downFor(hours: number): string {
+  return hours < 48 ? `${Math.round(hours)}h` : `${Math.round(hours / 24)}d`;
 }
 
 const columns: Column<BreakdownRecord>[] = [
@@ -102,7 +111,7 @@ const columns: Column<BreakdownRecord>[] = [
     sticky: true,
     width: 150,
     group: 'Breakdown',
-    render: (b) => <Stacked primary={<IdCell>{b.number}</IdCell>} secondary={b.reportedAt.slice(0, 10)} />,
+    render: (b) => <Stacked primary={<IdCell>{b.number}</IdCell>} secondary={formatDate(b.reportedAt)} />,
   },
   {
     key: 'status',
@@ -110,7 +119,14 @@ const columns: Column<BreakdownRecord>[] = [
     type: 'status',
     width: 140,
     group: 'Breakdown',
-    render: (b) => <StatusStamp status={BREAKDOWN_STATUS_FAMILY[b.status]} label={BREAKDOWN_STATUS_LABEL[b.status]} />,
+    // Critical always carries its integer: how long the vehicle has been down.
+    render: (b) => (
+      <StatusStamp
+        status={BREAKDOWN_STATUS_FAMILY[b.status]}
+        label={BREAKDOWN_STATUS_LABEL[b.status]}
+        {...(b.status === 'resolved' ? {} : { severity: downFor(b.downtimeHours) })}
+      />
+    ),
   },
   {
     key: 'vehicle',

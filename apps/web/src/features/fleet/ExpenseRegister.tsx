@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { formatINRCompact } from '@linck/domain';
+import { formatDate, formatINRCompact } from '@linck/domain';
 import {
   DRIVERS,
   EXPENSE_KIND_LABEL,
@@ -63,7 +63,7 @@ export function ExpenseRegister() {
           </span>
         }
       />
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
           All bills
         </Chip>
@@ -82,11 +82,15 @@ export function ExpenseRegister() {
           isDormant={(e) => e.status === 'rejected'}
           rail={(e) => ({ status: EXPENSE_STATUS_FAMILY[e.status], provenance: e.provenance })}
           empty={
-            <EmptyState
-              fact="No bills match this view."
-              because="Nothing at this site is at that step of the approval chain."
-              action={{ label: 'Show all bills', onClick: () => setView('all') }}
-            />
+            all.length === 0 ? (
+              <EmptyState fact="No expense bills at this site." because="Nothing has been submitted here yet." />
+            ) : (
+              <EmptyState
+                fact="No bills match this view."
+                because="Nothing at this site is at that step of the approval chain."
+                action={{ label: 'Show all bills', onClick: () => setView('all') }}
+              />
+            )
           }
         />
       </Section>
@@ -103,7 +107,7 @@ const columns: Column<ExpenseBill>[] = [
     sticky: true,
     width: 160,
     group: 'Bill',
-    render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={e.billDate.slice(0, 10)} />,
+    render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={formatDate(e.billDate)} />,
   },
   {
     key: 'status',

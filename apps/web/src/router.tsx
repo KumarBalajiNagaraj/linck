@@ -71,7 +71,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   route('/overview', () => <ExecutiveDashboard />, 'executive.dashboard.read'),
   route('/fleet/board', () => <FleetCommandBoard />, 'fleet.board.read'),
-  route('/fleet/vehicles', () => <VehicleStatus />, 'fleet.board.read'),
+  route('/fleet/vehicles', () => <VehicleStatus />, 'fleet.vehicle.read'),
   route('/fleet/drivers', () => <DriverList />, 'fleet.driver.read'),
   route('/fleet/breakdowns', () => <BreakdownRegister />, 'fleet.breakdown.read'),
   route('/fleet/expenses', () => <ExpenseRegister />, 'fleet.expense.read'),

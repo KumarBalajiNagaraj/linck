@@ -484,7 +484,7 @@ export const PO_STATUS_FAMILY: Record<PurchaseOrder['status'], StatusFamily> = {
 };
 
 export const PO_STATUS_LABEL: Record<PurchaseOrder['status'], string> = {
-  pending_approval: 'Awaiting approval',
+  pending_approval: 'Pending approval',
   approved: 'Approved',
   part_dispatched: 'Part dispatched',
   fulfilled: 'Fulfilled',
@@ -524,14 +524,18 @@ export function isDispatchUnconfirmed(trip: Trip, now: Date = NOW): boolean {
 
 /**
  * Material that left the yard for a paying customer with no invoice behind it.
- * Own-use and cancelled loads are never sales; the counter customer paid at
- * the gate. What remains is revenue that exists only in a driver's memory.
+ *
+ * "Left the yard" starts at in-transit: under GST the tax invoice is due before
+ * or at the removal of goods, so a load on the road without one is already
+ * unbilled — not only once it is signed for. Own-use and cancelled loads are
+ * never sales; the counter customer paid at the gate. What remains is revenue
+ * that exists only in a driver's memory.
  */
 export function isUnbilledDispatch(trip: Trip): boolean {
   return (
     trip.purpose === 'sale' &&
     trip.customerId !== COUNTER_CASH_CUSTOMER_ID &&
-    (trip.status === 'delivered' || trip.status === 'completed') &&
+    (trip.status === 'in_transit' || trip.status === 'delivered' || trip.status === 'completed') &&
     trip.invoiceId === null
   );
 }
@@ -565,9 +569,14 @@ export function salesAttention(siteId: string | null, now: Date = NOW) {
 
 /* ------------------------------------------------------------ fleet desk */
 
+/**
+ * The first sign-off is the one this desk owes, so it spends the attention
+ * colour; bills waiting on the director have left the desk and are someone
+ * else's court (pending, zero colour budget).
+ */
 export const EXPENSE_STATUS_FAMILY: Record<ExpenseBill['status'], StatusFamily> = {
-  submitted: 'pending',
-  validated: 'attention',
+  submitted: 'attention',
+  validated: 'pending',
   approved: 'active',
   paid: 'ready',
   rejected: 'dormant',
@@ -590,26 +599,75 @@ export const EXPENSE_KIND_LABEL: Record<ExpenseBill['kind'], string> = {
   other: 'Other',
 };
 
+/**
+ * A breakdown in the workshop is still a vehicle that is down — the same
+ * critical state the vehicle carries on Vehicle status. 'planned' is kept for
+ * a service somebody scheduled on purpose.
+ */
 export const BREAKDOWN_STATUS_FAMILY: Record<BreakdownRecord['status'], StatusFamily> = {
   open: 'critical',
-  in_workshop: 'planned',
+  in_workshop: 'critical',
   resolved: 'ready',
 };
 
 export const BREAKDOWN_STATUS_LABEL: Record<BreakdownRecord['status'], string> = {
-  open: 'Open',
-  in_workshop: 'In workshop',
+  open: 'Down — open',
+  in_workshop: 'Down — in workshop',
   resolved: 'Resolved',
 };
 
-/** Crossed its service interval: the km-to-service reading has gone negative. */
+/**
+ * Attendance. Absent is the one to act on today; leave was planned; a rest
+ * day is nobody's problem. None of them is critical, which would promise an
+ * integer beside the word.
+ */
+export const ATTENDANCE_FAMILY: Record<Driver['attendance'], StatusFamily> = {
+  present: 'ready',
+  on_trip: 'active',
+  rest: 'dormant',
+  leave: 'planned',
+  absent: 'attention',
+};
+
+export const ATTENDANCE_LABEL: Record<Driver['attendance'], string> = {
+  present: 'Present',
+  on_trip: 'On trip',
+  rest: 'Rest day',
+  leave: 'On leave',
+  absent: 'Absent',
+};
+
+/**
+ * Crossed its service interval and still running: the km-to-service reading
+ * has gone negative. A vehicle already in the workshop or off the road is
+ * being dealt with, so it is not "due" any more.
+ */
 export function isServiceOverdue(vehicle: Vehicle): boolean {
-  return vehicle.serviceDueInKm !== null && vehicle.serviceDueInKm < 0;
+  return (
+    vehicle.serviceDueInKm !== null &&
+    vehicle.serviceDueInKm < 0 &&
+    vehicle.status !== 'under_service' &&
+    vehicle.status !== 'off_road'
+  );
 }
 
 /** Vehicle ids carrying at least one statutory document past its expiry date. */
 export function vehiclesWithExpiredDocs(): Set<string> {
   return new Set(DOCUMENTS.filter((d) => d.daysLeft < 0).map((d) => d.vehicleId));
+}
+
+/** An expired document that stops the vehicle at the gate — it cannot legally run. */
+export function hasExpiredBlockingDoc(vehicleId: string): boolean {
+  return DOCUMENTS.some((d) => d.vehicleId === vehicleId && d.daysLeft < 0 && d.blocksOperation);
+}
+
+/**
+ * Idle AND roadworthy: could take a load now and has none. A tipper idle only
+ * because its permit lapsed is not dispatch going begging — it is a document
+ * problem, and it is counted under documents expired instead.
+ */
+export function isIdleRoadworthy(vehicle: Vehicle): boolean {
+  return vehicle.status === 'idle' && !hasExpiredBlockingDoc(vehicle.id);
 }
 
 export function isDriverAbsent(driver: Driver): boolean {
@@ -619,6 +677,21 @@ export function isDriverAbsent(driver: Driver): boolean {
 /** Raised but not yet issued or turned down: still somebody's to act on. */
 export function isIndentOpen(indent: Indent): boolean {
   return indent.status === 'submitted' || indent.status === 'approved';
+}
+
+/** The home site of the vehicle a requisition is for, if it names one. */
+function vehicleSiteOf(indent: Indent): string | null {
+  return indent.forAsset ? (VEHICLES.find((v) => v.displayReg === indent.forAsset)?.siteId ?? null) : null;
+}
+
+/**
+ * Requisitions at a site: those raised there, and — for a fleet requisition —
+ * those for a vehicle based there. Tipper spares are raised at the workshop,
+ * but the fleet manager scoped to Karapakkam still owes an answer on oil for a
+ * Karapakkam tipper.
+ */
+export function indentsForSite(siteId: string | null): Indent[] {
+  return siteId ? INDENTS.filter((i) => i.siteId === siteId || vehicleSiteOf(i) === siteId) : INDENTS;
 }
 
 export function breakdownsForSite(siteId: string | null): BreakdownRecord[] {
@@ -639,10 +712,10 @@ export function fleetAttention(siteId: string | null) {
   const vehicles = vehiclesForSite(siteId);
   const expired = vehiclesWithExpiredDocs();
   const drivers = siteId ? DRIVERS.filter((d) => d.siteId === siteId) : DRIVERS;
-  const indents = siteId ? INDENTS.filter((i) => i.siteId === siteId) : INDENTS;
+  const indents = indentsForSite(siteId).filter((i) => i.requestedFor === 'fleet');
   return {
     breakdown: vehicles.filter((v) => v.status === 'breakdown').length,
-    idle: vehicles.filter((v) => v.status === 'idle').length,
+    idle: vehicles.filter(isIdleRoadworthy).length,
     serviceOverdue: vehicles.filter(isServiceOverdue).length,
     docsExpired: vehicles.filter((v) => expired.has(v.id)).length,
     driversAbsent: drivers.filter(isDriverAbsent).length,

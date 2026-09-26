@@ -53,7 +53,19 @@ ALTER ROLE linck_audit NOSUPERUSER NOBYPASSRLS;
 GRANT linck_identity TO linck_migrator;
 GRANT linck_audit TO linck_migrator;
 
-GRANT CONNECT ON DATABASE linck_dev TO linck_app, linck_migrator;
+-- linck_app gets CONNECT only. The migrator also needs CREATE,
+-- because migrations create schemas: its own `alembic` schema for the version
+-- table (see alembic/env.py), the business schemas Phase 2 adds, and `core` —
+-- which exists by the time migration 1 runs, but CREATE SCHEMA IF NOT EXISTS
+-- checks this privilege before it checks whether the schema is already there.
+GRANT CONNECT ON DATABASE linck_dev TO linck_app;
+GRANT CONNECT, CREATE ON DATABASE linck_dev TO linck_migrator;
+
+-- Nothing of ours lives in public, so nobody may create there, the app role
+-- least of all. Postgres 15+ ships this way; 14, and any cluster upgraded from
+-- it, still grants CREATE on public to every role. The two login roles are
+-- named as well, so a grant someone made by hand does not outlive a re-run.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, linck_app, linck_migrator;
 
 CREATE SCHEMA IF NOT EXISTS core AUTHORIZATION linck_migrator;
 

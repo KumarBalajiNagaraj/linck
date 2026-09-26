@@ -35,10 +35,10 @@ pnpm install && pnpm dev
 
 Open http://localhost:5173. The two selectors in the top right are not demo toys. The role selector drives the real permission-filtered navigation, and the tenant-shape selector drives real module gating: a Stores clerk genuinely cannot see the executive dashboard, and a fleet-only tenant has no Production workspace at all.
 
-**API** — needs Postgres. One-time setup:
+**API** — needs Postgres. One-time setup, as a Postgres superuser (a Homebrew install's default role is one):
 
 ```bash
-psql -d linck_dev -f apps/api/scripts/init-roles.sql
+createdb linck_dev && psql -d linck_dev -f apps/api/scripts/init-roles.sql
 ```
 
 ```bash

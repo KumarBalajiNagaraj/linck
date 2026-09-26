@@ -1,17 +1,33 @@
 import type { StatusFamily } from '@linck/tokens';
 import {
   DOCUMENTS,
+  BREAKDOWNS,
   DRIVERS,
   EWAY_BILLS,
+  EXPENSE_BILLS,
   GSTIN_STANDINGS,
+  INDENTS,
   INVOICES,
+  PURCHASE_ORDERS,
   RECEIPTS,
   STOCK,
   TRIPS,
   VEHICLES,
 } from './data.js';
 import { NOW } from './seed.js';
-import type { EwayBill, GstinStanding, Invoice, Trip, Vehicle, VehicleStatus } from './types.js';
+import type {
+  BreakdownRecord,
+  Driver,
+  EwayBill,
+  ExpenseBill,
+  GstinStanding,
+  Indent,
+  Invoice,
+  PurchaseOrder,
+  Trip,
+  Vehicle,
+  VehicleStatus,
+} from './types.js';
 
 /**
  * Derived figures.
@@ -445,4 +461,279 @@ export function blockedGstinsFor(bills: EwayBill[]): GstinStanding[] {
 /** Consignments held by one blocked registration — the count that makes it urgent. */
 export function ewbHeldByGstin(bills: EwayBill[], gstin: string): EwayBill[] {
   return bills.filter((b) => b.supplierGstin === gstin && b.stage === 'not_generated');
+}
+
+/* ------------------------------------------------------------ sales desk */
+
+/** The walk-in customer. Paid at the gate, so a load to it is never unbilled. */
+export const COUNTER_CASH_CUSTOMER_ID = 'cus-06';
+
+/**
+ * A planned load older than this has missed its slot. Six hours is one loading
+ * shift: an order taken at 06:30 that still has not reached the chute by
+ * lunch is a customer about to ring.
+ */
+export const DISPATCH_DELAY_HOURS = 6;
+
+export const PO_STATUS_FAMILY: Record<PurchaseOrder['status'], StatusFamily> = {
+  pending_approval: 'pending',
+  approved: 'active',
+  part_dispatched: 'attention',
+  fulfilled: 'ready',
+  rejected: 'dormant',
+};
+
+export const PO_STATUS_LABEL: Record<PurchaseOrder['status'], string> = {
+  pending_approval: 'Pending approval',
+  approved: 'Approved',
+  part_dispatched: 'Part dispatched',
+  fulfilled: 'Fulfilled',
+  rejected: 'Rejected',
+};
+
+/** A trip belongs to the site of the vehicle carrying it. */
+export function tripsForSite(siteId: string | null): Trip[] {
+  if (!siteId) return TRIPS;
+  const vehicleIds = new Set(vehiclesForSite(siteId).map((v) => v.id));
+  return TRIPS.filter((t) => vehicleIds.has(t.vehicleId));
+}
+
+/**
+ * An invoice carries no site of its own — its site is the site of the trips it
+ * bills. One with no trips (advance, counter sale) is org-level and stays
+ * visible at every scope rather than silently vanishing.
+ */
+export function invoicesForSite(siteId: string | null): Invoice[] {
+  if (!siteId) return INVOICES;
+  const tripIds = new Set(tripsForSite(siteId).map((t) => t.id));
+  return INVOICES.filter((i) => i.tripIds.length === 0 || i.tripIds.some((id) => tripIds.has(id)));
+}
+
+export function purchaseOrdersForSite(siteId: string | null): PurchaseOrder[] {
+  return siteId ? PURCHASE_ORDERS.filter((p) => p.siteId === siteId) : PURCHASE_ORDERS;
+}
+
+/**
+ * Loaded but not yet confirmed out of the gate, or planned and past its slot.
+ * Either way the customer has been promised a lorry that is not on the road.
+ */
+export function isDispatchUnconfirmed(trip: Trip, now: Date = NOW): boolean {
+  if (trip.status === 'loaded') return true;
+  return trip.status === 'planned' && now.getTime() - Date.parse(trip.date) > DISPATCH_DELAY_HOURS * 3_600_000;
+}
+
+/**
+ * Material that left the yard for a paying customer with no invoice behind it.
+ *
+ * "Left the yard" starts at in-transit: under GST the tax invoice is due before
+ * or at the removal of goods, so a load on the road without one is already
+ * unbilled — not only once it is signed for. Own-use and cancelled loads are
+ * never sales; the counter customer paid at the gate. What remains is revenue
+ * that exists only in a driver's memory.
+ */
+export function isUnbilledDispatch(trip: Trip): boolean {
+  return (
+    trip.purpose === 'sale' &&
+    trip.customerId !== COUNTER_CASH_CUSTOMER_ID &&
+    (trip.status === 'in_transit' || trip.status === 'delivered' || trip.status === 'completed') &&
+    trip.invoiceId === null
+  );
+}
+
+/** Past due with money still owed. Drafts and closed files are not receivables. */
+export function isInvoiceOverdue(invoice: Invoice): boolean {
+  return (
+    invoice.status !== 'draft' &&
+    invoice.status !== 'closed' &&
+    invoice.daysOverdue > 0 &&
+    Number.parseFloat(invoice.balanceDue) > 0
+  );
+}
+
+/**
+ * The five counts the sales coordinator's command board leads with. Each one
+ * uses the same predicate as the pre-filtered list it links to, so the number
+ * on the card is the number of rows on the other side of the click.
+ */
+export function salesAttention(siteId: string | null, now: Date = NOW) {
+  const trips = tripsForSite(siteId);
+  const stock = siteId ? STOCK.filter((s) => s.siteId === siteId) : STOCK;
+  return {
+    ordersPendingApproval: purchaseOrdersForSite(siteId).filter((p) => p.status === 'pending_approval').length,
+    dispatchUnconfirmed: trips.filter((t) => isDispatchUnconfirmed(t, now)).length,
+    unbilledDispatch: trips.filter(isUnbilledDispatch).length,
+    invoicesOverdue: invoicesForSite(siteId).filter(isInvoiceOverdue).length,
+    stockBelowSafety: stock.filter((s) => s.units < s.safetyUnits).length,
+  };
+}
+
+/* ------------------------------------------------------------ fleet desk */
+
+/**
+ * The first sign-off is the one this desk owes, so it spends the attention
+ * colour; bills waiting on the director have left the desk and are someone
+ * else's court (pending, zero colour budget).
+ */
+export const EXPENSE_STATUS_FAMILY: Record<ExpenseBill['status'], StatusFamily> = {
+  submitted: 'attention',
+  validated: 'pending',
+  approved: 'pending',
+  passed: 'active',
+  paid: 'ready',
+  rejected: 'dormant',
+  deleted: 'dormant',
+};
+
+export const EXPENSE_STATUS_LABEL: Record<ExpenseBill['status'], string> = {
+  submitted: 'Awaiting validation',
+  validated: 'Awaiting director',
+  approved: 'Awaiting accounts',
+  passed: 'Passed for payment',
+  paid: 'Paid',
+  rejected: 'Rejected',
+  deleted: 'Deleted',
+};
+
+export const EXPENSE_KIND_LABEL: Record<ExpenseBill['kind'], string> = {
+  diesel: 'Diesel',
+  repair: 'Repair',
+  tyre: 'Tyre',
+  spares: 'Spares',
+  toll: 'Toll',
+  other: 'Other',
+};
+
+/**
+ * A breakdown in the workshop is still a vehicle that is down — the same
+ * critical state the vehicle carries on Vehicle status. 'planned' is kept for
+ * a service somebody scheduled on purpose.
+ */
+export const BREAKDOWN_STATUS_FAMILY: Record<BreakdownRecord['status'], StatusFamily> = {
+  open: 'critical',
+  in_workshop: 'critical',
+  resolved: 'ready',
+};
+
+export const BREAKDOWN_STATUS_LABEL: Record<BreakdownRecord['status'], string> = {
+  open: 'Down — open',
+  in_workshop: 'Down — in workshop',
+  resolved: 'Resolved',
+};
+
+/**
+ * Attendance. Absent is the one to act on today; leave was planned; a rest
+ * day is nobody's problem. None of them is critical, which would promise an
+ * integer beside the word.
+ */
+export const ATTENDANCE_FAMILY: Record<Driver['attendance'], StatusFamily> = {
+  present: 'ready',
+  on_trip: 'active',
+  rest: 'dormant',
+  leave: 'planned',
+  absent: 'attention',
+};
+
+export const ATTENDANCE_LABEL: Record<Driver['attendance'], string> = {
+  present: 'Present',
+  on_trip: 'On trip',
+  rest: 'Rest day',
+  leave: 'On leave',
+  absent: 'Absent',
+};
+
+/**
+ * Crossed its service interval and still running: the km-to-service reading
+ * has gone negative. A vehicle already in the workshop or off the road is
+ * being dealt with, so it is not "due" any more.
+ */
+export function isServiceOverdue(vehicle: Vehicle): boolean {
+  return (
+    vehicle.serviceDueInKm !== null &&
+    vehicle.serviceDueInKm < 0 &&
+    vehicle.status !== 'under_service' &&
+    vehicle.status !== 'off_road'
+  );
+}
+
+/** Vehicle ids carrying at least one statutory document past its expiry date. */
+export function vehiclesWithExpiredDocs(): Set<string> {
+  return new Set(DOCUMENTS.filter((d) => d.daysLeft < 0).map((d) => d.vehicleId));
+}
+
+/** An expired document that stops the vehicle at the gate — it cannot legally run. */
+export function hasExpiredBlockingDoc(vehicleId: string): boolean {
+  return DOCUMENTS.some((d) => d.vehicleId === vehicleId && d.daysLeft < 0 && d.blocksOperation);
+}
+
+/**
+ * Idle AND roadworthy: could take a load now and has none. A tipper idle only
+ * because its permit lapsed is not dispatch going begging — it is a document
+ * problem, and it is counted under documents expired instead.
+ */
+export function isIdleRoadworthy(vehicle: Vehicle): boolean {
+  return vehicle.status === 'idle' && !hasExpiredBlockingDoc(vehicle.id);
+}
+
+export function isDriverAbsent(driver: Driver): boolean {
+  return driver.attendance === 'absent' || driver.attendance === 'leave';
+}
+
+/** Raised but not yet issued or turned down: still somebody's to act on. */
+export function isIndentOpen(indent: Indent): boolean {
+  return indent.status === 'submitted' || indent.status === 'approved';
+}
+
+/** The home site of the vehicle a requisition is for, if it names one. */
+function vehicleSiteOf(indent: Indent): string | null {
+  return indent.forAsset ? (VEHICLES.find((v) => v.displayReg === indent.forAsset)?.siteId ?? null) : null;
+}
+
+/**
+ * Requisitions at a site: those raised there, and — for a fleet requisition —
+ * those for a vehicle based there. Tipper spares are raised at the workshop,
+ * but the fleet manager scoped to Karapakkam still owes an answer on oil for a
+ * Karapakkam tipper.
+ */
+export function indentsForSite(siteId: string | null): Indent[] {
+  return siteId ? INDENTS.filter((i) => i.siteId === siteId || vehicleSiteOf(i) === siteId) : INDENTS;
+}
+
+export function breakdownsForSite(siteId: string | null): BreakdownRecord[] {
+  if (!siteId) return BREAKDOWNS;
+  const ids = new Set(vehiclesForSite(siteId).map((v) => v.id));
+  return BREAKDOWNS.filter((b) => ids.has(b.vehicleId));
+}
+
+/**
+ * Bills in scope for one desk at one site. The store manager's bills are
+ * raised against the workshop, so a fleet manager scoped to a crusher does
+ * not see them and vice versa.
+ */
+export function expensesForSite(
+  siteId: string | null,
+  desk: ExpenseBill['desk'] | null = null,
+  bills: readonly ExpenseBill[] = EXPENSE_BILLS,
+): ExpenseBill[] {
+  return bills.filter((e) => (siteId === null || e.siteId === siteId) && (desk === null || e.desk === desk));
+}
+
+/**
+ * Six of the seven counts the fleet manager's command board leads with. As
+ * with the sales desk, each uses the predicate its destination list filters
+ * by. The seventh, expenses awaiting validation, is counted on the live bill
+ * store instead — bills uploaded this session are not in the seed.
+ */
+export function fleetAttention(siteId: string | null) {
+  const vehicles = vehiclesForSite(siteId);
+  const expired = vehiclesWithExpiredDocs();
+  const drivers = siteId ? DRIVERS.filter((d) => d.siteId === siteId) : DRIVERS;
+  const indents = indentsForSite(siteId).filter((i) => i.requestedFor === 'fleet');
+  return {
+    breakdown: vehicles.filter((v) => v.status === 'breakdown').length,
+    idle: vehicles.filter(isIdleRoadworthy).length,
+    serviceOverdue: vehicles.filter(isServiceOverdue).length,
+    docsExpired: vehicles.filter((v) => expired.has(v.id)).length,
+    driversAbsent: drivers.filter(isDriverAbsent).length,
+    openStoreRequests: indents.filter(isIndentOpen).length,
+  };
 }

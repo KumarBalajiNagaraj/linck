@@ -90,6 +90,10 @@ export const ROLE_LABEL: Record<Role, string> = {
  */
 export const PERSONA_HOME_RULES: ReadonlyArray<{ permission: string; route: string }> = [
   { permission: 'executive.dashboard.read', route: '/overview' },
+  // Ahead of the fleet board, so anyone who holds both lands on their own
+  // desk's board. (The sales coordinator reads the vehicle list to see which
+  // lorries are free; the fleet command board is not theirs at all.)
+  { permission: 'sales.board.read', route: '/sales/board' },
   { permission: 'fleet.board.read', route: '/fleet/board' },
   { permission: 'sales.dispatch.read', route: '/sales/dispatch' },
   { permission: 'production.run.create', route: '/production/runs/new' },

@@ -33,6 +33,9 @@ import {
   type Column,
 } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
+import { useViewParam } from '../../shell/useViewParam.js';
+
+const STOCK_VIEWS = ['all', 'below', 'variance', 'stale'] as const;
 
 /**
  * THE LIVE STOCK POSITION BOARD.
@@ -101,7 +104,7 @@ export function StockBoard() {
    * breakpoint in JavaScript.
    */
   const headerFitsChips = useMinWidth('md');
-  const [filter, setFilter] = useState<'all' | 'below' | 'variance' | 'stale'>('all');
+  const [filter, setFilter] = useViewParam(STOCK_VIEWS, 'all');
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
   /** Which product the board-level waterfall is pointed at. Set by clicking a bar. */
   const [focusKey, setFocusKey] = useState<string | undefined>(undefined);
@@ -471,6 +474,7 @@ export function StockBoard() {
         </Section>
       </div>
 
+      <div id="list" />
       <Section
         caption="Units first, tonnes derived"
         title="What can be sold right now"

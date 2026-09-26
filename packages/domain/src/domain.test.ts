@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAccounting, formatINR, formatINRCompact } from './money.js';
+import { formatAccounting, formatINR, formatINRCompact, parseTypedAmount } from './money.js';
 import { businessDate, daysUntil, fiscalQuarter, fiscalYearOf, fyRange } from './date.js';
 import { can, resolveHome, type Grants } from './permissions.js';
 import { CFT_PER_UNIT, freezeQuantity, tonnesToUnits, unitsToTonnes, weighbridgeVariancePct } from './uom.js';
@@ -100,5 +100,34 @@ describe('permissions', () => {
   it('sends a user to the highest-priority home they can reach', () => {
     expect(resolveHome(grants)).toBe('/overview');
     expect(resolveHome({ 'fleet.board.read': { orgWide: true, siteIds: [] } })).toBe('/fleet/board');
+  });
+
+  it('lands a sales coordinator on the sales board even though they can read the fleet board', () => {
+    const sales: Grants = {
+      'fleet.board.read': { orgWide: false, siteIds: ['site-krp'] },
+      'sales.board.read': { orgWide: false, siteIds: ['site-krp'] },
+      'sales.dispatch.read': { orgWide: false, siteIds: ['site-krp'] },
+    };
+    expect(resolveHome(sales)).toBe('/sales/board');
+  });
+});
+
+describe('typed amounts', () => {
+  it('reads what people type off a bill, grouping and all', () => {
+    expect(parseTypedAmount('12,500')).toBe(12500);
+    expect(parseTypedAmount('12,500.00')).toBe(12500);
+    expect(parseTypedAmount('₹ 1,50,000.50')).toBe(150000.5);
+    expect(parseTypedAmount('Rs. 850')).toBe(850);
+    expect(parseTypedAmount(' 120.45 ')).toBe(120.45);
+  });
+
+  it('refuses anything it would have to guess at', () => {
+    expect(parseTypedAmount('12.500,00')).toBeNull();
+    expect(parseTypedAmount('12 500')).toBeNull();
+    expect(parseTypedAmount('12,50')).toBeNull();
+    expect(parseTypedAmount('12.505')).toBeNull();
+    expect(parseTypedAmount('12.505', 3)).toBe(12.505);
+    expect(parseTypedAmount('')).toBeNull();
+    expect(parseTypedAmount('abc')).toBeNull();
   });
 });

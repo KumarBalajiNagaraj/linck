@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
 from app.api.me import router as me_router
+from app.api.whatsapp import router as whatsapp_router
+from app.api.whatsapp import webhook_router as whatsapp_webhook_router
 from app.core.db import check_rls_posture, engine
 from app.core.settings import get_settings
 
@@ -99,6 +101,8 @@ def create_app() -> FastAPI:
     if auth_router is not None:
         app.include_router(auth_router)
     app.include_router(me_router)
+    app.include_router(whatsapp_webhook_router)
+    app.include_router(whatsapp_router)
 
     return app
 

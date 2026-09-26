@@ -46,7 +46,7 @@ export interface NavItem {
   route: string;
   permission: string;
   /** Shown against the item so the rail communicates work-to-do without opening anything. */
-  badge?: 'expiring_docs' | 'unverified_receipts' | 'extraction_queue' | 'open_indents' | 'breakdowns';
+  badge?: 'expiring_docs' | 'unverified_receipts' | 'extraction_queue' | 'open_indents' | 'breakdowns' | 'pending_expenses';
 }
 
 export interface Workspace {
@@ -79,8 +79,14 @@ export const WORKSPACES: Workspace[] = [
     glyph: '▤',
     module: 'fleet',
     items: [
-      { key: 'board', label: 'Command board', route: '/fleet/board', permission: 'fleet.board.read', badge: 'breakdowns' },
+      { key: 'board', label: 'Command board', route: '/fleet/board', permission: 'fleet.board.read' },
+      { key: 'vehicles', label: 'Vehicle status', route: '/fleet/vehicles', permission: 'fleet.vehicle.read', badge: 'breakdowns' },
+      { key: 'drivers', label: 'Driver list', route: '/fleet/drivers', permission: 'fleet.driver.read' },
+      { key: 'breakdowns', label: 'Breakdown register', route: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
+      { key: 'expenses', label: 'Expenses', route: '/fleet/expenses', permission: 'fleet.expense.read', badge: 'pending_expenses' },
       { key: 'fuel', label: 'Diesel & DEF entry', route: '/fleet/fuel/new', permission: 'fleet.fuel.create' },
+      { key: 'whatsapp', label: 'Diesel slips from WhatsApp', route: '/fleet/whatsapp', permission: 'fleet.expense.upload' },
+      { key: 'diesel-summary', label: 'Diesel summary', route: '/fleet/diesel-summary', permission: 'fleet.expense.read' },
       { key: 'docs', label: 'Documents & expiry', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
       // Inter-state movement is material here, so the e-way bill console is a
       // first-class destination and not a tab hidden inside dispatch.
@@ -103,6 +109,9 @@ export const WORKSPACES: Workspace[] = [
     glyph: '◨',
     module: 'sales',
     items: [
+      { key: 'sales-board', label: 'Command board', route: '/sales/board', permission: 'sales.board.read' },
+      { key: 'customers', label: 'Customers', route: '/sales/customers', permission: 'sales.customer.read' },
+      { key: 'orders', label: 'Purchase orders', route: '/sales/orders', permission: 'sales.order.read' },
       { key: 'dispatch', label: 'Dispatch board', route: '/sales/dispatch', permission: 'sales.dispatch.read' },
       { key: 'invoices', label: 'Invoices', route: '/sales/invoices', permission: 'sales.invoice.read' },
     ],
@@ -114,6 +123,7 @@ export const WORKSPACES: Workspace[] = [
     module: 'stores',
     items: [
       { key: 'indents', label: 'Indent queue', route: '/stores/indents', permission: 'stores.indent.read', badge: 'open_indents' },
+      { key: 'store-expenses', label: 'Expenses', route: '/stores/expenses', permission: 'stores.expense.read' },
     ],
   },
   {
@@ -129,6 +139,7 @@ export const WORKSPACES: Workspace[] = [
         permission: 'finance.receipt.read',
         badge: 'unverified_receipts',
       },
+      { key: 'expense-bills', label: 'Expense bills', route: '/finance/expenses', permission: 'finance.expense.read' },
     ],
   },
   {
@@ -138,6 +149,7 @@ export const WORKSPACES: Workspace[] = [
     module: 'ai',
     items: [
       { key: 'review', label: 'Extraction review', route: '/ai/review', permission: 'ai.extraction.review', badge: 'extraction_queue' },
+      { key: 'crosscheck', label: 'Delivery paper cross-check', route: '/ai/crosscheck', permission: 'ai.extraction.review' },
     ],
   },
 ];

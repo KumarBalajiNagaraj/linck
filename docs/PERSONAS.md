@@ -14,7 +14,7 @@ It is written from an audit of the code, not from memory. Where something is hal
 | **Designed** | Specified in [DATABASE.md](DATABASE.md) with column-level detail, not migrated. |
 | **Not started** | Nothing. |
 
-**One caveat applies to every screen: nothing in the web app is wired to the API.** All twelve screens read `@linck/mock`. Every action that appears to save something writes React state and loses it on reload. The session contract is written in `apps/web/src/auth/session.ts` and deliberately unimported — a half-wired session that failed at boot would take down all twelve screens.
+**One caveat applies to every screen: nothing in the web app is wired to the API.** Every screen reads `@linck/mock`. Every action that appears to save something writes React state and loses it on reload. The session contract is written in `apps/web/src/auth/session.ts` and deliberately unimported — a half-wired session that failed at boot would take down every screen.
 
 What *is* real: Google sign-in, tenancy, scoped RBAC and row-level security all run against Postgres and are proven by tests. Everything else is a working interface over fixtures.
 
@@ -26,13 +26,13 @@ Counting the individual asks in the original brief: **15 built, 16 mock-only, 38
 
 | Persona | Screens they can open | State of their job |
 |---|---|---|
-| Executive | 10 — all of them | Can see the business. Cannot see a P&L, because there is no ledger. |
-| Accounts | 5 | The receivables half is the strongest thing in the product. The expenses half does not exist. |
+| Executive | All of them | Can see the business. Cannot see a P&L, because there is no ledger. |
+| Accounts | 5 | The receivables half is the strongest thing in the product. The expenses half stops at upload: bills come in, nobody can approve or pay them yet. |
 | Fleet | 6 | Status, diesel and documents are solid. Tyres, services and attendance are not built. |
 | Maintenance | 7 (borrowed) | No role of their own, and nowhere to record a repair. |
-| Stores | 3 | Approves indents. Cannot raise one, receive goods, or see an item or a vendor. |
+| Stores | 4 | Approves indents and uploads the workshop's expense bills. Cannot raise an indent, receive goods, or see an item or a vendor. |
 | Production | 3 | The joint-production model is the best-served thing here. Boulder receipt is missing. |
-| Sales | 5 | Can run the yard. Cannot take an order or raise an invoice. |
+| Sales | 8 | Lands on their own command board. Can review and approve customer orders; cannot take a new order or raise an invoice. |
 | Driver | 1 (plus one 404) | Effectively not built. |
 | Team admin | 1 | Backend finished, frontend absent. |
 
@@ -42,7 +42,7 @@ Counting the individual asks in the original brief: **15 built, 16 mock-only, 38
 
 **The job.** He owns the plants and the fleet and is the only person who sees all three sites at once. His job on this system is to spot where money, material or paperwork has quietly gone missing. He is also routinely the second pair of eyes on cash.
 
-**Built for him.** The executive dashboard is his landing screen: cash position, receivables, reported-but-unverified money, and fleet uptime, then a fourteen-day revenue and margin trend, the material reconciliation, receivables ageing, a downtime Pareto, product mix, and compliance exposure. He can open all ten screens.
+**Built for him.** The executive dashboard is his landing screen: cash position, receivables, reported-but-unverified money, and fleet uptime, then a fourteen-day revenue and margin trend, the material reconciliation, receivables ageing, a downtime Pareto, product mix, and compliance exposure. He can open every screen.
 
 Three things on it are sharper than a normal ERP dashboard:
 
@@ -95,7 +95,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Insurance, road tax, insurance end date, permit dates — manually entered | Partial — the register displays them; **there is nowhere to enter them** |
 | The hard rule: invoice does not close until cross-verified | Partial — enforced in the UI, not yet in the database, and a page refresh erases it |
 | Billing | Partial — read-only; the permission exists, no screen writes |
-| Expense management | Not started |
+| Expense management | Partial — the fleet and store managers upload scanned bills (diesel, repair, tyre, spares, toll) into an expense register on mock data; validation, approval and payment are not built |
 | Ad-hoc expenses | Not started |
 | Vehicle EMI | Not started |
 | Employee salary | Not started |
@@ -119,7 +119,9 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **The job.** Keeps 58 tippers earning. Knows which are on trip, ready, idle, in service or broken down; chases the paperwork and the service that would stop one at the gate; and polices diesel, the largest operating cost and the largest leak.
 
-**Built for him.** The fleet command board, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+**Built for them.** The fleet command board, vehicle status, the driver list, the breakdown register, the expenses register with scanned-bill upload, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+
+- **The fleet command board** (`/fleet/board`, their landing page) links to the seven databases the desk works in: Vehicles, Driver List, Delivery Order & Dispatch, Breakdown Register, Expenses Approval, Maintenance Stores and Vehicle Documents. Below the links are seven urgent counts: breakdown, documents expired, due for service, drivers absent, expenses awaiting approval, open store requests, and idle. Each count opens its pre-filtered list via `?view=`. The uptime tiles, status bar, uptime trend and diesel scatter moved unchanged to **Vehicle status** (`/fleet/vehicles`).
 
 - **Idle is an attention state and uptime forgives planned service.** Uptime is on-trip plus ready over total, with under-service excluded from downtime — counting a planned service as a failure teaches the team to skip services to protect the number.
 - **Diesel is policed against each vehicle's own benchmark and own tank**, not a fleet average. One threshold — 82% of benchmark — is applied identically in the table cell, the sparkline, the scatter flag and the exception filter.
@@ -133,7 +135,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Vehicle mileage, diesel bill entries | Mock only |
 | **Tyre mileage** | **Not started** — no type, no field, no screen. Also the largest single downtime cause in our own data. |
 | Exhaust fluid (DEF) | Partial — the field is on screen and validated, and the save silently discards it |
-| Driver attendance | Partial — the data generator and the heat-grid chart both exist and are wired to nothing |
+| Driver attendance | Partial — the Driver list shows today's attendance, and absence is counted on the command board; marking attendance is not built |
 | Regular scheduled services / expected for maintenance | Partial — one bare "service due in km" integer with no history and no schedule |
 | How many services and expenses | Not started |
 | Telematics APIs for 35T/48T tippers | Not started — correctly last; manual entry must work first |
@@ -146,7 +148,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | 2 | Make "raise an indent" actually raise one — the button has no handler and the palette advertises it | S |
 | 3 | Reconcile the frontend fleet persona with the seeded backend role — they disagree on three permissions | S |
 | 4 | Driver attendance screen — the generator and the chart exist; only the marking action is missing | M |
-| 5 | Breakdown lifecycle: reason code, repair job, downtime hours, per-vehicle Pareto | M |
+| 5 | Breakdown lifecycle: reason code, repair job, per-vehicle Pareto. A read-only breakdown register with downtime and repair cost exists; recording and closing a breakdown there does not | M |
 | 6 | Service records and schedule — three of the brief's asks rest on this | L |
 | 7 | **Tyre register** — serialised fitment by axle position, km at fit and removal, cost per km | L |
 | 8 | Per-vehicle cost view: diesel, DEF, tyres, services and renewals in one place, per km and per tonne | L |
@@ -162,7 +164,7 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **What exists.** Breakdown is a first-class urgency on the indent queue, and the queue sorts urgency above age. Crusher stoppage capture on the shift form is wear-part specific — jaw plate change, cone liner wear, belt slip — and downtime hours without a reason is the only thing that blocks a save on that screen.
 
-**What does not.** Job cards. Service history. Any asset record for the work to hang off — "Jaw + VSI — KRP 250TPH" exists only as text on three indent rows, and the sheet's "also queued against this asset" works by string equality. "Report breakdown" on the fleet board is one-way: there is no way to set under-service, no way to clear a breakdown, and no record of what was done.
+**What does not.** Job cards. Service history. Any asset record for the work to hang off — "Jaw + VSI — KRP 250TPH" exists only as text on three indent rows, and the sheet's "also queued against this asset" works by string equality. "Report breakdown" on Vehicle status is one-way: there is no way to set under-service, no way to clear a breakdown, and no record of what was done.
 
 **Next, in order.**
 
@@ -182,7 +184,10 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **The job.** The man at the counter who decides whether a requested spare is approved and handed out, judged on how long a stopped crusher waited on his desk.
 
-**Built for him.** The indent queue, the live stock board, and extraction review.
+**Built for him.** The indent queue, the live stock board, extraction review, and the stores expense register (`/stores/expenses`), where he uploads the workshop's scanned bills.
+
+- **A bill is not accepted without its scan**, shown beside the form while the figures are keyed, and a typed amount is read back ("Read as ₹12,500.00") before anyone submits it — `12,500` once went through as ₹12.
+- **Uploads live in the browser session** until the expense API lands (LIN-20): the scan is an object URL, and a reload loses it.
 
 - **The queue is ordered by what is stopped**, not by date or amount, and says so: "a plant or a tipper is stopped until these are approved."
 - **Reject is a decision with a physical consequence.** On a breakdown indent you must type the indent number, under a sentence that refuses to flatter: rejecting does not restart the plant, it only takes the line off your list.
@@ -199,6 +204,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Raising an indent | Not started — he holds the permission, the button has no handler |
 | Goods receipt | Not started — though the AI queue tells him in plain words that confirming an invoice "posts a GRN into Karapakkam Workshop stores" |
 | Purchase order | Not started |
+| Expense bills | Partial — upload and register built; nobody validates a stores bill yet — who does is settled with the approval chain (LIN-14) |
 
 **Next, in order.**
 
@@ -254,7 +260,10 @@ This is the best-served domain model in the product:
 
 **The job.** Turns a phone call into a loaded tipper and eventually into money.
 
-**Built for them.** The dispatch board, the invoice ledger, the stock board, the e-way bill console, and the fleet board.
+**Built for them.** The dispatch board, the invoice ledger, the stock board, the e-way bill console, and the vehicle list (to see which lorries are free — not the fleet manager's command board).
+
+- **The sales command board** (`/sales/board`, their landing page) — five urgent-action counts (unraised invoices, orders pending approval, dispatches unconfirmed or delayed, invoices overdue, stock below safety level), each opening its own pre-filtered list via `?view=`, over a row of links to Material Stock, Customers, Purchase Orders, Material Dispatch and Invoices.
+- **Customer and purchase-order databases** (`/sales/customers`, `/sales/orders`) on seeded mock data, with approve / reject on an order awaiting sign-off.
 
 - **The trip cost sheet** — revenue and cash cost on one page per load, with named handling for the three kinds of load that earn nothing: returned, cancelled, own-use. A returned load shows zero revenue against full cost, which is exactly the number the business needs to see.
 - **Quantity basis rides beside every quantity**, and weighbridge variance is drawn as a trend rather than an invoice block. Moisture alone moves apparent density 8–15%.
@@ -269,7 +278,7 @@ This is the best-served domain model in the product:
 | Transport costing in detail | Partial — the numbers are pre-computed, not derived from a duty log |
 | e-Way bill after loading | Partial — Part B can be keyed; **Part A cannot be raised**, which is literally the ask |
 | Coordinate with production on loading | Partial |
-| **Receives orders** | **Not started** — the dispatch board can only move pre-seeded trips |
+| **Receives orders** | Partial — customer purchase orders can be listed, approved and rejected (mock data); taking a new order is not built |
 | **Orders drivers to do the transport** | **Not started** — the driver is inherited from the vehicle and rendered read-only |
 | Generates invoices | Not started — and neither the persona nor the backend role grants invoice-write to sales |
 | Payment type flexibility | Partial — only a method field |
@@ -279,7 +288,7 @@ This is the best-served domain model in the product:
 | | Item | Effort |
 |---|---|---|
 | 1 | Permission-gate the write actions that are currently ungated — invoice close, e-way bill Part B and cancel all check nothing | S |
-| 2 | Fix the landing route — this persona lands on the fleet board, not their own dispatch board | S |
+| 2 | ~~Fix the landing route — this persona lands on the fleet board, not their own dispatch board~~ — done: they land on the sales command board | S |
 | 3 | Give sales `compliance.ewb.write` in the frontend persona, matching the backend role | S |
 | 4 | Move the e-way bill console into its own Compliance workspace — a crusher-only tenant loses it entirely today | S |
 | 5 | Join the console to the dispatch board, add a movement field, and add Generate Part A. A cross-border load currently reads "not required" against the wrong threshold | M |

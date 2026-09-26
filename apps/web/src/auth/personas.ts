@@ -45,11 +45,22 @@ export const PERSONAS: Persona[] = [
       'executive.dashboard.read',
       'fleet.board.read',
       'fleet.vehicle.read',
+      'fleet.driver.read',
+      'fleet.breakdown.read',
+      'fleet.expense.read',
+      'stores.expense.read',
+      // LIN-14: the director approves bills the desks have validated.
+      'finance.expense.read',
+      'finance.expense.approve',
       'production.stock.read',
       'production.run.read',
       'sales.dispatch.read',
       'sales.trip.read',
       'sales.invoice.read',
+      'sales.board.read',
+      'sales.customer.read',
+      'sales.order.read',
+      'sales.order.approve',
       'finance.receipt.read',
       'finance.receipt.verify',
       'compliance.document.read',
@@ -70,6 +81,10 @@ export const PERSONAS: Persona[] = [
         'sales.invoice.read',
         'finance.receipt.read',
         'finance.receipt.verify',
+        // LIN-14: accounts passes approved bills for payment and records the payment.
+        'finance.expense.read',
+        'finance.expense.pass',
+        'finance.expense.pay',
         'compliance.document.read',
         'compliance.document.write',
         'compliance.ewb.read',
@@ -84,10 +99,16 @@ export const PERSONAS: Persona[] = [
     roleLabel: 'Fleet Manager',
     siteIds: [KRP, TVL, WSP],
     defaultSiteId: KRP,
-    grants: scoped(
+    grants: {
+      ...scoped(
       [
         'fleet.board.read',
         'fleet.vehicle.read',
+        'fleet.driver.read',
+        'fleet.breakdown.read',
+        'fleet.expense.read',
+        'fleet.expense.validate',
+        'fleet.expense.upload',
         'fleet.fuel.create',
         'fleet.fuel.read',
         'compliance.document.read',
@@ -99,6 +120,10 @@ export const PERSONAS: Persona[] = [
       ],
       [KRP, TVL, WSP],
     ),
+    // LIN-14: the store manager uploads the workshop's bills; the fleet
+    // manager is the second pair of eyes that validates them, there only.
+      ...scoped(['stores.expense.read', 'stores.expense.validate'], [WSP]),
+    },
   },
   {
     key: 'production',
@@ -119,12 +144,18 @@ export const PERSONAS: Persona[] = [
     defaultSiteId: KRP,
     grants: scoped(
       [
+        'sales.board.read',
+        'sales.customer.read',
+        'sales.order.read',
+        'sales.order.approve',
         'sales.dispatch.read',
         'sales.dispatch.write',
         'sales.trip.read',
         'sales.invoice.read',
         'production.stock.read',
-        'fleet.board.read',
+        // The vehicle list, to see which lorries are free — not the fleet
+        // manager's command board, which is another desk's work.
+        'fleet.vehicle.read',
         'compliance.ewb.read',
       ],
       [KRP, TVL],
@@ -137,7 +168,15 @@ export const PERSONAS: Persona[] = [
     siteIds: [KRP, WSP],
     defaultSiteId: WSP,
     grants: scoped(
-      ['stores.indent.read', 'stores.indent.approve', 'stores.indent.create', 'production.stock.read', 'ai.extraction.review'],
+      [
+        'stores.indent.read',
+        'stores.indent.approve',
+        'stores.indent.create',
+        'stores.expense.read',
+        'stores.expense.upload',
+        'production.stock.read',
+        'ai.extraction.review',
+      ],
       [KRP, WSP],
     ),
   },

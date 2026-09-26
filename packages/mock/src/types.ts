@@ -1,3 +1,4 @@
+import type { BillEvent, PaymentRecord } from '@linck/domain';
 import type { Provenance, StatusFamily } from '@linck/tokens';
 
 /**
@@ -234,6 +235,13 @@ export interface Indent {
   quantity: number;
   uom: string;
   forAsset: string | null;
+  /**
+   * Whose requisition it is. The fleet manager answers for spares, oil and
+   * tyres raised for the tippers; crusher parts are the plant's. Stored rather
+   * than guessed from the item, because DEF bought for the fleet and belting
+   * bought for a conveyor sit in the same stores.
+   */
+  requestedFor: 'fleet' | 'plant';
   status: 'submitted' | 'approved' | 'issued' | 'rejected';
   urgency: 'routine' | 'urgent' | 'breakdown';
   stockOnHand: number;
@@ -347,4 +355,181 @@ export interface Alert {
   detail: string;
   at: string;
   route: string;
+}
+
+/**
+ * CUSTOMER MASTER.
+ *
+ * The sales desk's address book: who is billed, where the tipper goes, and
+ * how long they are allowed to take to pay. The delivery site is the site the
+ * coordinator says on the phone, not the registered office on the GSTIN.
+ */
+export interface Customer {
+  id: string;
+  name: string;
+  /** The default delivery site named on orders. */
+  site: string;
+  /** Null for walk-in counter sales, which are billed as B2C. */
+  gstin: string | null;
+  contactName: string;
+  phone: string;
+  creditLimit: string;
+  paymentTermsDays: number;
+  /** Primary site we serve them from. */
+  servedFromSiteId: string;
+}
+
+/**
+ * CUSTOMER PURCHASE ORDERS.
+ *
+ * The sales order a builder raises against us. Nothing is loaded against an
+ * order until it is approved — rate and credit are checked at approval, not at
+ * the gate, which is exactly why a queue of unapproved orders is urgent.
+ */
+export type PurchaseOrderStatus = 'pending_approval' | 'approved' | 'part_dispatched' | 'fulfilled' | 'rejected';
+
+export interface PurchaseOrder {
+  id: string;
+  number: string;
+  /** The customer's own reference, as written on their PO. */
+  customerPoRef: string;
+  receivedOn: string;
+  deliverBy: string;
+  customerId: string;
+  customerName: string;
+  deliverySite: string;
+  siteId: string;
+  productCode: string;
+  orderedUnits: number;
+  dispatchedUnits: number;
+  ratePerUnit: string;
+  value: string;
+  status: PurchaseOrderStatus;
+  takenBy: string;
+}
+
+/**
+ * BREAKDOWN REGISTER.
+ *
+ * One row per breakdown event, open or closed. The vehicle's live status says
+ * THAT it is down; the register says what failed, where, since when and what
+ * it cost — the history a fleet manager needs to spot the tipper that breaks
+ * down every month.
+ */
+export interface BreakdownRecord {
+  id: string;
+  number: string;
+  vehicleId: string;
+  driverId: string | null;
+  reportedAt: string;
+  reportedBy: string;
+  location: string;
+  cause: string;
+  status: 'open' | 'in_workshop' | 'resolved';
+  resolvedAt: string | null;
+  /** Hours off the road. Open breakdowns count to now. */
+  downtimeHours: number;
+  repairCost: string | null;
+}
+
+/**
+ * EXPENSE BILLS — diesel, repair, tyre and the rest.
+ *
+ * The approval chain is fixed and ordered: the fleet manager validates, the
+ * director approves, accounts pays. `status` records how far along that chain
+ * a bill has got; nothing skips a step.
+ */
+export type ExpenseKind = 'diesel' | 'repair' | 'tyre' | 'spares' | 'toll' | 'other';
+
+export type ExpenseStatus =
+  /** Uploaded or keyed, waiting on the fleet manager. */
+  | 'submitted'
+  /** Validated by the fleet manager, waiting on the director. */
+  | 'validated'
+  /** Approved by the director, waiting on accounts. */
+  | 'approved'
+  /** Passed for payment by accounts, waiting for the money to go. */
+  | 'passed'
+  | 'paid'
+  | 'rejected'
+  /** Deleted before anyone signed it. Kept on record, never counted. */
+  | 'deleted';
+
+/** A scanned copy of the paper bill, as uploaded. */
+export interface BillAttachment {
+  fileName: string;
+  mimeType: string;
+  sizeKb: number;
+  /** Where the scan can be opened. An object URL until the API stores it. */
+  url: string;
+}
+
+/**
+ * What automatic capture read off a bill, field by field, and what a human
+ * did with it. The captured value is kept even after a correction: the
+ * corrections are the only measure of how well capture works per vendor.
+ */
+export interface CapturedBillField {
+  key: string;
+  label: string;
+  /** What capture read. Null when capture found nothing for this field. */
+  captured: string | null;
+  confidence: 1 | 2 | 3 | null;
+  /** What the ledger holds now. */
+  value: string;
+  overridden: boolean;
+  overriddenBy: string | null;
+}
+
+export interface BillCaptureRecord {
+  engine: string;
+  capturedAt: string;
+  fields: CapturedBillField[];
+  warnings: string[];
+}
+
+export interface ExpenseBill {
+  id: string;
+  /** Which desk raised it — the fleet manager's or the store manager's. */
+  desk: 'fleet' | 'stores';
+  billNumber: string;
+  kind: ExpenseKind;
+  billDate: string;
+  vehicleId: string | null;
+  driverId: string | null;
+  vendor: string;
+  description: string;
+  /** Litres, for diesel bills only. */
+  litres: number | null;
+  amount: string;
+  status: ExpenseStatus;
+  submittedBy: string;
+  submittedAt: string;
+  siteId: string;
+  provenance: Provenance;
+  attachment: BillAttachment | null;
+  /** Null for a bill keyed by hand with no capture run. */
+  capture: BillCaptureRecord | null;
+  /** Set for a bill that came in on WhatsApp rather than being keyed or uploaded. */
+  source?: BillSource;
+  /** Who raised it, as an actor id (`user:fleet`, `driver:drv-001`, `wa:+91…`), for the four-eyes rule. */
+  submittedById?: string | null;
+  /** Every move along the approval chain, oldest first. Never edited. */
+  history?: BillEvent[];
+  /** Set when accounts records the payment. */
+  payment?: PaymentRecord | null;
+}
+
+/** Where a WhatsApp bill came from: enough to find the message again and to refuse a second import. */
+export interface BillSource {
+  channel: 'whatsapp';
+  /** The claim's stable key; the same message is never imported twice. */
+  claimKey: string;
+  /** "Business number" for the live inbox, or the group an export came from. */
+  via: string;
+  sender: string;
+  postedAt: string;
+  /** What the driver wrote, often nothing: most send only the photo. */
+  message: string;
+  attachments: string[];
 }

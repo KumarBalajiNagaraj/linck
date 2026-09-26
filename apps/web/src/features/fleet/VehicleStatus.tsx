@@ -6,8 +6,11 @@ import {
   driversForSite,
   LAST_14,
   mileageFor,
+  isIdleRoadworthy,
+  isServiceOverdue,
   SITES,
   vehiclesForSite,
+  vehiclesWithExpiredDocs,
   VEHICLE_STATUS_FAMILY,
   VEHICLE_STATUS_LABEL,
   type Vehicle,
@@ -42,9 +45,15 @@ import {
   type Column,
 } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
+import { useViewParam } from '../../shell/useViewParam.js';
 
 /**
- * The Fleet Command Board.
+ * Vehicle status — the fleet's full vehicle database.
+ *
+ * This was the fleet command board until LIN-18 gave the fleet manager a
+ * landing page of urgent counts and links. Everything below still lives here,
+ * one click away, and the landing page's cards open straight into the chips
+ * on this screen via `?view=`.
  *
  * The team's stated goal is 100% productive, so the board is organised around
  * the productivity leak rather than around a vehicle list: IDLE — ready but
@@ -81,9 +90,11 @@ interface StatusOverride {
   statusReason: string;
 }
 
-export function FleetBoard() {
+const VIEWS = ['all', 'breakdown', 'idle', 'service', 'service_overdue', 'docs', 'docs_expired', 'diesel'] as const;
+
+export function VehicleStatus() {
   const { siteScope, density } = useApp();
-  const [filter, setFilter] = useState<'all' | 'breakdown' | 'idle' | 'service' | 'docs' | 'diesel'>('all');
+  const [filter, setFilter] = useViewParam(VIEWS, 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, StatusOverride>>({});
@@ -130,26 +141,42 @@ export function FleetBoard() {
     [all],
   );
   const docsExpiring = useMemo(() => all.filter((v) => (v.nextDocExpiryDays ?? 999) <= 30), [all]);
+  const docsExpired = useMemo(() => {
+    const expired = vehiclesWithExpiredDocs();
+    return all.filter((v) => expired.has(v.id));
+  }, [all]);
+  const serviceOverdue = useMemo(() => all.filter(isServiceOverdue), [all]);
+  const idleRoadworthy = useMemo(() => all.filter(isIdleRoadworthy), [all]);
 
   const rows = useMemo(() => {
     switch (filter) {
       case 'breakdown':
         return all.filter((v) => v.status === 'breakdown');
+      // Roadworthy and without a load — the command board's Idle card. A
+      // tipper idle only because a blocking document lapsed is listed under
+      // documents expired instead.
       case 'idle':
-        return all.filter((v) => v.status === 'idle');
+        return idleRoadworthy;
+      // "In the workshop" is exactly the count on its chip. Overdue vehicles
+      // still on the road have their own chip, "Due for service", which is
+      // what the command board's card of that name opens.
       case 'service':
-        return all.filter((v) => v.status === 'under_service' || (v.serviceDueInKm ?? 1) < 0);
+        return all.filter((v) => v.status === 'under_service');
+      case 'service_overdue':
+        return serviceOverdue;
       case 'docs':
         return docsExpiring;
+      case 'docs_expired':
+        return docsExpired;
       case 'diesel':
         return dieselOutliers;
       default:
         return all;
     }
-  }, [all, filter, docsExpiring, dieselOutliers]);
+  }, [all, filter, docsExpiring, docsExpired, serviceOverdue, idleRoadworthy, dieselOutliers]);
 
   // Ranked, never auto-applied, and dismissal is recorded.
-  const idleWithDrivers = all.filter((v) => v.status === 'idle' && v.driverId !== null).length;
+  const idleWithDrivers = idleRoadworthy.filter((v) => v.driverId !== null).length;
 
   const uptimeSeries = LAST_14.map((d) => ({
     label: d.label,
@@ -181,7 +208,7 @@ export function FleetBoard() {
     <>
       <PageHeader
         eyebrow="Fleet"
-        title="Command board"
+        title="Vehicle status"
         meta={
           // Two independent stamps, not one line: at 375px the source name and
           // the driver tally cannot share a row without one of them pushing the
@@ -228,13 +255,13 @@ export function FleetBoard() {
         </div>
         <KpiTile
           eyebrow="Ready but unassigned"
-          value={String(counts.idle)}
+          value={String(idleRoadworthy.length)}
           delta={{
             text:
-              counts.idle > 0
-                ? `roughly ${formatQty(counts.idle * 6.4, 1)} units of dispatch not happening`
+              idleRoadworthy.length > 0
+                ? `roughly ${formatQty(idleRoadworthy.length * 6.4, 1)} units of dispatch not happening`
                 : 'every roadworthy tipper has a load',
-            tone: counts.idle > 0 ? 'attention' : 'neutral',
+            tone: idleRoadworthy.length > 0 ? 'attention' : 'neutral',
           }}
           asOf="14:42"
           source="v_vehicle_status_now"
@@ -262,12 +289,13 @@ export function FleetBoard() {
         />
       </TileRow>
 
-      {/* Six filters that wrap to four rows on a phone rather than scroll
+      {/* Eight filters that wrap to several rows on a phone rather than scroll
           sideways in a strip. It costs 220px, which is real, but a filter you
           cannot see is a filter nobody uses — and the shell already spends one
           horizontal scroller on the section chips directly above this, so a
           second one immediately under it reads as the same control. */}
       <div
+        id="list"
         className="flex flex-wrap items-center gap-2 px-6 py-3"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
@@ -279,14 +307,20 @@ export function FleetBoard() {
         <Chip active={filter === 'breakdown'} onClick={() => setFilter('breakdown')} count={counts.breakdown}>
           Breakdowns
         </Chip>
-        <Chip active={filter === 'idle'} onClick={() => setFilter('idle')} count={counts.idle}>
-          Ready but unassigned
+        <Chip active={filter === 'idle'} onClick={() => setFilter('idle')} count={idleRoadworthy.length}>
+          Idle
         </Chip>
         <Chip active={filter === 'service'} onClick={() => setFilter('service')} count={counts.underService}>
+          In the workshop
+        </Chip>
+        <Chip active={filter === 'service_overdue'} onClick={() => setFilter('service_overdue')} count={serviceOverdue.length}>
           Due for service
         </Chip>
         <Chip active={filter === 'docs'} onClick={() => setFilter('docs')} count={docsExpiring.length}>
           Documents expiring
+        </Chip>
+        <Chip active={filter === 'docs_expired'} onClick={() => setFilter('docs_expired')} count={docsExpired.length}>
+          Documents expired
         </Chip>
         <Chip active={filter === 'diesel'} onClick={() => setFilter('diesel')} count={dieselOutliers.length}>
           Diesel off benchmark
@@ -499,7 +533,7 @@ export function FleetBoard() {
             [selected.id]: {
               status: 'breakdown',
               statusSince: BOARD_NOW,
-              statusReason: 'Reported from the command board — awaiting workshop triage',
+              statusReason: 'Reported from vehicle status — awaiting workshop triage',
             },
           }));
         }}

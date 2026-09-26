@@ -1,7 +1,10 @@
-import { PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
+import { buildGstin, PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
 import type {
   Alert,
+  BreakdownRecord,
+  ExpenseBill,
   ComplianceDocument,
+  Customer,
   Driver,
   EwayBill,
   ExtractionJob,
@@ -11,6 +14,7 @@ import type {
   Invoice,
   Product,
   ProductionRun,
+  PurchaseOrder,
   Receipt,
   Site,
   StockPosition,
@@ -208,6 +212,27 @@ export const DOCUMENTS: ComplianceDocument[] = VEHICLES.flatMap((vehicle, vi) =>
     };
   }),
 );
+
+/*
+ * One truth per vehicle about its papers. The vehicle's "next document" is
+ * derived from its actual documents rather than seeded beside them, and an
+ * off-road tipper whose recorded reason is an expired fitness certificate has
+ * one on file. Runs after every random draw above, so no seeded number moves.
+ */
+for (const vehicle of VEHICLES) {
+  if (vehicle.status === 'off_road') {
+    const fitness = DOCUMENTS.find((d) => d.vehicleId === vehicle.id && d.type === 'fitness');
+    if (fitness && fitness.daysLeft >= 0) {
+      fitness.daysLeft = -14;
+      fitness.expiresOn = daysFromNow(-14);
+    }
+  }
+  const soonest = DOCUMENTS.filter((d) => d.vehicleId === vehicle.id).sort((a, b) => a.daysLeft - b.daysLeft)[0];
+  if (soonest) {
+    vehicle.nextDocExpiryDays = soonest.daysLeft;
+    vehicle.nextDocType = soonest.label;
+  }
+}
 
 /* ------------------------------------------------------------------ stock */
 
@@ -477,22 +502,22 @@ export const EXTRACTION_JOBS: ExtractionJob[] = [
 /* ---------------------------------------------------------------- indents */
 
 export const INDENTS: Indent[] = [
-  { id: 'ind-001', number: 'IND/26-27/0412', raisedOn: hoursFromNow(-2), raisedBy: 'Kaliyaperumal R', siteId: 'site-krp', itemName: 'Jaw plate — fixed, Mn18', itemCode: 'SP-JAW-F18', quantity: 2, uom: 'nos', forAsset: 'Jaw + VSI — KRP 250TPH', status: 'submitted', urgency: 'urgent', stockOnHand: 0, reorderLevel: 2, estimatedValue: '184000.00' },
-  { id: 'ind-002', number: 'IND/26-27/0411', raisedOn: hoursFromNow(-6), raisedBy: 'Anbu Selvan M', siteId: 'site-wsp', itemName: 'Engine oil 15W-40', itemCode: 'CN-OIL-1540', quantity: 200, uom: 'L', forAsset: 'TN 29 AB 1015', status: 'approved', urgency: 'routine', stockOnHand: 60, reorderLevel: 150, estimatedValue: '38000.00' },
-  { id: 'ind-003', number: 'IND/26-27/0410', raisedOn: hoursFromNow(-9), raisedBy: 'Sekar M', siteId: 'site-krp', itemName: 'Conveyor belt 800mm EP400', itemCode: 'SP-BELT-800', quantity: 24, uom: 'm', forAsset: 'Jaw + VSI — KRP 250TPH', status: 'submitted', urgency: 'breakdown', stockOnHand: 0, reorderLevel: 12, estimatedValue: '96000.00' },
-  { id: 'ind-004', number: 'IND/26-27/0409', raisedOn: hoursFromNow(-27), raisedBy: 'Ganesh K', siteId: 'site-wsp', itemName: 'Tyre 295/90 R20', itemCode: 'TY-29590-20', quantity: 4, uom: 'nos', forAsset: 'TN 38 AL 1050', status: 'issued', urgency: 'routine', stockOnHand: 6, reorderLevel: 8, estimatedValue: '104800.00' },
-  { id: 'ind-005', number: 'IND/26-27/0408', raisedOn: hoursFromNow(-34), raisedBy: 'Arivazhagan T', siteId: 'site-tvl', itemName: 'Cone liner — mantle', itemCode: 'SP-CON-MNT', quantity: 1, uom: 'nos', forAsset: 'Cone — TVL 200TPH', status: 'approved', urgency: 'urgent', stockOnHand: 1, reorderLevel: 1, estimatedValue: '212000.00' },
-  { id: 'ind-006', number: 'IND/26-27/0407', raisedOn: hoursFromNow(-48), raisedBy: 'Muthu S', siteId: 'site-krp', itemName: 'DEF / AdBlue 20L', itemCode: 'CN-DEF-20', quantity: 30, uom: 'nos', forAsset: null, status: 'rejected', urgency: 'routine', stockOnHand: 22, reorderLevel: 10, estimatedValue: '21000.00' },
+  { id: 'ind-001', number: 'IND/26-27/0412', raisedOn: hoursFromNow(-2), raisedBy: 'Kaliyaperumal R', siteId: 'site-krp', itemName: 'Jaw plate — fixed, Mn18', itemCode: 'SP-JAW-F18', quantity: 2, uom: 'nos', forAsset: 'Jaw + VSI — KRP 250TPH', requestedFor: 'plant', status: 'submitted', urgency: 'urgent', stockOnHand: 0, reorderLevel: 2, estimatedValue: '184000.00' },
+  { id: 'ind-002', number: 'IND/26-27/0411', raisedOn: hoursFromNow(-6), raisedBy: 'Anbu Selvan M', siteId: 'site-wsp', itemName: 'Engine oil 15W-40', itemCode: 'CN-OIL-1540', quantity: 200, uom: 'L', forAsset: 'TN 29 AB 1001', requestedFor: 'fleet', status: 'approved', urgency: 'routine', stockOnHand: 60, reorderLevel: 150, estimatedValue: '38000.00' },
+  { id: 'ind-003', number: 'IND/26-27/0410', raisedOn: hoursFromNow(-9), raisedBy: 'Sekar M', siteId: 'site-krp', itemName: 'Conveyor belt 800mm EP400', itemCode: 'SP-BELT-800', quantity: 24, uom: 'm', forAsset: 'Jaw + VSI — KRP 250TPH', requestedFor: 'plant', status: 'submitted', urgency: 'breakdown', stockOnHand: 0, reorderLevel: 12, estimatedValue: '96000.00' },
+  { id: 'ind-004', number: 'IND/26-27/0409', raisedOn: hoursFromNow(-27), raisedBy: 'Ganesh K', siteId: 'site-wsp', itemName: 'Tyre 295/90 R20', itemCode: 'TY-29590-20', quantity: 4, uom: 'nos', forAsset: 'TN 38 AB 1008', requestedFor: 'fleet', status: 'issued', urgency: 'routine', stockOnHand: 6, reorderLevel: 8, estimatedValue: '104800.00' },
+  { id: 'ind-005', number: 'IND/26-27/0408', raisedOn: hoursFromNow(-34), raisedBy: 'Arivazhagan T', siteId: 'site-tvl', itemName: 'Cone liner — mantle', itemCode: 'SP-CON-MNT', quantity: 1, uom: 'nos', forAsset: 'Cone — TVL 200TPH', requestedFor: 'plant', status: 'approved', urgency: 'urgent', stockOnHand: 1, reorderLevel: 1, estimatedValue: '212000.00' },
+  { id: 'ind-006', number: 'IND/26-27/0407', raisedOn: hoursFromNow(-48), raisedBy: 'Muthu S', siteId: 'site-krp', itemName: 'DEF / AdBlue 20L', itemCode: 'CN-DEF-20', quantity: 30, uom: 'nos', forAsset: null, requestedFor: 'fleet', status: 'rejected', urgency: 'routine', stockOnHand: 22, reorderLevel: 10, estimatedValue: '21000.00' },
 ];
 
 /* ----------------------------------------------------------------- alerts */
 
 export const ALERTS: Alert[] = [
-  { id: 'alr-1', kind: 'breakdown', status: 'critical', title: '4 vehicles under breakdown', detail: 'TN 29 AB 1015 down 11h — gearbox oil leak. Longest standing.', at: hoursFromNow(-11), route: '/fleet/board' },
+  { id: 'alr-1', kind: 'breakdown', status: 'critical', title: '4 vehicles under breakdown', detail: 'TN 29 AB 1015 down 11h — gearbox oil leak. Longest standing.', at: hoursFromNow(-11), route: '/fleet/vehicles' },
   { id: 'alr-2', kind: 'expiry', status: 'critical', title: '5 documents already expired', detail: 'Includes 2 fitness certificates, which stop the vehicle at the gate.', at: hoursFromNow(-30), route: '/compliance/documents' },
   { id: 'alr-3', kind: 'expiry', status: 'attention', title: '11 documents expire within 30 days', detail: 'Insurance on 4 tippers, national permit on 2.', at: hoursFromNow(-30), route: '/compliance/documents' },
   { id: 'alr-4', kind: 'receivable', status: 'attention', title: '₹18.4 L reported but not verified', detail: '4 receipts await a second pair of eyes. Invoices stay open until then.', at: hoursFromNow(-5), route: '/finance/receipts/verification' },
-  { id: 'alr-5', kind: 'anomaly', status: 'attention', title: 'Mileage dropped 18% on TN 12 CQ 1085', detail: 'Three consecutive full-tank fills below 2.6 km/l against a 3.6 benchmark.', at: hoursFromNow(-8), route: '/fleet/board' },
+  { id: 'alr-5', kind: 'anomaly', status: 'attention', title: 'Mileage dropped 18% on TN 12 CQ 1085', detail: 'Three consecutive full-tank fills below 2.6 km/l against a 3.6 benchmark.', at: hoursFromNow(-8), route: '/fleet/vehicles' },
   { id: 'alr-6', kind: 'approval', status: 'pending', title: '2 breakdown indents await approval', detail: 'Conveyor belt for KRP crusher — plant is down.', at: hoursFromNow(-9), route: '/stores/indents' },
 ];
 
@@ -793,4 +818,200 @@ export const EWAY_BILLS: EwayBill[] = [
 ];
 
 export const CUSTOMERS_LIST = CUSTOMERS;
+
+/* ------------------------------------------------ customers and sales orders */
+
+/*
+ * A separate generator, so adding these rows cannot shift a single number in
+ * the fleet, stock or invoice data seeded above them.
+ */
+const salesRng = makeRng(20260925);
+
+const CONTACTS = ['Arun Prakash', 'Senthil V', 'Meena R', 'K. Rajasekar', 'Dinesh Babu', 'Walk-in', 'Prakash N'];
+
+export const CUSTOMERS_MASTER: Customer[] = CUSTOMERS.map((c, i) => {
+  const counter = c.id === 'cus-06';
+  return {
+    id: c.id,
+    name: c.name,
+    site: c.site,
+    // A real PAN shape (5 letters, 4 digits, 1 letter; 4th letter C = company,
+    // 5th = the name's initial) and a computed check character, so the seed
+    // passes the same validation the e-invoice console will apply.
+    gstin: counter
+      ? null
+      : buildGstin('33', `AA${String.fromCharCode(65 + i)}C${c.name[0]!.toUpperCase()}${Math.floor(between(salesRng, 1000, 9999))}K`),
+    contactName: CONTACTS[i % CONTACTS.length]!,
+    phone: counter ? '–' : `9${Math.floor(between(salesRng, 100000000, 999999999))}`,
+    creditLimit: money(counter ? 0 : between(salesRng, 5, 40, 0) * 100_000),
+    paymentTermsDays: counter ? 0 : [15, 30, 30, 45, 30, 0, 21][i % 7]!,
+    servedFromSiteId: i % 3 === 2 ? 'site-tvl' : 'site-krp',
+  };
+});
+
+const PO_STATUS_PLAN: PurchaseOrder['status'][] = [
+  'pending_approval', 'approved', 'part_dispatched', 'pending_approval', 'fulfilled', 'approved',
+  'pending_approval', 'part_dispatched', 'rejected', 'fulfilled', 'pending_approval', 'approved',
+];
+
+export const PURCHASE_ORDERS: PurchaseOrder[] = PO_STATUS_PLAN.map((status, i) => {
+  const customer = CUSTOMERS[i % CUSTOMERS.length]!;
+  const product = PRODUCTS[(i * 2) % PRODUCTS.length]!;
+  const ordered = between(salesRng, 20, 160, 0);
+  const rate = between(salesRng, 3800, 7200, 0);
+  const dispatched =
+    status === 'fulfilled' ? ordered : status === 'part_dispatched' ? Math.round(ordered * between(salesRng, 0.2, 0.8, 2)) : 0;
+  return {
+    id: `po-${String(i + 1).padStart(3, '0')}`,
+    number: `SO/26-27/${String(640 + i)}`,
+    customerPoRef: `PO-${customer.name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()}-${Math.floor(between(salesRng, 1000, 9999))}`,
+    receivedOn: hoursFromNow(-between(salesRng, 2, 240, 1)),
+    deliverBy: daysFromNow(Math.floor(between(salesRng, -3, 21))),
+    customerId: customer.id,
+    customerName: customer.name,
+    deliverySite: customer.site,
+    siteId: i % 3 === 2 ? 'site-tvl' : 'site-krp',
+    productCode: product.code,
+    orderedUnits: ordered,
+    dispatchedUnits: dispatched,
+    ratePerUnit: money(rate),
+    value: money(ordered * rate),
+    status,
+    takenBy: pick(salesRng, ['Vetrivel S', 'Priya R', 'Vetrivel S']),
+  };
+});
+
+/* ------------------------------------------- breakdown register and expenses */
+
+/* Own generator again, for the same reason as the sales rows above. */
+const fleetRng = makeRng(20260926);
+
+const BREAKDOWN_LOCATIONS = ['GST Road, Chengalpattu', 'OMR near Navalur', 'Karapakkam yard', 'Poonamallee bypass', 'NH-48 Sriperumbudur'];
+const REPORTERS = ['Anbu Selvan M', 'Driver (WhatsApp)', 'Sekar M'];
+
+export const BREAKDOWNS: BreakdownRecord[] = [
+  // Every vehicle down right now has an open entry — the register and the
+  // board must never disagree about who is on the hard shoulder.
+  ...VEHICLES.filter((v) => v.status === 'breakdown').map((v, i) => ({
+    id: `bd-open-${v.id}`,
+    number: `BD/26-27/${String(210 + i)}`,
+    vehicleId: v.id,
+    driverId: v.driverId,
+    reportedAt: v.statusSince,
+    reportedBy: pick(fleetRng, REPORTERS),
+    location: pick(fleetRng, BREAKDOWN_LOCATIONS),
+    cause: v.statusReason ?? 'Not recorded',
+    status: (i % 2 === 0 ? 'open' : 'in_workshop') as BreakdownRecord['status'],
+    resolvedAt: null,
+    downtimeHours: Math.round((NOW.getTime() - Date.parse(v.statusSince)) / 360_000) / 10,
+    repairCost: null,
+  })),
+  ...Array.from({ length: 8 }, (_, i): BreakdownRecord => {
+    const v = VEHICLES[(i * 5 + 3) % VEHICLES.length]!;
+    const hours = between(fleetRng, 3, 60, 1);
+    const reported = hoursFromNow(-between(fleetRng, 80, 700, 1));
+    return {
+      id: `bd-${String(i + 1).padStart(3, '0')}`,
+      number: `BD/26-27/${String(200 + i)}`,
+      vehicleId: v.id,
+      driverId: v.driverId,
+      reportedAt: reported,
+      reportedBy: pick(fleetRng, REPORTERS),
+      location: pick(fleetRng, BREAKDOWN_LOCATIONS),
+      cause: pick(fleetRng, BREAKDOWN_REASONS),
+      status: 'resolved',
+      resolvedAt: new Date(Date.parse(reported) + hours * 3_600_000).toISOString(),
+      downtimeHours: hours,
+      repairCost: money(between(fleetRng, 2500, 68000, 0)),
+    };
+  }),
+];
+
+const EXPENSE_STATUS_PLAN: ExpenseBill['status'][] = [
+  'submitted', 'submitted', 'validated', 'submitted', 'approved', 'paid', 'submitted', 'validated',
+  'paid', 'submitted', 'rejected', 'approved', 'submitted', 'validated', 'paid', 'submitted',
+];
+const EXPENSE_KINDS: ExpenseBill['kind'][] = ['diesel', 'diesel', 'repair', 'diesel', 'tyre', 'spares', 'diesel', 'toll'];
+const VENDORS: Record<ExpenseBill['kind'], string[]> = {
+  diesel: ['Sakthi Fuels, Karapakkam', 'IOCL — Sri Murugan Agencies', 'HP — Balaji Fuel Point'],
+  repair: ['Sri Ganesh Auto Works', 'Tata Authorised Service — Guindy'],
+  tyre: ['Annai Tyres'],
+  spares: ['Ashok Leyland Genuine Parts', 'Chennai Hydraulics'],
+  toll: ['FASTag — NHAI'],
+  other: ['Petty cash'],
+};
+const DESCRIPTIONS: Record<ExpenseBill['kind'], string> = {
+  diesel: 'HSD fill',
+  repair: 'Clutch overhaul and labour',
+  tyre: 'Tyre 295/90 R20 × 2',
+  spares: 'Hydraulic hose and fittings',
+  toll: 'Toll recharge',
+  other: 'Miscellaneous',
+};
+
+export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) => {
+  const kind = EXPENSE_KINDS[i % EXPENSE_KINDS.length]!;
+  const v = VEHICLES[(i * 7 + 2) % VEHICLES.length]!;
+  const litres = kind === 'diesel' ? between(fleetRng, 140, 420, 1) : null;
+  const amount =
+    litres !== null ? litres * between(fleetRng, 92.4, 97.8, 2) : kind === 'toll' ? between(fleetRng, 2000, 10000, 0) : between(fleetRng, 3500, 92000, 0);
+  const submittedAt = hoursFromNow(-between(fleetRng, 1, 190, 1));
+  return {
+    id: `exp-${String(i + 1).padStart(3, '0')}`,
+    desk: 'fleet' as const,
+    billNumber: `${kind === 'diesel' ? 'BK' : 'INV'}/${Math.floor(between(fleetRng, 10000, 99999))}`,
+    kind,
+    billDate: submittedAt,
+    vehicleId: kind === 'toll' && i % 2 === 0 ? null : v.id,
+    driverId: kind === 'diesel' ? v.driverId : null,
+    vendor: pick(fleetRng, VENDORS[kind]),
+    description: DESCRIPTIONS[kind],
+    litres,
+    amount: money(amount),
+    status,
+    submittedBy: kind === 'diesel' ? 'Driver (WhatsApp)' : pick(fleetRng, ['Anbu Selvan M', 'Ganesh K']),
+    submittedAt,
+    siteId: v.siteId,
+    // Read by Linck off a WhatsApp photo, so proposed until the fleet manager
+    // validates it; once anyone has signed it off it is confirmed.
+    provenance: kind === 'diesel' ? (status === 'submitted' ? ('proposed' as const) : ('confirmed' as const)) : ('human' as const),
+    attachment: null,
+    capture: null,
+  };
+});
+
+/* The store manager's own bills: consumables and spares bought for the yard. */
+const STORES_BILLS: { vendor: string; description: string; kind: ExpenseBill['kind']; status: ExpenseBill['status'] }[] = [
+  { vendor: 'Chennai Hydraulics', description: 'Hydraulic oil 68 — 210 L barrel', kind: 'spares', status: 'submitted' },
+  { vendor: 'Sri Murugan Hardwares', description: 'Welding rods and grinding discs', kind: 'other', status: 'submitted' },
+  { vendor: 'Ashok Leyland Genuine Parts', description: 'Air filter elements × 6', kind: 'spares', status: 'validated' },
+  { vendor: 'Annai Tyres', description: 'Tube and flap set × 4', kind: 'tyre', status: 'paid' },
+];
+
+EXPENSE_BILLS.push(
+  ...STORES_BILLS.map((b, i): ExpenseBill => {
+    const submittedAt = hoursFromNow(-between(fleetRng, 2, 120, 1));
+    return {
+      id: `exp-st-${String(i + 1).padStart(3, '0')}`,
+      desk: 'stores',
+      billNumber: `INV/${Math.floor(between(fleetRng, 10000, 99999))}`,
+      kind: b.kind,
+      billDate: submittedAt,
+      vehicleId: null,
+      driverId: null,
+      vendor: b.vendor,
+      description: b.description,
+      litres: null,
+      amount: money(between(fleetRng, 1800, 46000, 0)),
+      status: b.status,
+      submittedBy: 'Ganesh K',
+      submittedAt,
+      siteId: 'site-wsp',
+      provenance: 'human',
+      attachment: null,
+      capture: null,
+    };
+  }),
+);
+
 export { NOW };

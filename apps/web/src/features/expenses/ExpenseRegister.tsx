@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { can, formatINRCompact } from '@linck/domain';
+import { businessDate, can, formatDate, formatINRCompact } from '@linck/domain';
 import {
   DRIVERS,
   EXPENSE_KIND_LABEL,
@@ -158,7 +158,8 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<EditableKey, string>>(() => ({
     billNumber: bill.billNumber,
-    billDate: bill.billDate.slice(0, 10),
+    // The IST calendar date the bill carries, not the UTC date of IST midnight.
+    billDate: businessDate(bill.billDate),
     vendor: bill.vendor,
     litres: bill.litres === null ? '' : String(bill.litres),
     amount: bill.amount,
@@ -299,7 +300,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           <Detail label="Bill number">
             <IdCell>{bill.billNumber}</IdCell>
           </Detail>
-          <Detail label="Bill date">{bill.billDate.slice(0, 10)}</Detail>
+          <Detail label="Bill date">{formatDate(bill.billDate)}</Detail>
           <Detail label="Vendor">{bill.vendor}</Detail>
           <Detail label="What for">{bill.description}</Detail>
           <Detail label="Vehicle">{VEHICLES.find((v) => v.id === bill.vehicleId)?.displayReg ?? '–'}</Detail>
@@ -326,7 +327,9 @@ const columns: Column<ExpenseBill>[] = [
     sticky: true,
     width: 160,
     group: 'Bill',
-    render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={e.billDate.slice(0, 10)} />,
+    // IST calendar date. A bill dated 06-08 is stored as IST midnight, which
+    // is 18:30 on 05-08 in UTC — slicing the ISO string shows the wrong day.
+    render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={formatDate(e.billDate)} />,
   },
   {
     key: 'status',

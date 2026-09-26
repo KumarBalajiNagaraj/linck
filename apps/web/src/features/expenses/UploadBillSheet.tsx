@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { captureExpenseBill, type BillCapture, type BillFieldKey } from '@linck/domain';
+import { businessDate, captureExpenseBill, type BillCapture, type BillFieldKey } from '@linck/domain';
 import {
   EXPENSE_KIND_LABEL,
   NOW,
@@ -66,7 +66,7 @@ const blank = (desk: ExpenseBill['desk']): Draft => ({
   file: null,
   kind: KINDS_BY_DESK[desk][0]!,
   billNumber: '',
-  billDate: NOW.toISOString().slice(0, 10),
+  billDate: businessDate(NOW),
   vendor: '',
   description: '',
   amount: '',

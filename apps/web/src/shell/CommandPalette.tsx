@@ -171,7 +171,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
               ? { severity: `${Math.max(1, Math.round((NOW.getTime() - new Date(v.statusSince).getTime()) / 3_600_000))}h` }
               : {}),
           },
-          route: '/fleet/board',
+          route: '/fleet/vehicles',
           fields: [field(v.registrationNumber, W_IDENTIFIER), field(v.model, W_CONTEXT), field('vehicle tipper', W_TAG)],
         });
       }

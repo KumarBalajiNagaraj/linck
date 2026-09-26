@@ -1,9 +1,12 @@
 import type { StatusFamily } from '@linck/tokens';
 import {
   DOCUMENTS,
+  BREAKDOWNS,
   DRIVERS,
   EWAY_BILLS,
+  EXPENSE_BILLS,
   GSTIN_STANDINGS,
+  INDENTS,
   INVOICES,
   PURCHASE_ORDERS,
   RECEIPTS,
@@ -12,7 +15,19 @@ import {
   VEHICLES,
 } from './data.js';
 import { NOW } from './seed.js';
-import type { EwayBill, GstinStanding, Invoice, PurchaseOrder, Trip, Vehicle, VehicleStatus } from './types.js';
+import type {
+  BreakdownRecord,
+  Driver,
+  EwayBill,
+  ExpenseBill,
+  GstinStanding,
+  Indent,
+  Invoice,
+  PurchaseOrder,
+  Trip,
+  Vehicle,
+  VehicleStatus,
+} from './types.js';
 
 /**
  * Derived figures.
@@ -545,5 +560,93 @@ export function salesAttention(siteId: string | null, now: Date = NOW) {
     unbilledDispatch: trips.filter(isUnbilledDispatch).length,
     invoicesOverdue: invoicesForSite(siteId).filter(isInvoiceOverdue).length,
     stockBelowSafety: stock.filter((s) => s.units < s.safetyUnits).length,
+  };
+}
+
+/* ------------------------------------------------------------ fleet desk */
+
+export const EXPENSE_STATUS_FAMILY: Record<ExpenseBill['status'], StatusFamily> = {
+  submitted: 'pending',
+  validated: 'attention',
+  approved: 'active',
+  paid: 'ready',
+  rejected: 'dormant',
+};
+
+export const EXPENSE_STATUS_LABEL: Record<ExpenseBill['status'], string> = {
+  submitted: 'Awaiting fleet manager',
+  validated: 'Awaiting director',
+  approved: 'Awaiting payment',
+  paid: 'Paid',
+  rejected: 'Rejected',
+};
+
+export const EXPENSE_KIND_LABEL: Record<ExpenseBill['kind'], string> = {
+  diesel: 'Diesel',
+  repair: 'Repair',
+  tyre: 'Tyre',
+  spares: 'Spares',
+  toll: 'Toll',
+  other: 'Other',
+};
+
+export const BREAKDOWN_STATUS_FAMILY: Record<BreakdownRecord['status'], StatusFamily> = {
+  open: 'critical',
+  in_workshop: 'planned',
+  resolved: 'ready',
+};
+
+export const BREAKDOWN_STATUS_LABEL: Record<BreakdownRecord['status'], string> = {
+  open: 'Open',
+  in_workshop: 'In workshop',
+  resolved: 'Resolved',
+};
+
+/** Crossed its service interval: the km-to-service reading has gone negative. */
+export function isServiceOverdue(vehicle: Vehicle): boolean {
+  return vehicle.serviceDueInKm !== null && vehicle.serviceDueInKm < 0;
+}
+
+/** Vehicle ids carrying at least one statutory document past its expiry date. */
+export function vehiclesWithExpiredDocs(): Set<string> {
+  return new Set(DOCUMENTS.filter((d) => d.daysLeft < 0).map((d) => d.vehicleId));
+}
+
+export function isDriverAbsent(driver: Driver): boolean {
+  return driver.attendance === 'absent' || driver.attendance === 'leave';
+}
+
+/** Raised but not yet issued or turned down: still somebody's to act on. */
+export function isIndentOpen(indent: Indent): boolean {
+  return indent.status === 'submitted' || indent.status === 'approved';
+}
+
+export function breakdownsForSite(siteId: string | null): BreakdownRecord[] {
+  if (!siteId) return BREAKDOWNS;
+  const ids = new Set(vehiclesForSite(siteId).map((v) => v.id));
+  return BREAKDOWNS.filter((b) => ids.has(b.vehicleId));
+}
+
+export function expensesForSite(siteId: string | null): ExpenseBill[] {
+  return siteId ? EXPENSE_BILLS.filter((e) => e.siteId === siteId) : EXPENSE_BILLS;
+}
+
+/**
+ * The seven counts the fleet manager's command board leads with. As with the
+ * sales desk, each uses the predicate its destination list filters by.
+ */
+export function fleetAttention(siteId: string | null) {
+  const vehicles = vehiclesForSite(siteId);
+  const expired = vehiclesWithExpiredDocs();
+  const drivers = siteId ? DRIVERS.filter((d) => d.siteId === siteId) : DRIVERS;
+  const indents = siteId ? INDENTS.filter((i) => i.siteId === siteId) : INDENTS;
+  return {
+    breakdown: vehicles.filter((v) => v.status === 'breakdown').length,
+    idle: vehicles.filter((v) => v.status === 'idle').length,
+    serviceOverdue: vehicles.filter(isServiceOverdue).length,
+    docsExpired: vehicles.filter((v) => expired.has(v.id)).length,
+    driversAbsent: drivers.filter(isDriverAbsent).length,
+    expensesAwaiting: expensesForSite(siteId).filter((e) => e.status === 'submitted').length,
+    openStoreRequests: indents.filter(isIndentOpen).length,
   };
 }

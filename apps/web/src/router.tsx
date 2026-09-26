@@ -3,7 +3,11 @@ import { resolveHome } from '@linck/domain';
 import { AppShell } from './shell/AppShell.js';
 import { useApp } from './shell/store.js';
 import { ExecutiveDashboard } from './features/overview/ExecutiveDashboard.js';
-import { FleetBoard } from './features/fleet/FleetBoard.js';
+import { FleetCommandBoard } from './features/fleet/FleetCommandBoard.js';
+import { VehicleStatus } from './features/fleet/VehicleStatus.js';
+import { DriverList } from './features/fleet/DriverList.js';
+import { BreakdownRegister } from './features/fleet/BreakdownRegister.js';
+import { ExpenseRegister } from './features/fleet/ExpenseRegister.js';
 import { FuelEntryScreen } from './features/fleet/FuelEntryScreen.js';
 import { DocumentRegister } from './features/compliance/DocumentRegister.js';
 import { EwayBillConsole } from './features/compliance/EwayBillConsole.js';
@@ -66,7 +70,11 @@ function hasScope(grant: { orgWide: boolean; siteIds: string[] } | undefined, si
 const routeTree = rootRoute.addChildren([
   indexRoute,
   route('/overview', () => <ExecutiveDashboard />, 'executive.dashboard.read'),
-  route('/fleet/board', () => <FleetBoard />, 'fleet.board.read'),
+  route('/fleet/board', () => <FleetCommandBoard />, 'fleet.board.read'),
+  route('/fleet/vehicles', () => <VehicleStatus />, 'fleet.board.read'),
+  route('/fleet/drivers', () => <DriverList />, 'fleet.driver.read'),
+  route('/fleet/breakdowns', () => <BreakdownRegister />, 'fleet.breakdown.read'),
+  route('/fleet/expenses', () => <ExpenseRegister />, 'fleet.expense.read'),
   route('/fleet/fuel/new', () => <FuelEntryScreen />, 'fleet.fuel.create'),
   route('/compliance/documents', () => <DocumentRegister />, 'compliance.document.read'),
   route('/compliance/ewb', () => <EwayBillConsole />, 'compliance.ewb.read'),

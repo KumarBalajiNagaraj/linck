@@ -1,6 +1,8 @@
 import { PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
 import type {
   Alert,
+  BreakdownRecord,
+  ExpenseBill,
   ComplianceDocument,
   Customer,
   Driver,
@@ -490,11 +492,11 @@ export const INDENTS: Indent[] = [
 /* ----------------------------------------------------------------- alerts */
 
 export const ALERTS: Alert[] = [
-  { id: 'alr-1', kind: 'breakdown', status: 'critical', title: '4 vehicles under breakdown', detail: 'TN 29 AB 1015 down 11h — gearbox oil leak. Longest standing.', at: hoursFromNow(-11), route: '/fleet/board' },
+  { id: 'alr-1', kind: 'breakdown', status: 'critical', title: '4 vehicles under breakdown', detail: 'TN 29 AB 1015 down 11h — gearbox oil leak. Longest standing.', at: hoursFromNow(-11), route: '/fleet/vehicles' },
   { id: 'alr-2', kind: 'expiry', status: 'critical', title: '5 documents already expired', detail: 'Includes 2 fitness certificates, which stop the vehicle at the gate.', at: hoursFromNow(-30), route: '/compliance/documents' },
   { id: 'alr-3', kind: 'expiry', status: 'attention', title: '11 documents expire within 30 days', detail: 'Insurance on 4 tippers, national permit on 2.', at: hoursFromNow(-30), route: '/compliance/documents' },
   { id: 'alr-4', kind: 'receivable', status: 'attention', title: '₹18.4 L reported but not verified', detail: '4 receipts await a second pair of eyes. Invoices stay open until then.', at: hoursFromNow(-5), route: '/finance/receipts/verification' },
-  { id: 'alr-5', kind: 'anomaly', status: 'attention', title: 'Mileage dropped 18% on TN 12 CQ 1085', detail: 'Three consecutive full-tank fills below 2.6 km/l against a 3.6 benchmark.', at: hoursFromNow(-8), route: '/fleet/board' },
+  { id: 'alr-5', kind: 'anomaly', status: 'attention', title: 'Mileage dropped 18% on TN 12 CQ 1085', detail: 'Three consecutive full-tank fills below 2.6 km/l against a 3.6 benchmark.', at: hoursFromNow(-8), route: '/fleet/vehicles' },
   { id: 'alr-6', kind: 'approval', status: 'pending', title: '2 breakdown indents await approval', detail: 'Conveyor belt for KRP crusher — plant is down.', at: hoursFromNow(-9), route: '/stores/indents' },
 ];
 
@@ -850,6 +852,100 @@ export const PURCHASE_ORDERS: PurchaseOrder[] = PO_STATUS_PLAN.map((status, i) =
     value: money(ordered * rate),
     status,
     takenBy: pick(salesRng, ['Vetrivel S', 'Priya R', 'Vetrivel S']),
+  };
+});
+
+/* ------------------------------------------- breakdown register and expenses */
+
+/* Own generator again, for the same reason as the sales rows above. */
+const fleetRng = makeRng(20260926);
+
+const BREAKDOWN_LOCATIONS = ['GST Road, Chengalpattu', 'OMR near Navalur', 'Karapakkam yard', 'Poonamallee bypass', 'NH-48 Sriperumbudur'];
+const REPORTERS = ['Anbu Selvan M', 'Driver (WhatsApp)', 'Sekar M'];
+
+export const BREAKDOWNS: BreakdownRecord[] = [
+  // Every vehicle down right now has an open entry — the register and the
+  // board must never disagree about who is on the hard shoulder.
+  ...VEHICLES.filter((v) => v.status === 'breakdown').map((v, i) => ({
+    id: `bd-open-${v.id}`,
+    number: `BD/26-27/${String(210 + i)}`,
+    vehicleId: v.id,
+    driverId: v.driverId,
+    reportedAt: v.statusSince,
+    reportedBy: pick(fleetRng, REPORTERS),
+    location: pick(fleetRng, BREAKDOWN_LOCATIONS),
+    cause: v.statusReason ?? 'Not recorded',
+    status: (i % 2 === 0 ? 'open' : 'in_workshop') as BreakdownRecord['status'],
+    resolvedAt: null,
+    downtimeHours: Math.round((NOW.getTime() - Date.parse(v.statusSince)) / 360_000) / 10,
+    repairCost: null,
+  })),
+  ...Array.from({ length: 8 }, (_, i): BreakdownRecord => {
+    const v = VEHICLES[(i * 5 + 3) % VEHICLES.length]!;
+    const hours = between(fleetRng, 3, 60, 1);
+    const reported = hoursFromNow(-between(fleetRng, 80, 700, 1));
+    return {
+      id: `bd-${String(i + 1).padStart(3, '0')}`,
+      number: `BD/26-27/${String(200 + i)}`,
+      vehicleId: v.id,
+      driverId: v.driverId,
+      reportedAt: reported,
+      reportedBy: pick(fleetRng, REPORTERS),
+      location: pick(fleetRng, BREAKDOWN_LOCATIONS),
+      cause: pick(fleetRng, BREAKDOWN_REASONS),
+      status: 'resolved',
+      resolvedAt: new Date(Date.parse(reported) + hours * 3_600_000).toISOString(),
+      downtimeHours: hours,
+      repairCost: money(between(fleetRng, 2500, 68000, 0)),
+    };
+  }),
+];
+
+const EXPENSE_STATUS_PLAN: ExpenseBill['status'][] = [
+  'submitted', 'submitted', 'validated', 'submitted', 'approved', 'paid', 'submitted', 'validated',
+  'paid', 'submitted', 'rejected', 'approved', 'submitted', 'validated', 'paid', 'submitted',
+];
+const EXPENSE_KINDS: ExpenseBill['kind'][] = ['diesel', 'diesel', 'repair', 'diesel', 'tyre', 'spares', 'diesel', 'toll'];
+const VENDORS: Record<ExpenseBill['kind'], string[]> = {
+  diesel: ['Sakthi Fuels, Karapakkam', 'IOCL — Sri Murugan Agencies', 'HP — Balaji Fuel Point'],
+  repair: ['Sri Ganesh Auto Works', 'Tata Authorised Service — Guindy'],
+  tyre: ['Annai Tyres'],
+  spares: ['Ashok Leyland Genuine Parts', 'Chennai Hydraulics'],
+  toll: ['FASTag — NHAI'],
+  other: ['Petty cash'],
+};
+const DESCRIPTIONS: Record<ExpenseBill['kind'], string> = {
+  diesel: 'HSD fill',
+  repair: 'Clutch overhaul and labour',
+  tyre: 'Tyre 295/90 R20 × 2',
+  spares: 'Hydraulic hose and fittings',
+  toll: 'Toll recharge',
+  other: 'Miscellaneous',
+};
+
+export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) => {
+  const kind = EXPENSE_KINDS[i % EXPENSE_KINDS.length]!;
+  const v = VEHICLES[(i * 7 + 2) % VEHICLES.length]!;
+  const litres = kind === 'diesel' ? between(fleetRng, 140, 420, 1) : null;
+  const amount =
+    litres !== null ? litres * between(fleetRng, 92.4, 97.8, 2) : kind === 'toll' ? between(fleetRng, 2000, 10000, 0) : between(fleetRng, 3500, 92000, 0);
+  const submittedAt = hoursFromNow(-between(fleetRng, 1, 190, 1));
+  return {
+    id: `exp-${String(i + 1).padStart(3, '0')}`,
+    billNumber: `${kind === 'diesel' ? 'BK' : 'INV'}/${Math.floor(between(fleetRng, 10000, 99999))}`,
+    kind,
+    billDate: submittedAt,
+    vehicleId: kind === 'toll' && i % 2 === 0 ? null : v.id,
+    driverId: kind === 'diesel' ? v.driverId : null,
+    vendor: pick(fleetRng, VENDORS[kind]),
+    description: DESCRIPTIONS[kind],
+    litres,
+    amount: money(amount),
+    status,
+    submittedBy: kind === 'diesel' ? 'Driver (WhatsApp)' : pick(fleetRng, ['Anbu Selvan M', 'Ganesh K']),
+    submittedAt,
+    siteId: v.siteId,
+    provenance: kind === 'diesel' ? 'proposed' : 'human',
   };
 });
 

@@ -31,6 +31,9 @@ import {
   type Column,
 } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
+import { useViewParam } from '../../shell/useViewParam.js';
+
+const INDENT_VIEWS = ['open', 'all', 'breakdown', 'below_reorder'] as const;
 
 /**
  * The Indent Queue.
@@ -147,7 +150,7 @@ export function IndentQueue() {
   // terminal is a wide display that still gets fingers.
   const touch = useIsTouch();
   const [overrides, setOverrides] = useState<Record<string, Stage>>({});
-  const [filter, setFilter] = useState<'open' | 'all' | 'breakdown' | 'below_reorder'>('open');
+  const [filter, setFilter] = useViewParam(INDENT_VIEWS, 'open');
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [lens, setLens] = useState<Lens>('all');
   const [groupBy, setGroupBy] = useState<GroupBy>('site');

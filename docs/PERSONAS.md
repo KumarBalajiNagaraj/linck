@@ -119,7 +119,9 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **The job.** Keeps 58 tippers earning. Knows which are on trip, ready, idle, in service or broken down; chases the paperwork and the service that would stop one at the gate; and polices diesel, the largest operating cost and the largest leak.
 
-**Built for him.** The fleet command board, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+**Built for them.** The fleet command board, vehicle status, the driver list, the breakdown register, the expenses register, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+
+- **The fleet command board** (`/fleet/board`, their landing page) links to the seven databases the desk works in: Vehicles, Driver List, Delivery Order & Dispatch, Breakdown Register, Expenses Approval, Maintenance Stores and Vehicle Documents. Below the links are seven urgent counts: breakdown, documents expired, due for service, drivers absent, expenses awaiting approval, open store requests, and idle. Each count opens its pre-filtered list via `?view=`. The uptime tiles, status bar, uptime trend and diesel scatter moved unchanged to **Vehicle status** (`/fleet/vehicles`).
 
 - **Idle is an attention state and uptime forgives planned service.** Uptime is on-trip plus ready over total, with under-service excluded from downtime — counting a planned service as a failure teaches the team to skip services to protect the number.
 - **Diesel is policed against each vehicle's own benchmark and own tank**, not a fleet average. One threshold — 82% of benchmark — is applied identically in the table cell, the sparkline, the scatter flag and the exception filter.

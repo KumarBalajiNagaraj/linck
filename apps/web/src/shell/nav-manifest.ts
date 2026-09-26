@@ -46,7 +46,7 @@ export interface NavItem {
   route: string;
   permission: string;
   /** Shown against the item so the rail communicates work-to-do without opening anything. */
-  badge?: 'expiring_docs' | 'unverified_receipts' | 'extraction_queue' | 'open_indents' | 'breakdowns';
+  badge?: 'expiring_docs' | 'unverified_receipts' | 'extraction_queue' | 'open_indents' | 'breakdowns' | 'pending_expenses';
 }
 
 export interface Workspace {
@@ -79,7 +79,11 @@ export const WORKSPACES: Workspace[] = [
     glyph: '▤',
     module: 'fleet',
     items: [
-      { key: 'board', label: 'Command board', route: '/fleet/board', permission: 'fleet.board.read', badge: 'breakdowns' },
+      { key: 'board', label: 'Command board', route: '/fleet/board', permission: 'fleet.board.read' },
+      { key: 'vehicles', label: 'Vehicle status', route: '/fleet/vehicles', permission: 'fleet.board.read', badge: 'breakdowns' },
+      { key: 'drivers', label: 'Driver list', route: '/fleet/drivers', permission: 'fleet.driver.read' },
+      { key: 'breakdowns', label: 'Breakdown register', route: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
+      { key: 'expenses', label: 'Expenses', route: '/fleet/expenses', permission: 'fleet.expense.read', badge: 'pending_expenses' },
       { key: 'fuel', label: 'Diesel & DEF entry', route: '/fleet/fuel/new', permission: 'fleet.fuel.create' },
       { key: 'docs', label: 'Documents & expiry', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
       // Inter-state movement is material here, so the e-way bill console is a

@@ -111,6 +111,7 @@ class Tenant:
 # children: five of the tables above carry the audit trigger, so deleting them
 # writes fresh audit rows, and clearing the log any earlier would leave them.
 _TEARDOWN_ORDER = [
+    "whatsapp_messages",
     "sessions",
     "user_identities",
     "role_assignments",

@@ -505,4 +505,20 @@ export interface ExpenseBill {
   attachment: BillAttachment | null;
   /** Null for a bill keyed by hand with no capture run. */
   capture: BillCaptureRecord | null;
+  /** Set for a bill that came in on WhatsApp rather than being keyed or uploaded. */
+  source?: BillSource;
+}
+
+/** Where a WhatsApp bill came from: enough to find the message again and to refuse a second import. */
+export interface BillSource {
+  channel: 'whatsapp';
+  /** The claim's stable key; the same message is never imported twice. */
+  claimKey: string;
+  /** "Business number" for the live inbox, or the group an export came from. */
+  via: string;
+  sender: string;
+  postedAt: string;
+  /** What the driver wrote, often nothing: most send only the photo. */
+  message: string;
+  attachments: string[];
 }

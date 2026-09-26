@@ -20,6 +20,8 @@
  * Pure functions, no DOM.
  */
 
+import type { BillCapture } from './bill-capture.js';
+
 /* ----------------------------------------------------------------- types */
 
 export interface ChatMessage {
@@ -629,4 +631,149 @@ export function planDieselImport<C extends DieselClaim & { billNumber?: string |
     if (missing.length > 0) return plan('needs_details', `Needs ${missing.join(' and ')} before it can go for validation.`);
     return plan('add', null);
   });
+}
+
+/* ------------------------------------------------------------ the slip */
+
+/**
+ * What an OCR pass read off the slip photo. For a driver who cannot write,
+ * this is the whole bill: the message is a photo and nothing else.
+ */
+export interface SlipReading {
+  fileName: string;
+  litres: number | null;
+  amount: number | null;
+  billNumber: string | null;
+  vendor: string | null;
+  /** IST calendar date, YYYY-MM-DD. */
+  billDate: string | null;
+  /** Compact registration, as read. */
+  vehicle: string | null;
+  warnings: string[];
+  engine: string;
+}
+
+export interface ReconciledClaim extends DieselClaim {
+  slip: SlipReading | null;
+  /** Figures the message did not state and the slip supplied. */
+  filledFromSlip: ('litres' | 'amount' | 'vehicle')[];
+  billNumber: string | null;
+  vendor: string | null;
+  billDate: string | null;
+}
+
+/** Figures within this of each other are the same reading. */
+const LITRE_SLACK = 0.5;
+const RUPEE_SLACK = 1;
+
+/** The fields a bill needs, from `captureExpenseBill`'s reading of the slip. */
+export function slipFromCapture(fileName: string, capture: BillCapture, engine: string): SlipReading {
+  const f = capture.fields;
+  // A figure the capture itself doubted (confidence 1) is not evidence.
+  const sure = (v: { value: string; confidence: number } | undefined) => (v && v.confidence >= 2 ? v.value : null);
+  const litres = sure(f.litres);
+  const amount = sure(f.amount);
+  return {
+    fileName,
+    litres: litres === null ? null : Number(litres),
+    amount: amount === null ? null : Number(amount),
+    billNumber: sure(f.billNumber),
+    vendor: f.vendor?.value ?? null,
+    billDate: sure(f.billDate),
+    vehicle: f.vehicle?.value ?? null,
+    warnings: capture.warnings,
+    engine,
+  };
+}
+
+/**
+ * Message against slip. Where both give a figure they are compared, and a
+ * disagreement goes in front of the fleet manager — that comparison is the
+ * reason for reading the photo. Where the message is silent, as it is for a
+ * driver who only sends the photo, the slip fills the gap and says it did.
+ */
+export function reconcileWithSlip(claim: DieselClaim, slip: SlipReading | null, fleet: readonly FleetVehicleRef[]): ReconciledClaim {
+  const c: ReconciledClaim = {
+    ...claim,
+    issues: [...claim.issues],
+    slip,
+    filledFromSlip: [],
+    billNumber: slip?.billNumber ?? null,
+    // A slip nothing else could be read off is not trusted for its letterhead either.
+    vendor: slip && (slip.litres !== null || slip.amount !== null || slip.billNumber !== null) ? slip.vendor : null,
+    billDate: slip?.billDate ?? null,
+  };
+  if (!slip) return c;
+  if (slip.litres !== null) {
+    if (c.litres === null) {
+      c.litres = slip.litres;
+      c.litresInferred = false;
+      c.filledFromSlip.push('litres');
+    } else if (Math.abs(c.litres - slip.litres) > LITRE_SLACK) {
+      // The slip is what the bunk dispensed; a figure typed from memory is not.
+      c.issues.unshift(`The message says ${c.litres} L but the slip reads ${slip.litres} L — the slip's figure is used.`);
+      c.litres = slip.litres;
+      c.litresInferred = false;
+    } else if (c.litresInferred) {
+      c.litresInferred = false;
+      c.issues = c.issues.filter((i) => !/as litres/.test(i) || !/unlabelled numbers/.test(i));
+    }
+  }
+  if (slip.amount !== null) {
+    if (c.amount === null) {
+      c.amount = slip.amount;
+      c.amountInferred = false;
+      c.filledFromSlip.push('amount');
+    } else if (Math.abs(c.amount - slip.amount) > RUPEE_SLACK) {
+      // What is paid is what the bunk charged.
+      c.issues.unshift(`The message says ₹${c.amount} but the slip reads ₹${slip.amount} — the slip's figure is used.`);
+      c.amount = slip.amount;
+      c.amountInferred = false;
+    } else {
+      // The slip bears the message out; a figure only inferred from bare numbers is now confirmed.
+      c.amount = slip.amount;
+      if (c.amountInferred) {
+        c.amountInferred = false;
+        c.issues = c.issues.filter((i) => !/unlabelled numbers/.test(i));
+      }
+    }
+  }
+  if (slip.vehicle !== null) {
+    const onSlip = fleet.find((v) => v.registrationNumber === slip.vehicle);
+    if (c.vehicleId === null && onSlip) {
+      c.vehicleId = onSlip.id;
+      c.vehicleMatch = 'registration';
+      c.vehicleText = slip.vehicle;
+      c.filledFromSlip.push('vehicle');
+    } else if (c.vehicleId !== null && onSlip && onSlip.id !== c.vehicleId) {
+      c.issues.unshift(`The message is about one vehicle but the slip names ${slip.vehicle}.`);
+    } else if (!onSlip && c.vehicleId === null) {
+      c.issues.unshift(`The slip names ${slip.vehicle}, which is not one of our vehicles.`);
+    }
+  }
+  if (c.filledFromSlip.length > 0) {
+    // What was missing is now filled: drop the notes it answers.
+    c.issues = c.issues.filter(
+      (i) =>
+        !(c.filledFromSlip.includes('litres') && i.startsWith('No litres')) &&
+        !(c.filledFromSlip.includes('amount') && i.startsWith('No amount')) &&
+        !(c.filledFromSlip.includes('vehicle') && (i.startsWith('No vehicle') || i.includes('does not match exactly one vehicle'))) &&
+        !i.startsWith('A photo with no message'),
+    );
+  }
+  if (slip.litres === null && slip.amount === null && slip.billNumber === null) {
+    c.issues.unshift('The slip photo could not be read — check it by eye, or ask the driver for a clearer photo.');
+  }
+  // A stated rate stands; a derived one is re-derived from the reconciled figures.
+  if (c.litres && c.amount && (c.ratePerLitre === null || c.rateDerived)) {
+    c.ratePerLitre = Math.round((c.amount / c.litres) * 100) / 100;
+    c.rateDerived = true;
+    c.issues = c.issues.filter((i) => !i.startsWith('Works out at'));
+    if (c.ratePerLitre < DIESEL_RATE_BAND.min || c.ratePerLitre > DIESEL_RATE_BAND.max) {
+      c.issues.unshift(
+        `Works out at ₹${c.ratePerLitre.toFixed(2)} a litre, outside ₹${DIESEL_RATE_BAND.min}–${DIESEL_RATE_BAND.max} — a litre or rupee figure is probably wrong.`,
+      );
+    }
+  }
+  return c;
 }

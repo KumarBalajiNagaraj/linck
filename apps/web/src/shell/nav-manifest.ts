@@ -85,6 +85,8 @@ export const WORKSPACES: Workspace[] = [
       { key: 'breakdowns', label: 'Breakdown register', route: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
       { key: 'expenses', label: 'Expenses', route: '/fleet/expenses', permission: 'fleet.expense.read', badge: 'pending_expenses' },
       { key: 'fuel', label: 'Diesel & DEF entry', route: '/fleet/fuel/new', permission: 'fleet.fuel.create' },
+      { key: 'whatsapp', label: 'Diesel slips from WhatsApp', route: '/fleet/whatsapp', permission: 'fleet.expense.upload' },
+      { key: 'diesel-summary', label: 'Diesel summary', route: '/fleet/diesel-summary', permission: 'fleet.expense.read' },
       { key: 'docs', label: 'Documents & expiry', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
       // Inter-state movement is material here, so the e-way bill console is a
       // first-class destination and not a tab hidden inside dispatch.

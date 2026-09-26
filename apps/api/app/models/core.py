@@ -457,3 +457,42 @@ class AuditLog(Base):
     request_id: Mapped[str | None] = mapped_column(Text)
     ip: Mapped[str | None] = mapped_column(INET)
     at: Mapped[datetime] = created_at()
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp intake (LIN-13)
+# ---------------------------------------------------------------------------
+
+
+class WhatsAppMessage(Base):
+    """A message a driver sent to the fleet's WhatsApp Business number.
+
+    Mostly a slip photo with no words: drivers who cannot read send the
+    photo, and the import reads the slip. Kept until the fleet manager imports
+    it; `imported_at` then says it has been taken into the expense ledger.
+    """
+
+    __tablename__ = "whatsapp_messages"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "wamid"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    wamid: Mapped[str] = mapped_column(Text, nullable=False)
+    phone_number_id: Mapped[str] = mapped_column(Text, nullable=False)
+    from_phone: Mapped[str] = mapped_column(Text, nullable=False)
+    sender_name: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    caption: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    media_id: Mapped[str | None] = mapped_column(Text)
+    media_mime: Mapped[str | None] = mapped_column(Text)
+    media_filename: Mapped[str | None] = mapped_column(Text)
+    media_sha256: Mapped[str | None] = mapped_column(Text)
+    media_bytes: Mapped[int | None] = mapped_column(Integer)
+    media_error: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime] = created_at()
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    imported_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("core.users.id"))

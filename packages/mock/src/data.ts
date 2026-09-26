@@ -976,6 +976,7 @@ export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) 
     // validates it; once anyone has signed it off it is confirmed.
     provenance: kind === 'diesel' ? (status === 'submitted' ? ('proposed' as const) : ('confirmed' as const)) : ('human' as const),
     attachment: null,
+    capture: null,
   };
 });
 
@@ -1008,6 +1009,7 @@ EXPENSE_BILLS.push(
       siteId: 'site-wsp',
       provenance: 'human',
       attachment: null,
+      capture: null,
     };
   }),
 );

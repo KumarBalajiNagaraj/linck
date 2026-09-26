@@ -256,6 +256,9 @@ This is the best-served domain model in the product:
 
 **Built for them.** The dispatch board, the invoice ledger, the stock board, the e-way bill console, and the fleet board.
 
+- **The sales command board** (`/sales/board`, their landing page) — five urgent-action counts (unraised invoices, orders pending approval, dispatches unconfirmed or delayed, invoices overdue, stock below safety level), each opening its own pre-filtered list via `?view=`, over a row of links to Material Stock, Customers, Purchase Orders, Material Dispatch and Invoices.
+- **Customer and purchase-order databases** (`/sales/customers`, `/sales/orders`) on seeded mock data, with approve / reject on an order awaiting sign-off.
+
 - **The trip cost sheet** — revenue and cash cost on one page per load, with named handling for the three kinds of load that earn nothing: returned, cancelled, own-use. A returned load shows zero revenue against full cost, which is exactly the number the business needs to see.
 - **Quantity basis rides beside every quantity**, and weighbridge variance is drawn as a trend rather than an invoice block. Moisture alone moves apparent density 8–15%.
 - **The e-way bill console's threshold asymmetry** — ₹50,000 inter-state against Tamil Nadu's ₹1,00,000 intra-state — with two independent clocks and Rule 138E as a registration-level banner. The rules behind it, and everything else statutory, are in [COMPLIANCE.md](COMPLIANCE.md).
@@ -279,7 +282,7 @@ This is the best-served domain model in the product:
 | | Item | Effort |
 |---|---|---|
 | 1 | Permission-gate the write actions that are currently ungated — invoice close, e-way bill Part B and cancel all check nothing | S |
-| 2 | Fix the landing route — this persona lands on the fleet board, not their own dispatch board | S |
+| 2 | ~~Fix the landing route — this persona lands on the fleet board, not their own dispatch board~~ — done: they land on the sales command board | S |
 | 3 | Give sales `compliance.ewb.write` in the frontend persona, matching the backend role | S |
 | 4 | Move the e-way bill console into its own Compliance workspace — a crusher-only tenant loses it entirely today | S |
 | 5 | Join the console to the dispatch board, add a movement field, and add Generate Part A. A cross-border load currently reads "not required" against the wrong threshold | M |

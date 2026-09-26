@@ -45,6 +45,9 @@ import {
   type Column,
 } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
+import { useViewParam } from '../../shell/useViewParam.js';
+
+const LEDGER_VIEWS = ['all', 'overdue', 'reported', 'part_paid', 'closed'] as const;
 
 /**
  * The receivables ledger.
@@ -133,7 +136,7 @@ export function InvoiceLedger() {
   // a media query cannot reach them, so this is one of the few places the
   // hook is the right tool rather than a breakpoint class.
   const phone = useIsPhone();
-  const [filter, setFilter] = useState<'all' | 'overdue' | 'reported' | 'part_paid' | 'closed'>('all');
+  const [filter, setFilter] = useViewParam(LEDGER_VIEWS, 'all');
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   // "What would the ageing look like if every reported rupee were true?" — the

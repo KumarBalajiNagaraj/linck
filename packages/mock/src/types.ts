@@ -348,3 +348,54 @@ export interface Alert {
   at: string;
   route: string;
 }
+
+/**
+ * CUSTOMER MASTER.
+ *
+ * The sales desk's address book: who is billed, where the tipper goes, and
+ * how long they are allowed to take to pay. The delivery site is the site the
+ * coordinator says on the phone, not the registered office on the GSTIN.
+ */
+export interface Customer {
+  id: string;
+  name: string;
+  /** The default delivery site named on orders. */
+  site: string;
+  /** Null for walk-in counter sales, which are billed as B2C. */
+  gstin: string | null;
+  contactName: string;
+  phone: string;
+  creditLimit: string;
+  paymentTermsDays: number;
+  /** Primary site we serve them from. */
+  servedFromSiteId: string;
+}
+
+/**
+ * CUSTOMER PURCHASE ORDERS.
+ *
+ * The sales order a builder raises against us. Nothing is loaded against an
+ * order until it is approved — rate and credit are checked at approval, not at
+ * the gate, which is exactly why a queue of unapproved orders is urgent.
+ */
+export type PurchaseOrderStatus = 'pending_approval' | 'approved' | 'part_dispatched' | 'fulfilled' | 'rejected';
+
+export interface PurchaseOrder {
+  id: string;
+  number: string;
+  /** The customer's own reference, as written on their PO. */
+  customerPoRef: string;
+  receivedOn: string;
+  deliverBy: string;
+  customerId: string;
+  customerName: string;
+  deliverySite: string;
+  siteId: string;
+  productCode: string;
+  orderedUnits: number;
+  dispatchedUnits: number;
+  ratePerUnit: string;
+  value: string;
+  status: PurchaseOrderStatus;
+  takenBy: string;
+}

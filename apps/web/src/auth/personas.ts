@@ -50,6 +50,9 @@ export const PERSONAS: Persona[] = [
       'sales.dispatch.read',
       'sales.trip.read',
       'sales.invoice.read',
+      'sales.customer.read',
+      'sales.order.read',
+      'sales.order.approve',
       'finance.receipt.read',
       'finance.receipt.verify',
       'compliance.document.read',
@@ -119,6 +122,10 @@ export const PERSONAS: Persona[] = [
     defaultSiteId: KRP,
     grants: scoped(
       [
+        'sales.board.read',
+        'sales.customer.read',
+        'sales.order.read',
+        'sales.order.approve',
         'sales.dispatch.read',
         'sales.dispatch.write',
         'sales.trip.read',

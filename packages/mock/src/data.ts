@@ -2,6 +2,7 @@ import { PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck
 import type {
   Alert,
   ComplianceDocument,
+  Customer,
   Driver,
   EwayBill,
   ExtractionJob,
@@ -11,6 +12,7 @@ import type {
   Invoice,
   Product,
   ProductionRun,
+  PurchaseOrder,
   Receipt,
   Site,
   StockPosition,
@@ -793,4 +795,62 @@ export const EWAY_BILLS: EwayBill[] = [
 ];
 
 export const CUSTOMERS_LIST = CUSTOMERS;
+
+/* ------------------------------------------------ customers and sales orders */
+
+/*
+ * A separate generator, so adding these rows cannot shift a single number in
+ * the fleet, stock or invoice data seeded above them.
+ */
+const salesRng = makeRng(20260925);
+
+const CONTACTS = ['Arun Prakash', 'Senthil V', 'Meena R', 'K. Rajasekar', 'Dinesh Babu', 'Walk-in', 'Prakash N'];
+
+export const CUSTOMERS_MASTER: Customer[] = CUSTOMERS.map((c, i) => {
+  const counter = c.id === 'cus-06';
+  return {
+    id: c.id,
+    name: c.name,
+    site: c.site,
+    gstin: counter ? null : `33AA${String.fromCharCode(65 + i)}C${Math.floor(between(salesRng, 1000, 9999))}K1Z${i + 1}`,
+    contactName: CONTACTS[i % CONTACTS.length]!,
+    phone: counter ? '–' : `9${Math.floor(between(salesRng, 100000000, 999999999))}`,
+    creditLimit: money(counter ? 0 : between(salesRng, 5, 40, 0) * 100_000),
+    paymentTermsDays: counter ? 0 : [15, 30, 30, 45, 30, 0, 21][i % 7]!,
+    servedFromSiteId: i % 3 === 2 ? 'site-tvl' : 'site-krp',
+  };
+});
+
+const PO_STATUS_PLAN: PurchaseOrder['status'][] = [
+  'pending_approval', 'approved', 'part_dispatched', 'pending_approval', 'fulfilled', 'approved',
+  'pending_approval', 'part_dispatched', 'rejected', 'fulfilled', 'pending_approval', 'approved',
+];
+
+export const PURCHASE_ORDERS: PurchaseOrder[] = PO_STATUS_PLAN.map((status, i) => {
+  const customer = CUSTOMERS[i % CUSTOMERS.length]!;
+  const product = PRODUCTS[(i * 2) % PRODUCTS.length]!;
+  const ordered = between(salesRng, 20, 160, 0);
+  const rate = between(salesRng, 3800, 7200, 0);
+  const dispatched =
+    status === 'fulfilled' ? ordered : status === 'part_dispatched' ? Math.round(ordered * between(salesRng, 0.2, 0.8, 2)) : 0;
+  return {
+    id: `po-${String(i + 1).padStart(3, '0')}`,
+    number: `SO/26-27/${String(640 + i)}`,
+    customerPoRef: `PO-${customer.name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()}-${Math.floor(between(salesRng, 1000, 9999))}`,
+    receivedOn: hoursFromNow(-between(salesRng, 2, 240, 1)),
+    deliverBy: daysFromNow(Math.floor(between(salesRng, -3, 21))),
+    customerId: customer.id,
+    customerName: customer.name,
+    deliverySite: customer.site,
+    siteId: i % 3 === 2 ? 'site-tvl' : 'site-krp',
+    productCode: product.code,
+    orderedUnits: ordered,
+    dispatchedUnits: dispatched,
+    ratePerUnit: money(rate),
+    value: money(ordered * rate),
+    status,
+    takenBy: pick(salesRng, ['Vetrivel S', 'Priya R', 'Vetrivel S']),
+  };
+});
+
 export { NOW };

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import { DRIVERS, isDriverAbsent, VEHICLES, type Driver } from '@linck/mock';
+import { daysUntil, formatDate } from '@linck/domain';
+import { ATTENDANCE_FAMILY, ATTENDANCE_LABEL, DRIVERS, isDriverAbsent, NOW, VEHICLES, type Driver } from '@linck/mock';
 import { AsOfStamp, Chip, DataTable, EmptyState, IdCell, PageHeader, Section, Stacked, StatusStamp, type Column } from '@linck/ui';
-import type { StatusFamily } from '@linck/tokens';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 
@@ -12,25 +12,10 @@ import { useViewParam } from '../../shell/useViewParam.js';
 
 const VIEWS = ['all', 'absent', 'available', 'unassigned', 'licence'] as const;
 
-const ATTENDANCE_FAMILY: Record<Driver['attendance'], StatusFamily> = {
-  present: 'ready',
-  on_trip: 'active',
-  rest: 'planned',
-  absent: 'critical',
-  leave: 'attention',
-};
 
-const ATTENDANCE_LABEL: Record<Driver['attendance'], string> = {
-  present: 'Present',
-  on_trip: 'On trip',
-  rest: 'Rest day',
-  absent: 'Absent',
-  leave: 'On leave',
-};
 
-/** The mock clock's date — licences are measured against it, not the wall clock. */
-const TODAY = Date.parse('2026-08-08T09:12:00Z');
-const licenceDaysLeft = (d: Driver) => Math.floor((Date.parse(d.licenceExpiry) - TODAY) / 86_400_000);
+/** IST days to expiry, against the dataset's clock rather than the wall clock. */
+const licenceDaysLeft = (d: Driver) => daysUntil(d.licenceExpiry, NOW);
 
 export function DriverList() {
   const { siteScope, density } = useApp();
@@ -51,7 +36,7 @@ export function DriverList() {
   return (
     <>
       <PageHeader eyebrow="Fleet" title="Driver list" meta={<AsOfStamp asOf="14:42" source="fleet.drivers" freshness="live" />} />
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
           All drivers
         </Chip>
@@ -76,11 +61,23 @@ export function DriverList() {
           rowKey={(d) => d.id}
           rail={(d) => ({ status: ATTENDANCE_FAMILY[d.attendance] })}
           empty={
-            <EmptyState
-              fact="No drivers match this view."
-              because="Everyone at this site is accounted for."
-              action={{ label: 'Show all drivers', onClick: () => setView('all') }}
-            />
+            all.length === 0 ? (
+              <EmptyState fact="No drivers at this site." because="Nobody on the roster is based here." />
+            ) : (
+              <EmptyState
+                fact="No drivers match this view."
+                because={
+                  view === 'absent'
+                    ? 'Everyone rostered here turned up today.'
+                    : view === 'licence'
+                      ? 'No licence here runs out within 30 days.'
+                      : view === 'unassigned'
+                        ? 'Every driver here has a vehicle.'
+                        : 'Nobody here is free right now.'
+                }
+                action={{ label: 'Show all drivers', onClick: () => setView('all') }}
+              />
+            )
           }
         />
       </Section>
@@ -118,16 +115,20 @@ const columns: Column<Driver>[] = [
   {
     key: 'licenceExpiry',
     header: 'Licence expires',
-    width: 150,
+    width: 230,
     group: 'Licence',
+    // A word and a glyph, not a coloured date: expiring and expired are
+    // states, and a state is never carried by hue alone.
     render: (d) => {
       const left = licenceDaysLeft(d);
       return (
-        <span style={{ color: left < 0 ? 'var(--status-critical)' : left <= 30 ? 'var(--status-attention)' : undefined }}>
-          {d.licenceExpiry.slice(0, 10)}
-          <span className="num ml-2 text-[12px] tabular-nums" style={{ color: 'var(--text-tertiary)' }}>
-            {left < 0 ? `${Math.abs(left)}d ago` : `${left}d`}
-          </span>
+        <span className="flex items-center gap-2">
+          <span className="num tabular-nums">{formatDate(d.licenceExpiry)}</span>
+          {left < 0 ? (
+            <StatusStamp status="critical" label="Expired" severity={`${Math.abs(left)}d ago`} />
+          ) : left <= 30 ? (
+            <StatusStamp status="attention" label="Expiring" severity={`${left}d`} />
+          ) : null}
         </span>
       );
     },

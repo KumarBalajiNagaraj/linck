@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { can, formatQty } from '@linck/domain';
+import { can, formatDate, formatINR, formatQty } from '@linck/domain';
 import {
   PO_STATUS_FAMILY,
   PO_STATUS_LABEL,
@@ -11,6 +11,7 @@ import {
   AsOfStamp,
   Button,
   Chip,
+  ConfirmModal,
   DataTable,
   Detail,
   DetailGrid,
@@ -49,6 +50,7 @@ export function PurchaseOrderDatabase() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Decisions taken in this session, not yet written back. */
   const [decided, setDecided] = useState<Record<string, PurchaseOrder['status']>>({});
+  const [confirmReject, setConfirmReject] = useState(false);
 
   const mayApprove = can(persona.grants, 'sales.order.approve', { siteId: siteScope });
 
@@ -68,7 +70,7 @@ export function PurchaseOrderDatabase() {
         title="Purchase orders"
         meta={<AsOfStamp asOf="14:42" source="sales.purchase_orders" freshness="live" />}
       />
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
           All orders
         </Chip>
@@ -92,11 +94,15 @@ export function PurchaseOrderDatabase() {
             fillRatio: p.orderedUnits > 0 ? p.dispatchedUnits / p.orderedUnits : 0,
           })}
           empty={
-            <EmptyState
-              fact="No purchase orders match this view."
-              because="Nothing at this site is in that state right now."
-              action={{ label: 'Show all orders', onClick: () => setView('all') }}
-            />
+            all.length === 0 ? (
+              <EmptyState fact="No purchase orders at this site." because="No customer has raised an order against this plant yet." />
+            ) : (
+              <EmptyState
+                fact="No purchase orders match this view."
+                because="Nothing at this site is in that state right now."
+                action={{ label: 'Show all orders', onClick: () => setView('all') }}
+              />
+            )
           }
         />
       </Section>
@@ -118,7 +124,7 @@ export function PurchaseOrderDatabase() {
                 <Button variant="primary" onClick={() => setDecided((d) => ({ ...d, [selected.id]: 'approved' }))}>
                   Approve order
                 </Button>
-                <Button variant="destructive" onClick={() => setDecided((d) => ({ ...d, [selected.id]: 'rejected' }))}>
+                <Button variant="destructive" onClick={() => setConfirmReject(true)}>
                   Reject
                 </Button>
               </>
@@ -149,12 +155,12 @@ export function PurchaseOrderDatabase() {
                 <Detail label="Order value">
                   <MoneyCell value={selected.value} decimals={0} />
                 </Detail>
-                <Detail label="Deliver by">{selected.deliverBy.slice(0, 10)}</Detail>
+                <Detail label="Deliver by">{formatDate(selected.deliverBy)}</Detail>
               </DetailGrid>
             </SheetSection>
             <SheetSection caption="Taken">
               <DetailGrid>
-                <Detail label="Received">{selected.receivedOn.slice(0, 10)}</Detail>
+                <Detail label="Received">{formatDate(selected.receivedOn)}</Detail>
                 <Detail label="Taken by">{selected.takenBy}</Detail>
               </DetailGrid>
               {selected.status === 'pending_approval' ? (
@@ -167,6 +173,29 @@ export function PurchaseOrderDatabase() {
           </>
         ) : null}
       </SideSheet>
+
+      {/* Rejecting is the one move on this screen with no way back from it, so
+          it names the customer, the units and the money before it happens. */}
+      <ConfirmModal
+        open={confirmReject && selected !== null}
+        onClose={() => setConfirmReject(false)}
+        onConfirm={() => {
+          if (selected) setDecided((d) => ({ ...d, [selected.id]: 'rejected' }));
+          setConfirmReject(false);
+        }}
+        title="Reject this order"
+        destructive
+        confirmLabel="Reject the order"
+        consequence={
+          selected ? (
+            <>
+              {selected.customerName}&rsquo;s order {selected.customerPoRef} for {formatQty(selected.orderedUnits, 0)} units of{' '}
+              {productLabel(selected.productCode)} ({formatINR(selected.value, { decimals: 0 })}) is turned down and cannot be reopened
+              here. They will need to raise a new order.
+            </>
+          ) : null
+        }
+      />
     </>
   );
 }
@@ -223,5 +252,5 @@ const columns: Column<PurchaseOrder>[] = [
     group: 'Money',
     render: (p) => <MoneyCell value={p.value} decimals={0} />,
   },
-  { key: 'deliverBy', header: 'Deliver by', width: 110, group: 'Dates', render: (p) => p.deliverBy.slice(0, 10) },
+  { key: 'deliverBy', header: 'Deliver by', width: 110, group: 'Dates', render: (p) => formatDate(p.deliverBy) },
 ];

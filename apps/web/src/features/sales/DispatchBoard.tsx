@@ -498,6 +498,7 @@ export function DispatchBoard() {
           row — the shell's own section strip behaves the same way, so the
           gesture is already learned. On a desk there is room to wrap. */}
       <div
+        id="list"
         className="mt-7 flex items-center gap-2 overflow-x-auto px-6 pb-3 [&>*]:shrink-0 [&>*]:whitespace-nowrap md:flex-wrap md:overflow-visible"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
@@ -524,10 +525,10 @@ export function DispatchBoard() {
         ) : null}
         <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-strong)' }} />
         <Chip active={lane === 'unconfirmed'} onClick={() => setLane('unconfirmed')} count={unconfirmed.length}>
-          Unconfirmed or delayed
+          Pending confirmation / delayed
         </Chip>
         <Chip active={lane === 'unbilled'} onClick={() => setLane('unbilled')} count={unbilled.length}>
-          Not yet invoiced
+          Invoice not yet raised
         </Chip>
         <Chip active={lane === 'override'} onClick={() => setLane('override')} count={overridden.length}>
           Rate overridden

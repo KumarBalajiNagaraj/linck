@@ -153,7 +153,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
     }
 
     /* VEHICLES — the single most-searched record in the product. */
-    if (moduleOn('fleet') && allow(['fleet.board.read'])) {
+    if (moduleOn('fleet') && allow(['fleet.vehicle.read'])) {
       for (const v of vehiclesForSite(siteScope)) {
         entries.push({
           id: `veh:${v.id}`,

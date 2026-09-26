@@ -474,6 +474,7 @@ export function StockBoard() {
         </Section>
       </div>
 
+      <div id="list" />
       <Section
         caption="Units first, tonnes derived"
         title="What can be sold right now"

@@ -4,3 +4,4 @@ export * from './date.js';
 export * from './permissions.js';
 export * from './bill-capture.js';
 export * from './whatsapp.js';
+export * from './gstin.js';

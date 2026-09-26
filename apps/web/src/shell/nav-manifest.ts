@@ -80,7 +80,7 @@ export const WORKSPACES: Workspace[] = [
     module: 'fleet',
     items: [
       { key: 'board', label: 'Command board', route: '/fleet/board', permission: 'fleet.board.read' },
-      { key: 'vehicles', label: 'Vehicle status', route: '/fleet/vehicles', permission: 'fleet.board.read', badge: 'breakdowns' },
+      { key: 'vehicles', label: 'Vehicle status', route: '/fleet/vehicles', permission: 'fleet.vehicle.read', badge: 'breakdowns' },
       { key: 'drivers', label: 'Driver list', route: '/fleet/drivers', permission: 'fleet.driver.read' },
       { key: 'breakdowns', label: 'Breakdown register', route: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
       { key: 'expenses', label: 'Expenses', route: '/fleet/expenses', permission: 'fleet.expense.read', badge: 'pending_expenses' },

@@ -54,6 +54,7 @@ export const PERSONAS: Persona[] = [
       'sales.dispatch.read',
       'sales.trip.read',
       'sales.invoice.read',
+      'sales.board.read',
       'sales.customer.read',
       'sales.order.read',
       'sales.order.approve',
@@ -140,7 +141,9 @@ export const PERSONAS: Persona[] = [
         'sales.trip.read',
         'sales.invoice.read',
         'production.stock.read',
-        'fleet.board.read',
+        // The vehicle list, to see which lorries are free — not the fleet
+        // manager's command board, which is another desk's work.
+        'fleet.vehicle.read',
         'compliance.ewb.read',
       ],
       [KRP, TVL],

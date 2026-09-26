@@ -328,6 +328,7 @@ export function UploadBillSheet({
       amount: amount.toFixed(2),
       status: 'submitted',
       submittedBy: persona.name,
+      submittedById: `user:${persona.key}`,
       submittedAt: NOW.toISOString(),
       siteId: bookedTo,
       // Keyed with no capture is a human value; captured and accepted as read

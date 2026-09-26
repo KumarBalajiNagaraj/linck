@@ -577,17 +577,21 @@ export function salesAttention(siteId: string | null, now: Date = NOW) {
 export const EXPENSE_STATUS_FAMILY: Record<ExpenseBill['status'], StatusFamily> = {
   submitted: 'attention',
   validated: 'pending',
-  approved: 'active',
+  approved: 'pending',
+  passed: 'active',
   paid: 'ready',
   rejected: 'dormant',
+  deleted: 'dormant',
 };
 
 export const EXPENSE_STATUS_LABEL: Record<ExpenseBill['status'], string> = {
   submitted: 'Awaiting validation',
   validated: 'Awaiting director',
-  approved: 'Awaiting payment',
+  approved: 'Awaiting accounts',
+  passed: 'Passed for payment',
   paid: 'Paid',
   rejected: 'Rejected',
+  deleted: 'Deleted',
 };
 
 export const EXPENSE_KIND_LABEL: Record<ExpenseBill['kind'], string> = {

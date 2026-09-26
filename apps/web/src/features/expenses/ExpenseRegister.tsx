@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { businessDate, can, formatDate, formatINRCompact, parseTypedAmount } from '@linck/domain';
+import { availableActions, businessDate, can, formatDate, formatINRCompact, parseTypedAmount } from '@linck/domain';
 import {
   DRIVERS,
   EXPENSE_KIND_LABEL,
@@ -35,45 +35,48 @@ import {
 } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
-import { useExpenses } from './expenseStore.js';
+import { BatchBar, BillHistory, ChainActions, STEP_ACTION } from './ApprovalChain.js';
+import { actorFor, useExpenses } from './expenseStore.js';
 import { UploadBillSheet } from './UploadBillSheet.js';
 
 /**
  * The expenses database — diesel bills, repair bills, tyres, spares, tolls.
  *
- * One screen, two desks: the fleet manager's bills under Fleet and the store
- * manager's under Stores. Every bill walks one fixed chain: its own desk
- * validates it, the director approves it, accounts pays it. The chips are that
- * chain, in order.
+ * One screen, three views: the fleet manager's bills under Fleet, the store
+ * manager's under Stores, and both desks together under Finance, where the
+ * director and accounts work. Every bill walks one fixed chain (LIN-14): its
+ * own desk validates it, the director approves it, accounts passes it and
+ * records the payment. The chips are that chain, in order; picking one step
+ * offers to do that step for every bill in it at once.
  */
 
-const STATUS_ORDER: ExpenseBill['status'][] = ['submitted', 'validated', 'approved', 'paid', 'rejected'];
+const STATUS_ORDER: ExpenseBill['status'][] = ['submitted', 'validated', 'approved', 'passed', 'paid', 'rejected', 'deleted'];
 const VIEWS = ['all', ...STATUS_ORDER, 'corrected'] as const;
 
-/**
- * Each desk's keys. Who validates a stores bill is settled with the approval
- * chain (LIN-14); until then nobody holds it, and a stores bill waiting for
- * validation reads as someone else's turn to every viewer.
- */
-const DESK_COPY: Record<ExpenseBill['desk'], { eyebrow: string; upload: string; validate: string | null }> = {
-  fleet: { eyebrow: 'Fleet', upload: 'fleet.expense.upload', validate: 'fleet.expense.validate' },
-  stores: { eyebrow: 'Stores', upload: 'stores.expense.upload', validate: null },
+/** Each desk's upload key. Finance sees both desks and uploads to neither. */
+const DESK_COPY: Record<ExpenseBill['desk'], { eyebrow: string; upload: string }> = {
+  fleet: { eyebrow: 'Fleet', upload: 'fleet.expense.upload' },
+  stores: { eyebrow: 'Stores', upload: 'stores.expense.upload' },
 };
 
-export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
+export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) {
   const { persona, siteScope, density } = useApp();
   const bills = useExpenses((s) => s.bills);
   const [view, setView] = useViewParam(VIEWS, 'all');
   const [uploading, setUploading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const mayUpload = can(persona.grants, DESK_COPY[desk].upload, { siteId: siteScope });
-  const validate = DESK_COPY[desk].validate;
-  const mayValidate = validate !== null && can(persona.grants, validate, { siteId: siteScope });
-  // "Awaiting validation" asks for action only from someone who can validate;
-  // to everyone else it is in flight, with the ball in another court.
-  const family = (e: ExpenseBill) => (e.status === 'submitted' && !mayValidate ? 'pending' : EXPENSE_STATUS_FAMILY[e.status]);
-  const columns = useMemo(() => columnsFor(desk, family), [desk, mayValidate]);
+  const mayUpload = desk !== null && can(persona.grants, DESK_COPY[desk].upload, { siteId: siteScope });
+  const actor = actorFor(persona);
+  // A bill asks for action only from whoever may take its next step; to
+  // everyone else it is in flight, with the ball in another court.
+  const isMine = (e: ExpenseBill) => {
+    const step = STEP_ACTION[e.status];
+    return step !== undefined && availableActions(e, actor).some((o) => o.action === step && o.allowed);
+  };
+  const family = (e: ExpenseBill): StatusFamily =>
+    isMine(e) ? 'attention' : e.status === 'submitted' ? 'pending' : EXPENSE_STATUS_FAMILY[e.status];
+  const columns = useMemo(() => columnsFor(desk, family), [desk, persona]);
 
   const all = useMemo(
     () => [...expensesForSite(siteScope, desk, bills)].sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)),
@@ -81,15 +84,15 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
   );
   const rows =
     view === 'all' ? all : view === 'corrected' ? all.filter((e) => e.provenance === 'overridden') : all.filter((e) => e.status === view);
-  const awaiting = all.filter((e) => e.status === 'submitted');
-  const awaitingValue = awaiting.reduce((s, e) => s + Number.parseFloat(e.amount), 0);
+  const awaiting = all.filter(isMine);
+  const awaitingValue = awaiting.reduce((s, e) => s + Math.round(Number.parseFloat(e.amount) * 100), 0) / 100;
   const selected = selectedId ? (all.find((e) => e.id === selectedId) ?? null) : null;
 
   return (
     <>
       <PageHeader
-        eyebrow={DESK_COPY[desk].eyebrow}
-        title="Expenses"
+        eyebrow={desk ? DESK_COPY[desk].eyebrow : 'Finance'}
+        title={desk ? 'Expenses' : 'Expense bills'}
         actions={
           mayUpload ? (
             <Button variant="primary" onClick={() => setUploading(true)}>
@@ -101,7 +104,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <AsOfStamp asOf="14:42" source="expense_bills" freshness="live" />
             <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              {awaiting.length} bills worth {formatINRCompact(awaitingValue)} waiting to be validated
+              {awaiting.length} bills worth {formatINRCompact(awaitingValue)} wait on you
             </span>
           </span>
         }
@@ -120,6 +123,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
           Capture corrected by hand
         </Chip>
       </div>
+      <BatchBar key={`${view}-${persona.key}`} bills={rows} status={STATUS_ORDER.includes(view as ExpenseBill['status']) ? (view as ExpenseBill['status']) : null} />
       <Section>
         <DataTable
           density={density}
@@ -128,7 +132,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
           rowKey={(e) => e.id}
           selectedKey={selectedId ?? undefined}
           onRowClick={(e) => setSelectedId(e.id)}
-          isDormant={(e) => e.status === 'rejected'}
+          isDormant={(e) => e.status === 'rejected' || e.status === 'deleted'}
           rail={(e) => ({ status: family(e), provenance: e.provenance })}
           empty={
             all.length === 0 ? (
@@ -145,7 +149,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
       </Section>
       <div className="h-10" />
 
-      <UploadBillSheet open={uploading} onClose={() => setUploading(false)} desk={desk} />
+      {desk ? <UploadBillSheet open={uploading} onClose={() => setUploading(false)} desk={desk} /> : null}
 
       <SideSheet
         open={selected !== null}
@@ -157,7 +161,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
         identifier={selected?.billNumber}
         {...(selected ? { status: { family: family(selected), label: EXPENSE_STATUS_LABEL[selected.status] } } : {})}
       >
-        {selected ? <BillDetail key={selected.id} bill={selected} mayCorrect={mayUpload && selected.status === 'submitted'} /> : null}
+        {selected ? <BillDetail key={selected.id} bill={selected} mayCorrect={selected.status === 'submitted' && (mayUpload || isMine(selected))} /> : null}
       </SideSheet>
     </>
   );
@@ -237,6 +241,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
 
   return (
     <>
+      <ChainActions bill={bill} />
       <SheetSection caption="The scan">
         {bill.attachment ? (
           bill.attachment.mimeType === 'application/pdf' || unviewable ? (
@@ -372,6 +377,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           <Detail label="Submitted by">{bill.submittedBy}</Detail>
         </DetailGrid>
       </SheetSection>
+      <BillHistory bill={bill} />
     </>
   );
 }
@@ -381,7 +387,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
  * and is never counted in litres, so its register does not carry those
  * columns — a column of dashes on every row is noise, not information.
  */
-function columnsFor(desk: ExpenseBill['desk'], family: (e: ExpenseBill) => StatusFamily): Column<ExpenseBill>[] {
+function columnsFor(desk: ExpenseBill['desk'] | null, family: (e: ExpenseBill) => StatusFamily): Column<ExpenseBill>[] {
   const all: (Column<ExpenseBill> & { fleetOnly?: true })[] = [
     {
       key: 'bill',
@@ -463,5 +469,5 @@ function columnsFor(desk: ExpenseBill['desk'], family: (e: ExpenseBill) => Statu
     },
     { key: 'by', header: 'Submitted by', group: 'Amount', render: (e) => e.submittedBy },
   ];
-  return all.filter((c) => desk === 'fleet' || !c.fleetOnly).map(({ fleetOnly: _fleetOnly, ...c }) => c);
+  return all.filter((c) => desk !== 'stores' || !c.fleetOnly).map(({ fleetOnly: _fleetOnly, ...c }) => c);
 }

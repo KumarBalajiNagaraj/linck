@@ -1,4 +1,5 @@
 export * from './money.js';
+export * from './expense-workflow.js';
 export * from './delivery-docs.js';
 export * from './uom.js';
 export * from './date.js';

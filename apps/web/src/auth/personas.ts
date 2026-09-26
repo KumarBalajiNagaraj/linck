@@ -49,6 +49,9 @@ export const PERSONAS: Persona[] = [
       'fleet.breakdown.read',
       'fleet.expense.read',
       'stores.expense.read',
+      // LIN-14: the director approves bills the desks have validated.
+      'finance.expense.read',
+      'finance.expense.approve',
       'production.stock.read',
       'production.run.read',
       'sales.dispatch.read',
@@ -78,6 +81,10 @@ export const PERSONAS: Persona[] = [
         'sales.invoice.read',
         'finance.receipt.read',
         'finance.receipt.verify',
+        // LIN-14: accounts passes approved bills for payment and records the payment.
+        'finance.expense.read',
+        'finance.expense.pass',
+        'finance.expense.pay',
         'compliance.document.read',
         'compliance.document.write',
         'compliance.ewb.read',
@@ -92,7 +99,8 @@ export const PERSONAS: Persona[] = [
     roleLabel: 'Fleet Manager',
     siteIds: [KRP, TVL, WSP],
     defaultSiteId: KRP,
-    grants: scoped(
+    grants: {
+      ...scoped(
       [
         'fleet.board.read',
         'fleet.vehicle.read',
@@ -112,6 +120,10 @@ export const PERSONAS: Persona[] = [
       ],
       [KRP, TVL, WSP],
     ),
+    // LIN-14: the store manager uploads the workshop's bills; the fleet
+    // manager is the second pair of eyes that validates them, there only.
+      ...scoped(['stores.expense.read', 'stores.expense.validate'], [WSP]),
+    },
   },
   {
     key: 'production',

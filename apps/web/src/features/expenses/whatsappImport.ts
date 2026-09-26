@@ -237,6 +237,7 @@ export function billFromClaim(claim: IntakeClaim, source: IntakeSource): Expense
     amount: claim.amount!.toFixed(2),
     status: 'submitted',
     submittedBy: driver?.name ?? claim.sender,
+    submittedById: driver ? `driver:${driver.id}` : `wa:${claim.sender}`,
     submittedAt: claim.at,
     siteId: vehicle.siteId,
     // Machine-read and not yet looked at by a person: validation confirms it.

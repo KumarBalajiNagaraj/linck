@@ -1,4 +1,4 @@
-import { PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
+import { buildGstin, PRODUCT_DENSITIES, unitsToTonnes, weighbridgeVariancePct } from '@linck/domain';
 import type {
   Alert,
   BreakdownRecord,
@@ -212,6 +212,27 @@ export const DOCUMENTS: ComplianceDocument[] = VEHICLES.flatMap((vehicle, vi) =>
     };
   }),
 );
+
+/*
+ * One truth per vehicle about its papers. The vehicle's "next document" is
+ * derived from its actual documents rather than seeded beside them, and an
+ * off-road tipper whose recorded reason is an expired fitness certificate has
+ * one on file. Runs after every random draw above, so no seeded number moves.
+ */
+for (const vehicle of VEHICLES) {
+  if (vehicle.status === 'off_road') {
+    const fitness = DOCUMENTS.find((d) => d.vehicleId === vehicle.id && d.type === 'fitness');
+    if (fitness && fitness.daysLeft >= 0) {
+      fitness.daysLeft = -14;
+      fitness.expiresOn = daysFromNow(-14);
+    }
+  }
+  const soonest = DOCUMENTS.filter((d) => d.vehicleId === vehicle.id).sort((a, b) => a.daysLeft - b.daysLeft)[0];
+  if (soonest) {
+    vehicle.nextDocExpiryDays = soonest.daysLeft;
+    vehicle.nextDocType = soonest.label;
+  }
+}
 
 /* ------------------------------------------------------------------ stock */
 
@@ -481,12 +502,12 @@ export const EXTRACTION_JOBS: ExtractionJob[] = [
 /* ---------------------------------------------------------------- indents */
 
 export const INDENTS: Indent[] = [
-  { id: 'ind-001', number: 'IND/26-27/0412', raisedOn: hoursFromNow(-2), raisedBy: 'Kaliyaperumal R', siteId: 'site-krp', itemName: 'Jaw plate — fixed, Mn18', itemCode: 'SP-JAW-F18', quantity: 2, uom: 'nos', forAsset: 'Jaw + VSI — KRP 250TPH', status: 'submitted', urgency: 'urgent', stockOnHand: 0, reorderLevel: 2, estimatedValue: '184000.00' },
-  { id: 'ind-002', number: 'IND/26-27/0411', raisedOn: hoursFromNow(-6), raisedBy: 'Anbu Selvan M', siteId: 'site-wsp', itemName: 'Engine oil 15W-40', itemCode: 'CN-OIL-1540', quantity: 200, uom: 'L', forAsset: 'TN 29 AB 1015', status: 'approved', urgency: 'routine', stockOnHand: 60, reorderLevel: 150, estimatedValue: '38000.00' },
-  { id: 'ind-003', number: 'IND/26-27/0410', raisedOn: hoursFromNow(-9), raisedBy: 'Sekar M', siteId: 'site-krp', itemName: 'Conveyor belt 800mm EP400', itemCode: 'SP-BELT-800', quantity: 24, uom: 'm', forAsset: 'Jaw + VSI — KRP 250TPH', status: 'submitted', urgency: 'breakdown', stockOnHand: 0, reorderLevel: 12, estimatedValue: '96000.00' },
-  { id: 'ind-004', number: 'IND/26-27/0409', raisedOn: hoursFromNow(-27), raisedBy: 'Ganesh K', siteId: 'site-wsp', itemName: 'Tyre 295/90 R20', itemCode: 'TY-29590-20', quantity: 4, uom: 'nos', forAsset: 'TN 38 AL 1050', status: 'issued', urgency: 'routine', stockOnHand: 6, reorderLevel: 8, estimatedValue: '104800.00' },
-  { id: 'ind-005', number: 'IND/26-27/0408', raisedOn: hoursFromNow(-34), raisedBy: 'Arivazhagan T', siteId: 'site-tvl', itemName: 'Cone liner — mantle', itemCode: 'SP-CON-MNT', quantity: 1, uom: 'nos', forAsset: 'Cone — TVL 200TPH', status: 'approved', urgency: 'urgent', stockOnHand: 1, reorderLevel: 1, estimatedValue: '212000.00' },
-  { id: 'ind-006', number: 'IND/26-27/0407', raisedOn: hoursFromNow(-48), raisedBy: 'Muthu S', siteId: 'site-krp', itemName: 'DEF / AdBlue 20L', itemCode: 'CN-DEF-20', quantity: 30, uom: 'nos', forAsset: null, status: 'rejected', urgency: 'routine', stockOnHand: 22, reorderLevel: 10, estimatedValue: '21000.00' },
+  { id: 'ind-001', number: 'IND/26-27/0412', raisedOn: hoursFromNow(-2), raisedBy: 'Kaliyaperumal R', siteId: 'site-krp', itemName: 'Jaw plate — fixed, Mn18', itemCode: 'SP-JAW-F18', quantity: 2, uom: 'nos', forAsset: 'Jaw + VSI — KRP 250TPH', requestedFor: 'plant', status: 'submitted', urgency: 'urgent', stockOnHand: 0, reorderLevel: 2, estimatedValue: '184000.00' },
+  { id: 'ind-002', number: 'IND/26-27/0411', raisedOn: hoursFromNow(-6), raisedBy: 'Anbu Selvan M', siteId: 'site-wsp', itemName: 'Engine oil 15W-40', itemCode: 'CN-OIL-1540', quantity: 200, uom: 'L', forAsset: 'TN 29 AB 1001', requestedFor: 'fleet', status: 'approved', urgency: 'routine', stockOnHand: 60, reorderLevel: 150, estimatedValue: '38000.00' },
+  { id: 'ind-003', number: 'IND/26-27/0410', raisedOn: hoursFromNow(-9), raisedBy: 'Sekar M', siteId: 'site-krp', itemName: 'Conveyor belt 800mm EP400', itemCode: 'SP-BELT-800', quantity: 24, uom: 'm', forAsset: 'Jaw + VSI — KRP 250TPH', requestedFor: 'plant', status: 'submitted', urgency: 'breakdown', stockOnHand: 0, reorderLevel: 12, estimatedValue: '96000.00' },
+  { id: 'ind-004', number: 'IND/26-27/0409', raisedOn: hoursFromNow(-27), raisedBy: 'Ganesh K', siteId: 'site-wsp', itemName: 'Tyre 295/90 R20', itemCode: 'TY-29590-20', quantity: 4, uom: 'nos', forAsset: 'TN 38 AB 1008', requestedFor: 'fleet', status: 'issued', urgency: 'routine', stockOnHand: 6, reorderLevel: 8, estimatedValue: '104800.00' },
+  { id: 'ind-005', number: 'IND/26-27/0408', raisedOn: hoursFromNow(-34), raisedBy: 'Arivazhagan T', siteId: 'site-tvl', itemName: 'Cone liner — mantle', itemCode: 'SP-CON-MNT', quantity: 1, uom: 'nos', forAsset: 'Cone — TVL 200TPH', requestedFor: 'plant', status: 'approved', urgency: 'urgent', stockOnHand: 1, reorderLevel: 1, estimatedValue: '212000.00' },
+  { id: 'ind-006', number: 'IND/26-27/0407', raisedOn: hoursFromNow(-48), raisedBy: 'Muthu S', siteId: 'site-krp', itemName: 'DEF / AdBlue 20L', itemCode: 'CN-DEF-20', quantity: 30, uom: 'nos', forAsset: null, requestedFor: 'fleet', status: 'rejected', urgency: 'routine', stockOnHand: 22, reorderLevel: 10, estimatedValue: '21000.00' },
 ];
 
 /* ----------------------------------------------------------------- alerts */
@@ -814,7 +835,12 @@ export const CUSTOMERS_MASTER: Customer[] = CUSTOMERS.map((c, i) => {
     id: c.id,
     name: c.name,
     site: c.site,
-    gstin: counter ? null : `33AA${String.fromCharCode(65 + i)}C${Math.floor(between(salesRng, 1000, 9999))}K1Z${i + 1}`,
+    // A real PAN shape (5 letters, 4 digits, 1 letter; 4th letter C = company,
+    // 5th = the name's initial) and a computed check character, so the seed
+    // passes the same validation the e-invoice console will apply.
+    gstin: counter
+      ? null
+      : buildGstin('33', `AA${String.fromCharCode(65 + i)}C${c.name[0]!.toUpperCase()}${Math.floor(between(salesRng, 1000, 9999))}K`),
     contactName: CONTACTS[i % CONTACTS.length]!,
     phone: counter ? '–' : `9${Math.floor(between(salesRng, 100000000, 999999999))}`,
     creditLimit: money(counter ? 0 : between(salesRng, 5, 40, 0) * 100_000),
@@ -946,7 +972,9 @@ export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) 
     submittedBy: kind === 'diesel' ? 'Driver (WhatsApp)' : pick(fleetRng, ['Anbu Selvan M', 'Ganesh K']),
     submittedAt,
     siteId: v.siteId,
-    provenance: kind === 'diesel' ? ('proposed' as const) : ('human' as const),
+    // Read by Linck off a WhatsApp photo, so proposed until the fleet manager
+    // validates it; once anyone has signed it off it is confirmed.
+    provenance: kind === 'diesel' ? (status === 'submitted' ? ('proposed' as const) : ('confirmed' as const)) : ('human' as const),
     attachment: null,
   };
 });

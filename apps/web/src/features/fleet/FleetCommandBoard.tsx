@@ -26,80 +26,84 @@ export function FleetCommandBoard() {
   const expensesAwaiting = expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length;
 
   const destinations: BoardDestination[] = [
-    { label: 'Vehicles', to: '/fleet/vehicles', permission: 'fleet.board.read' },
-    { label: 'Driver List', to: '/fleet/drivers', permission: 'fleet.driver.read' },
-    { label: 'Delivery Order & Dispatch', to: '/sales/dispatch', permission: 'sales.dispatch.read' },
-    { label: 'Breakdown Register', to: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
-    { label: 'Expenses Approval', to: '/fleet/expenses', permission: 'fleet.expense.read' },
-    { label: 'Maintenance Stores', to: '/stores/indents', permission: 'stores.indent.read' },
-    { label: 'Vehicle Documents', to: '/compliance/documents', permission: 'compliance.document.read' },
+    { label: 'Vehicles', to: '/fleet/vehicles' },
+    { label: 'Driver List', to: '/fleet/drivers' },
+    { label: 'Delivery Order & Dispatch', to: '/sales/dispatch' },
+    { label: 'Breakdown Register', to: '/fleet/breakdowns' },
+    { label: 'Expenses Approval', to: '/fleet/expenses' },
+    { label: 'Maintenance Stores', to: '/stores/indents', view: 'all' },
+    { label: 'Vehicle Documents', to: '/compliance/documents' },
   ];
 
+  // In the brief's order. Priority and colour say what is urgent; the order
+  // stays the one the fleet manager wrote down.
   const urgent: UrgentAction[] = [
     {
       label: 'Vehicles — Breakdown',
       count: counts.breakdown,
       definition: 'Broken down and off the road right now',
       priority: 'highest',
+      accent: 'critical',
       to: '/fleet/vehicles',
       view: 'breakdown',
-      permission: 'fleet.board.read',
-    },
-    {
-      label: 'Vehicles — Documents expired',
-      count: counts.docsExpired,
-      definition: 'Insurance, permit, fitness, road tax or PUC past its expiry date',
-      priority: 'highest',
-      to: '/fleet/vehicles',
-      view: 'docs_expired',
-      permission: 'fleet.board.read',
-    },
-    {
-      label: 'Vehicles — Due for service',
-      count: counts.serviceOverdue,
-      definition: 'Run past their service interval in km',
-      priority: 'high',
-      to: '/fleet/vehicles',
-      view: 'service_overdue',
-      permission: 'fleet.board.read',
-    },
-    {
-      label: 'Drivers absent',
-      count: counts.driversAbsent,
-      definition: 'Marked absent or on leave today',
-      priority: 'high',
-      to: '/fleet/drivers',
-      view: 'absent',
-      permission: 'fleet.driver.read',
-    },
-    {
-      label: 'Expenses awaiting approval',
-      count: expensesAwaiting,
-      definition: 'Diesel, repair and other bills waiting on your sign-off',
-      priority: 'high',
-      to: '/fleet/expenses',
-      view: 'submitted',
-      permission: 'fleet.expense.read',
-    },
-    {
-      label: 'Open store requests',
-      count: counts.openStoreRequests,
-      definition: 'Indents raised and not yet issued or rejected',
-      priority: 'high',
-      to: '/stores/indents',
-      view: 'open',
-      permission: 'stores.indent.read',
     },
     {
       label: 'Vehicles — Idle',
       count: counts.idle,
       definition: 'Roadworthy but not assigned a load',
       priority: 'medium',
+      // The brief asks for a neutral accent here: idle is worth a look, not an alarm.
+      accent: 'neutral',
       to: '/fleet/vehicles',
       view: 'idle',
-      permission: 'fleet.board.read',
+    },
+    {
+      label: 'Vehicles — Due for service',
+      count: counts.serviceOverdue,
+      definition: 'Run past their service interval in km',
+      priority: 'high',
+      accent: 'attention',
+      to: '/fleet/vehicles',
+      view: 'service_overdue',
+    },
+    {
+      label: 'Vehicles — Documents expired',
+      count: counts.docsExpired,
+      definition: 'Insurance, permit, fitness, road tax or PUC past its expiry date',
+      priority: 'highest',
+      accent: 'critical',
+      to: '/fleet/vehicles',
+      view: 'docs_expired',
+    },
+    {
+      label: 'Drivers Absent',
+      count: counts.driversAbsent,
+      definition: 'Marked absent or on leave today',
+      priority: 'high',
+      accent: 'attention',
+      to: '/fleet/drivers',
+      view: 'absent',
+    },
+    {
+      label: 'Expenses awaiting approval',
+      count: expensesAwaiting,
+      definition: 'Diesel, repair and other bills waiting on your sign-off',
+      priority: 'high',
+      accent: 'attention',
+      to: '/fleet/expenses',
+      view: 'submitted',
+    },
+    {
+      label: 'Open store requests',
+      count: counts.openStoreRequests,
+      definition: 'Spares, oil and tyres requisitioned for the fleet and not yet issued or rejected',
+      priority: 'high',
+      accent: 'attention',
+      to: '/stores/indents',
+      view: 'fleet',
     },
   ];
+
 
   return (
     <>

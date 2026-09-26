@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { formatDate, formatINR, formatINRCompact } from '@linck/domain';
 import {
   CUSTOMERS_LIST,
-  INVOICES,
   INVOICE_STATUS_FAMILY,
   INVOICE_STATUS_LABEL,
   LAST_14,
@@ -10,7 +9,7 @@ import {
   RECEIPTS,
   TRIPS,
   VEHICLES,
-  vehiclesForSite,
+  invoicesForSite,
   type Invoice,
   type Trip,
 } from '@linck/mock';
@@ -112,7 +111,12 @@ function derive(invoice: Invoice, crossChecked: boolean, closedHere: boolean): L
   };
 }
 
-const isOverdue = (r: LedgerRow) => r.daysOverdue > 0;
+/**
+ * Mirrors `isInvoiceOverdue` in @linck/mock — past due, money still owed, and a
+ * live receivable (never a draft or a closed file) — applied to the derived
+ * row so an in-session cross-check that clears the balance clears it here.
+ */
+const isOverdue = (r: LedgerRow) => r.daysOverdue > 0 && r.status !== 'draft' && r.status !== 'closed';
 const isPartPaid = (r: LedgerRow) => r.verified > 0 && r.balance > 0;
 const isReported = (r: LedgerRow) => r.reportedUnverified > 0;
 const isClosed = (r: LedgerRow) => r.status === 'closed';
@@ -150,22 +154,14 @@ export function InvoiceLedger() {
   const [closing, setClosing] = useState(false);
 
   /**
-   * An invoice carries no site of its own — it is billed by the org. Its site is
-   * the site of the trips it bills, so scope filters through those. An invoice
-   * with no trips attached (advance, counter sale) is org-level and stays
-   * visible at every scope rather than silently vanishing.
+   * Site scope goes through `invoicesForSite` — the same selector the sales
+   * command board counts with, so its "overdue" card and this ledger's
+   * Overdue chip can never be scoped differently. (An invoice's site is the
+   * site of the trips it bills; one with no trips stays visible everywhere.)
    */
-  const siteTripIds = useMemo(() => {
-    if (!siteScope) return null;
-    const vehicleIds = new Set(vehiclesForSite(siteScope).map((v) => v.id));
-    return new Set(TRIPS.filter((t) => vehicleIds.has(t.vehicleId)).map((t) => t.id));
-  }, [siteScope]);
-
   const rows = useMemo(
-    () =>
-      INVOICES.filter((i) => siteTripIds === null || i.tripIds.length === 0 || i.tripIds.some((id) => siteTripIds.has(id)))
-        .map((i) => derive(i, crossChecked.includes(i.id), closedHere.includes(i.id))),
-    [siteTripIds, crossChecked, closedHere],
+    () => invoicesForSite(siteScope).map((i) => derive(i, crossChecked.includes(i.id), closedHere.includes(i.id))),
+    [siteScope, crossChecked, closedHere],
   );
 
   const visible = useMemo(() => {
@@ -432,7 +428,7 @@ export function InvoiceLedger() {
         </div>
       </Section>
 
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={filter === 'all'} onClick={() => setFilter('all')} count={rows.length}>
           All invoices
         </Chip>

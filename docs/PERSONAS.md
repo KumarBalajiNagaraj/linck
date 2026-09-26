@@ -27,10 +27,10 @@ Counting the individual asks in the original brief: **15 built, 16 mock-only, 38
 | Persona | Screens they can open | State of their job |
 |---|---|---|
 | Executive | All of them | Can see the business. Cannot see a P&L, because there is no ledger. |
-| Accounts | 5 | The receivables half is the strongest thing in the product. The expenses half does not exist. |
+| Accounts | 5 | The receivables half is the strongest thing in the product. The expenses half stops at upload: bills come in, nobody can approve or pay them yet. |
 | Fleet | 6 | Status, diesel and documents are solid. Tyres, services and attendance are not built. |
 | Maintenance | 7 (borrowed) | No role of their own, and nowhere to record a repair. |
-| Stores | 3 | Approves indents. Cannot raise one, receive goods, or see an item or a vendor. |
+| Stores | 4 | Approves indents and uploads the workshop's expense bills. Cannot raise an indent, receive goods, or see an item or a vendor. |
 | Production | 3 | The joint-production model is the best-served thing here. Boulder receipt is missing. |
 | Sales | 8 | Lands on their own command board. Can review and approve customer orders; cannot take a new order or raise an invoice. |
 | Driver | 1 (plus one 404) | Effectively not built. |
@@ -95,7 +95,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Insurance, road tax, insurance end date, permit dates — manually entered | Partial — the register displays them; **there is nowhere to enter them** |
 | The hard rule: invoice does not close until cross-verified | Partial — enforced in the UI, not yet in the database, and a page refresh erases it |
 | Billing | Partial — read-only; the permission exists, no screen writes |
-| Expense management | Partial — an expense register (diesel, repair, tyre, spares, toll) exists on mock data; the approval chain is not built |
+| Expense management | Partial — the fleet and store managers upload scanned bills (diesel, repair, tyre, spares, toll) into an expense register on mock data; validation, approval and payment are not built |
 | Ad-hoc expenses | Not started |
 | Vehicle EMI | Not started |
 | Employee salary | Not started |
@@ -119,7 +119,7 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **The job.** Keeps 58 tippers earning. Knows which are on trip, ready, idle, in service or broken down; chases the paperwork and the service that would stop one at the gate; and polices diesel, the largest operating cost and the largest leak.
 
-**Built for them.** The fleet command board, vehicle status, the driver list, the breakdown register, the expenses register, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+**Built for them.** The fleet command board, vehicle status, the driver list, the breakdown register, the expenses register with scanned-bill upload, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
 
 - **The fleet command board** (`/fleet/board`, their landing page) links to the seven databases the desk works in: Vehicles, Driver List, Delivery Order & Dispatch, Breakdown Register, Expenses Approval, Maintenance Stores and Vehicle Documents. Below the links are seven urgent counts: breakdown, documents expired, due for service, drivers absent, expenses awaiting approval, open store requests, and idle. Each count opens its pre-filtered list via `?view=`. The uptime tiles, status bar, uptime trend and diesel scatter moved unchanged to **Vehicle status** (`/fleet/vehicles`).
 
@@ -184,7 +184,10 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **The job.** The man at the counter who decides whether a requested spare is approved and handed out, judged on how long a stopped crusher waited on his desk.
 
-**Built for him.** The indent queue, the live stock board, and extraction review.
+**Built for him.** The indent queue, the live stock board, extraction review, and the stores expense register (`/stores/expenses`), where he uploads the workshop's scanned bills.
+
+- **A bill is not accepted without its scan**, shown beside the form while the figures are keyed, and a typed amount is read back ("Read as ₹12,500.00") before anyone submits it — `12,500` once went through as ₹12.
+- **Uploads live in the browser session** until the expense API lands (LIN-20): the scan is an object URL, and a reload loses it.
 
 - **The queue is ordered by what is stopped**, not by date or amount, and says so: "a plant or a tipper is stopped until these are approved."
 - **Reject is a decision with a physical consequence.** On a breakdown indent you must type the indent number, under a sentence that refuses to flatter: rejecting does not restart the plant, it only takes the line off your list.
@@ -201,6 +204,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Raising an indent | Not started — he holds the permission, the button has no handler |
 | Goods receipt | Not started — though the AI queue tells him in plain words that confirming an invoice "posts a GRN into Karapakkam Workshop stores" |
 | Purchase order | Not started |
+| Expense bills | Partial — upload and register built; nobody validates a stores bill yet — who does is settled with the approval chain (LIN-14) |
 
 **Next, in order.**
 

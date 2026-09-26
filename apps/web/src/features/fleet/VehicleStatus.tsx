@@ -6,6 +6,7 @@ import {
   driversForSite,
   LAST_14,
   mileageFor,
+  isIdleRoadworthy,
   isServiceOverdue,
   SITES,
   vehiclesForSite,
@@ -145,15 +146,22 @@ export function VehicleStatus() {
     return all.filter((v) => expired.has(v.id));
   }, [all]);
   const serviceOverdue = useMemo(() => all.filter(isServiceOverdue), [all]);
+  const idleRoadworthy = useMemo(() => all.filter(isIdleRoadworthy), [all]);
 
   const rows = useMemo(() => {
     switch (filter) {
       case 'breakdown':
         return all.filter((v) => v.status === 'breakdown');
+      // Roadworthy and without a load — the command board's Idle card. A
+      // tipper idle only because a blocking document lapsed is listed under
+      // documents expired instead.
       case 'idle':
-        return all.filter((v) => v.status === 'idle');
+        return idleRoadworthy;
+      // "In the workshop" is exactly the count on its chip. Overdue vehicles
+      // still on the road have their own chip, "Due for service", which is
+      // what the command board's card of that name opens.
       case 'service':
-        return all.filter((v) => v.status === 'under_service' || (v.serviceDueInKm ?? 1) < 0);
+        return all.filter((v) => v.status === 'under_service');
       case 'service_overdue':
         return serviceOverdue;
       case 'docs':
@@ -165,10 +173,10 @@ export function VehicleStatus() {
       default:
         return all;
     }
-  }, [all, filter, docsExpiring, docsExpired, serviceOverdue, dieselOutliers]);
+  }, [all, filter, docsExpiring, docsExpired, serviceOverdue, idleRoadworthy, dieselOutliers]);
 
   // Ranked, never auto-applied, and dismissal is recorded.
-  const idleWithDrivers = all.filter((v) => v.status === 'idle' && v.driverId !== null).length;
+  const idleWithDrivers = idleRoadworthy.filter((v) => v.driverId !== null).length;
 
   const uptimeSeries = LAST_14.map((d) => ({
     label: d.label,
@@ -247,13 +255,13 @@ export function VehicleStatus() {
         </div>
         <KpiTile
           eyebrow="Ready but unassigned"
-          value={String(counts.idle)}
+          value={String(idleRoadworthy.length)}
           delta={{
             text:
-              counts.idle > 0
-                ? `roughly ${formatQty(counts.idle * 6.4, 1)} units of dispatch not happening`
+              idleRoadworthy.length > 0
+                ? `roughly ${formatQty(idleRoadworthy.length * 6.4, 1)} units of dispatch not happening`
                 : 'every roadworthy tipper has a load',
-            tone: counts.idle > 0 ? 'attention' : 'neutral',
+            tone: idleRoadworthy.length > 0 ? 'attention' : 'neutral',
           }}
           asOf="14:42"
           source="v_vehicle_status_now"
@@ -287,6 +295,7 @@ export function VehicleStatus() {
           horizontal scroller on the section chips directly above this, so a
           second one immediately under it reads as the same control. */}
       <div
+        id="list"
         className="flex flex-wrap items-center gap-2 px-6 py-3"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
@@ -298,14 +307,14 @@ export function VehicleStatus() {
         <Chip active={filter === 'breakdown'} onClick={() => setFilter('breakdown')} count={counts.breakdown}>
           Breakdowns
         </Chip>
-        <Chip active={filter === 'idle'} onClick={() => setFilter('idle')} count={counts.idle}>
-          Ready but unassigned
+        <Chip active={filter === 'idle'} onClick={() => setFilter('idle')} count={idleRoadworthy.length}>
+          Idle
         </Chip>
         <Chip active={filter === 'service'} onClick={() => setFilter('service')} count={counts.underService}>
-          Due for service
+          In the workshop
         </Chip>
         <Chip active={filter === 'service_overdue'} onClick={() => setFilter('service_overdue')} count={serviceOverdue.length}>
-          Service overdue
+          Due for service
         </Chip>
         <Chip active={filter === 'docs'} onClick={() => setFilter('docs')} count={docsExpiring.length}>
           Documents expiring

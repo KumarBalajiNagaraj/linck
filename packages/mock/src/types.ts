@@ -234,6 +234,13 @@ export interface Indent {
   quantity: number;
   uom: string;
   forAsset: string | null;
+  /**
+   * Whose requisition it is. The fleet manager answers for spares, oil and
+   * tyres raised for the tippers; crusher parts are the plant's. Stored rather
+   * than guessed from the item, because DEF bought for the fleet and belting
+   * bought for a conveyor sit in the same stores.
+   */
+  requestedFor: 'fleet' | 'plant';
   status: 'submitted' | 'approved' | 'issued' | 'rejected';
   urgency: 'routine' | 'urgent' | 'breakdown';
   stockOnHand: number;

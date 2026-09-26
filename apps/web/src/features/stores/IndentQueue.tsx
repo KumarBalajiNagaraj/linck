@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { can, formatINR, formatINRCompact, formatQty } from '@linck/domain';
-import { INDENTS, NOW, SITES, type Indent } from '@linck/mock';
+import { indentsForSite, isIndentOpen, NOW, SITES, type Indent } from '@linck/mock';
 import {
   AgeingBar,
   AsOfStamp,
@@ -33,7 +33,7 @@ import {
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 
-const INDENT_VIEWS = ['open', 'all', 'breakdown', 'below_reorder'] as const;
+const INDENT_VIEWS = ['open', 'fleet', 'all', 'breakdown', 'below_reorder'] as const;
 
 /**
  * The Indent Queue.
@@ -160,8 +160,9 @@ export function IndentQueue() {
   const mayApprove = can(persona.grants, 'stores.indent.approve', { siteId: siteScope });
 
   const rows = useMemo<Row[]>(() => {
-    const scoped = siteScope ? INDENTS.filter((i) => i.siteId === siteScope) : INDENTS;
-    return scoped
+    // Shared with the fleet board's count: a fleet requisition also shows at
+    // the home site of the tipper it is for, not only where it was raised.
+    return indentsForSite(siteScope)
       .map((indent) => ({
         ...indent,
         stage: overrides[indent.id] ?? indent.status,
@@ -172,6 +173,8 @@ export function IndentQueue() {
   }, [siteScope, overrides]);
 
   const isOpen = (r: Row) => r.stage === 'submitted' || r.stage === 'approved';
+  /** Same rule as the fleet board's "Open store requests" card, on the live stage. */
+  const isFleetOpen = (r: Row) => r.requestedFor === 'fleet' && isIndentOpen({ ...r, status: r.stage });
   const groupKeyOf = (r: Row, by: GroupBy) => (by === 'site' ? r.siteId : categoryOf(r.itemCode));
 
   const visible = useMemo(() => {
@@ -182,7 +185,9 @@ export function IndentQueue() {
           ? rows.filter((r) => r.urgency === 'breakdown')
           : filter === 'below_reorder'
             ? rows.filter((r) => r.stockOnHand < r.reorderLevel)
-            : rows.filter(isOpen);
+            : filter === 'fleet'
+              ? rows.filter(isFleetOpen)
+              : rows.filter(isOpen);
     return groupFilter ? byStage.filter((r) => groupKeyOf(r, groupBy) === groupFilter) : byStage;
   }, [rows, filter, groupFilter, groupBy]);
 
@@ -501,9 +506,12 @@ export function IndentQueue() {
         </Section>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={filter === 'open'} onClick={() => setFilter('open')} count={rows.filter(isOpen).length}>
           Open
+        </Chip>
+        <Chip active={filter === 'fleet'} onClick={() => setFilter('fleet')} count={rows.filter(isFleetOpen).length}>
+          Open store requests — fleet
         </Chip>
         <Chip active={filter === 'breakdown'} onClick={() => setFilter('breakdown')} count={rows.filter((r) => r.urgency === 'breakdown').length}>
           Breakdown

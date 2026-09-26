@@ -13,66 +13,69 @@ import { useApp } from '../../shell/store.js';
  * works in sit underneath as one-click links.
  *
  * Unbilled dispatch leads the row: material that left the yard with no
- * invoice behind it is the one leak here that turns straight into lost cash.
+ * invoice behind it is the one leak here that turns straight into lost cash —
+ * and under GST the invoice is owed when the goods leave, not when they land.
  */
 export function SalesCommandBoard() {
   const { siteScope } = useApp();
   const counts = salesAttention(siteScope);
 
+  // Labels are the brief's own words, and every non-zero card spends colour —
+  // red for the one the brief calls Highest, amber for the rest.
   const urgent: UrgentAction[] = [
     {
-      label: 'Unraised invoices',
+      label: 'Invoices not yet raised',
       count: counts.unbilledDispatch,
-      definition: 'Dispatched and signed for, with no invoice raised against the load',
+      definition: 'Out of the gate for a credit customer, with no invoice raised against the load',
       priority: 'highest',
+      accent: 'critical',
       to: '/sales/dispatch',
       view: 'unbilled',
-      permission: 'sales.dispatch.read',
     },
     {
       label: 'Orders pending approval',
       count: counts.ordersPendingApproval,
       definition: 'Customer purchase orders awaiting sign-off before anything is loaded',
       priority: 'high',
+      accent: 'attention',
       to: '/sales/orders',
       view: 'pending_approval',
-      permission: 'sales.order.read',
     },
     {
-      label: 'Dispatches unconfirmed or delayed',
+      label: 'Dispatch pending confirmation / delayed',
       count: counts.dispatchUnconfirmed,
       definition: 'Loaded but not confirmed out of the gate, or planned and past its slot',
       priority: 'high',
+      accent: 'attention',
       to: '/sales/dispatch',
       view: 'unconfirmed',
-      permission: 'sales.dispatch.read',
     },
     {
-      label: 'Invoices overdue',
+      label: 'Invoices overdue for payment',
       count: counts.invoicesOverdue,
       definition: 'Past the due date with a balance still owed',
       priority: 'high',
+      accent: 'attention',
       to: '/sales/invoices',
       view: 'overdue',
-      permission: 'sales.invoice.read',
     },
     {
-      label: 'Stock below safety level',
+      label: 'Stock below threshold',
       count: counts.stockBelowSafety,
-      definition: 'Product piles that have fallen under their reorder level',
+      definition: 'Product piles that have fallen under their safety level',
       priority: 'medium',
+      accent: 'attention',
       to: '/production/stock',
       view: 'below',
-      permission: 'production.stock.read',
     },
   ];
 
   const destinations: BoardDestination[] = [
-    { label: 'Material Stock', to: '/production/stock', permission: 'production.stock.read' },
-    { label: 'Customer', to: '/sales/customers', permission: 'sales.customer.read' },
-    { label: 'Purchase Order', to: '/sales/orders', permission: 'sales.order.read' },
-    { label: 'Material Dispatch', to: '/sales/dispatch', permission: 'sales.dispatch.read' },
-    { label: 'Invoices', to: '/sales/invoices', permission: 'sales.invoice.read' },
+    { label: 'Material Stock', to: '/production/stock' },
+    { label: 'Customer', to: '/sales/customers' },
+    { label: 'Purchase Order', to: '/sales/orders' },
+    { label: 'Material Dispatch', to: '/sales/dispatch' },
+    { label: 'Invoices', to: '/sales/invoices' },
   ];
 
   return (

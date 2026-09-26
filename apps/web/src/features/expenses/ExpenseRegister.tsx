@@ -92,7 +92,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
           </span>
         }
       />
-      <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
           All bills
         </Chip>
@@ -117,11 +117,15 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] }) {
           isDormant={(e) => e.status === 'rejected'}
           rail={(e) => ({ status: EXPENSE_STATUS_FAMILY[e.status], provenance: e.provenance })}
           empty={
-            <EmptyState
-              fact="No bills match this view."
-              because="Nothing at this site is at that step of the approval chain."
-              action={{ label: 'Show all bills', onClick: () => setView('all') }}
-            />
+            all.length === 0 ? (
+              <EmptyState fact="No expense bills at this site." because="Nothing has been submitted here yet." />
+            ) : (
+              <EmptyState
+                fact="No bills match this view."
+                because="Nothing at this site is at that step of the approval chain."
+                action={{ label: 'Show all bills', onClick: () => setView('all') }}
+              />
+            )
           }
         />
       </Section>

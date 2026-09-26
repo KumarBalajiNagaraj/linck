@@ -1,28 +1,39 @@
-import { useEffect, useState } from 'react';
-import { useRouterState } from '@tanstack/react-router';
+import { useCallback } from 'react';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 
 /**
- * A screen's saved view, seeded from `?view=` in the URL.
+ * A screen's saved view, held in the URL as `?view=`.
  *
- * This is what lets a command-board card land on a list already filtered to
- * the rows it counted — `/sales/invoices?view=overdue` opens the ledger on the
- * overdue chip rather than on the whole book. An unknown or missing value
- * falls back quietly: a stale bookmark should open the screen, not break it.
+ * The URL is the only copy. That is the rule in `store.ts` — if screen state
+ * can be in the URL it must be, so a view is shareable and survives a reload
+ * — and it is what lets a command-board card open a list already filtered to
+ * the rows it counted: `/sales/invoices?view=overdue` IS the overdue view.
  *
- * The chip stays local state after that, so clicking around the screen does
- * not push a history entry per click. A new `?view=` (the same screen reached
- * from a different card) re-seeds it.
+ * - An unknown or missing value reads as the fallback, so a stale bookmark or
+ *   a plain nav-rail link opens the screen on its default view rather than
+ *   on whatever filter was last clicked.
+ * - Choosing a view replaces the history entry instead of pushing one, so
+ *   Back leaves the screen instead of stepping back through every chip.
+ * - The fallback is written as no parameter at all, keeping plain URLs plain.
  */
 export function useViewParam<T extends string>(allowed: readonly T[], fallback: T): [T, (next: T) => void] {
+  const navigate = useNavigate();
   const raw = useRouterState({
     select: (s) => (s.location.search as Record<string, unknown>)['view'],
   });
-  const fromUrl = typeof raw === 'string' && (allowed as readonly string[]).includes(raw) ? (raw as T) : null;
-  const [view, setView] = useState<T>(fromUrl ?? fallback);
+  const view = typeof raw === 'string' && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
 
-  useEffect(() => {
-    if (fromUrl !== null) setView(fromUrl);
-  }, [fromUrl]);
+  const setView = useCallback(
+    (next: T) => {
+      void navigate({
+        to: '.',
+        search: (prev: Record<string, unknown>) => ({ ...prev, view: next === fallback ? undefined : next }),
+        replace: true,
+        resetScroll: false,
+      });
+    },
+    [navigate, fallback],
+  );
 
   return [view, setView];
 }

@@ -557,6 +557,7 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
       open_indents: { count: INDENTS.filter((i) => i.status === 'submitted').length, tone: 'neutral' },
       breakdowns: { count: fleet.breakdown, tone: fleet.breakdown > 0 ? 'critical' : 'neutral' },
       pending_expenses: { count: expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length, tone: 'neutral' },
+      awaiting_director: { count: expensesForSite(siteScope, null, bills).filter((e) => e.status === 'validated').length, tone: 'neutral' },
     };
   }, [siteScope, bills]);
 }

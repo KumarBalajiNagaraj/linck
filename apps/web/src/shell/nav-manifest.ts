@@ -46,7 +46,7 @@ export interface NavItem {
   route: string;
   permission: string;
   /** Shown against the item so the rail communicates work-to-do without opening anything. */
-  badge?: 'expiring_docs' | 'unverified_receipts' | 'extraction_queue' | 'open_indents' | 'breakdowns' | 'pending_expenses';
+  badge?: 'expiring_docs' | 'unverified_receipts' | 'extraction_queue' | 'open_indents' | 'breakdowns' | 'pending_expenses' | 'awaiting_director';
 }
 
 export interface Workspace {
@@ -71,6 +71,7 @@ export const WORKSPACES: Workspace[] = [
     module: null,
     items: [
       { key: 'exec', label: 'Executive dashboard', route: '/overview', permission: 'executive.dashboard.read' },
+      { key: 'expense-approvals', label: 'Expense approvals', route: '/overview/expenses', permission: 'finance.expense.approve', badge: 'awaiting_director' },
     ],
   },
   {

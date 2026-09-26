@@ -1,7 +1,8 @@
-import { fleetAttention } from '@linck/mock';
+import { expensesForSite, fleetAttention } from '@linck/mock';
 import { AsOfStamp, PageHeader } from '@linck/ui';
 import { DestinationRow, UrgentActionsRow, type BoardDestination, type UrgentAction } from '../../shell/CommandBoard.js';
 import { useApp } from '../../shell/store.js';
+import { useExpenses } from '../expenses/expenseStore.js';
 
 /**
  * The Fleet Manager's command board.
@@ -19,6 +20,10 @@ import { useApp } from '../../shell/store.js';
 export function FleetCommandBoard() {
   const { siteScope } = useApp();
   const counts = fleetAttention(siteScope);
+  // Bills move in-session (uploaded, validated), so this one count reads the
+  // live expense store rather than the seeded dataset.
+  const bills = useExpenses((s) => s.bills);
+  const expensesAwaiting = expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length;
 
   const destinations: BoardDestination[] = [
     { label: 'Vehicles', to: '/fleet/vehicles' },
@@ -81,7 +86,7 @@ export function FleetCommandBoard() {
     },
     {
       label: 'Expenses awaiting approval',
-      count: counts.expensesAwaiting,
+      count: expensesAwaiting,
       definition: 'Diesel, repair and other bills waiting on your sign-off',
       priority: 'high',
       accent: 'attention',

@@ -72,3 +72,19 @@ export function isNegative(value: MoneyInput): boolean {
   const n = toNumber(value);
   return Number.isFinite(n) && n < 0;
 }
+
+/**
+ * A figure typed by hand, read strictly. "12,500", "12,500.00", "₹ 12500" and
+ * the lakh-grouped "1,50,000" all read as written. Anything else — "12.500,00",
+ * "12 500", "12,50", three decimals on a rupee amount — is null, never a
+ * guess: `parseFloat("12,500")` is 12, and a bill paid as ₹12 is worse than a
+ * form that refuses.
+ */
+export function parseTypedAmount(text: string, maxDecimals = 2): number | null {
+  const t = text.trim().replace(/^(?:₹|rs\.?|inr)\s*/i, '');
+  const grouped = /^\d{1,3}(?:,\d{2})*,\d{3}(?:\.\d+)?$/.test(t) || /^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(t);
+  if (!grouped && !/^\d+(?:\.\d+)?$/.test(t)) return null;
+  if ((t.split('.')[1] ?? '').length > maxDecimals) return null;
+  const n = Number(t.replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}

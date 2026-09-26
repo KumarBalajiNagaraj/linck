@@ -583,7 +583,7 @@ export const EXPENSE_STATUS_FAMILY: Record<ExpenseBill['status'], StatusFamily> 
 };
 
 export const EXPENSE_STATUS_LABEL: Record<ExpenseBill['status'], string> = {
-  submitted: 'Awaiting fleet manager',
+  submitted: 'Awaiting validation',
   validated: 'Awaiting director',
   approved: 'Awaiting payment',
   paid: 'Paid',
@@ -700,13 +700,24 @@ export function breakdownsForSite(siteId: string | null): BreakdownRecord[] {
   return BREAKDOWNS.filter((b) => ids.has(b.vehicleId));
 }
 
-export function expensesForSite(siteId: string | null): ExpenseBill[] {
-  return siteId ? EXPENSE_BILLS.filter((e) => e.siteId === siteId) : EXPENSE_BILLS;
+/**
+ * Bills in scope for one desk at one site. The store manager's bills are
+ * raised against the workshop, so a fleet manager scoped to a crusher does
+ * not see them and vice versa.
+ */
+export function expensesForSite(
+  siteId: string | null,
+  desk: ExpenseBill['desk'] | null = null,
+  bills: readonly ExpenseBill[] = EXPENSE_BILLS,
+): ExpenseBill[] {
+  return bills.filter((e) => (siteId === null || e.siteId === siteId) && (desk === null || e.desk === desk));
 }
 
 /**
- * The seven counts the fleet manager's command board leads with. As with the
- * sales desk, each uses the predicate its destination list filters by.
+ * Six of the seven counts the fleet manager's command board leads with. As
+ * with the sales desk, each uses the predicate its destination list filters
+ * by. The seventh, expenses awaiting validation, is counted on the live bill
+ * store instead — bills uploaded this session are not in the seed.
  */
 export function fleetAttention(siteId: string | null) {
   const vehicles = vehiclesForSite(siteId);
@@ -719,7 +730,6 @@ export function fleetAttention(siteId: string | null) {
     serviceOverdue: vehicles.filter(isServiceOverdue).length,
     docsExpired: vehicles.filter((v) => expired.has(v.id)).length,
     driversAbsent: drivers.filter(isDriverAbsent).length,
-    expensesAwaiting: expensesForSite(siteId).filter((e) => e.status === 'submitted').length,
     openStoreRequests: indents.filter(isIndentOpen).length,
   };
 }

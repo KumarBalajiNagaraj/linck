@@ -121,6 +121,7 @@ export const WORKSPACES: Workspace[] = [
     module: 'stores',
     items: [
       { key: 'indents', label: 'Indent queue', route: '/stores/indents', permission: 'stores.indent.read', badge: 'open_indents' },
+      { key: 'store-expenses', label: 'Expenses', route: '/stores/expenses', permission: 'stores.expense.read' },
     ],
   },
   {

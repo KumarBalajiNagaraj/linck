@@ -8,6 +8,7 @@ import { PERSONAS } from '../auth/personas.js';
 import { CommandPalette } from './CommandPalette.js';
 import { MODULES, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
+import { useExpenses } from '../features/expenses/expenseStore.js';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { persona, siteScope, enabledModules, density, theme, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
@@ -545,6 +546,7 @@ function BottomTabs({
 }
 
 function useBadges(siteScope: string | null): Record<string, { count: number; tone: 'critical' | 'neutral' }> {
+  const bills = useExpenses((s) => s.bills);
   return useMemo(() => {
     const docs = documentExposure(siteScope);
     const fleet = fleetCounts(siteScope);
@@ -554,9 +556,9 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
       extraction_queue: { count: EXTRACTION_JOBS.length, tone: 'neutral' },
       open_indents: { count: INDENTS.filter((i) => i.status === 'submitted').length, tone: 'neutral' },
       breakdowns: { count: fleet.breakdown, tone: fleet.breakdown > 0 ? 'critical' : 'neutral' },
-      pending_expenses: { count: expensesForSite(siteScope).filter((e) => e.status === 'submitted').length, tone: 'neutral' },
+      pending_expenses: { count: expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length, tone: 'neutral' },
     };
-  }, [siteScope]);
+  }, [siteScope, bills]);
 }
 
 function ScopeSwitcher({

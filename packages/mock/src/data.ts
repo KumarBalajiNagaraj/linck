@@ -932,6 +932,7 @@ export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) 
   const submittedAt = hoursFromNow(-between(fleetRng, 1, 190, 1));
   return {
     id: `exp-${String(i + 1).padStart(3, '0')}`,
+    desk: 'fleet' as const,
     billNumber: `${kind === 'diesel' ? 'BK' : 'INV'}/${Math.floor(between(fleetRng, 10000, 99999))}`,
     kind,
     billDate: submittedAt,
@@ -945,8 +946,42 @@ export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) 
     submittedBy: kind === 'diesel' ? 'Driver (WhatsApp)' : pick(fleetRng, ['Anbu Selvan M', 'Ganesh K']),
     submittedAt,
     siteId: v.siteId,
-    provenance: kind === 'diesel' ? 'proposed' : 'human',
+    provenance: kind === 'diesel' ? ('proposed' as const) : ('human' as const),
+    attachment: null,
   };
 });
+
+/* The store manager's own bills: consumables and spares bought for the yard. */
+const STORES_BILLS: { vendor: string; description: string; kind: ExpenseBill['kind']; status: ExpenseBill['status'] }[] = [
+  { vendor: 'Chennai Hydraulics', description: 'Hydraulic oil 68 — 210 L barrel', kind: 'spares', status: 'submitted' },
+  { vendor: 'Sri Murugan Hardwares', description: 'Welding rods and grinding discs', kind: 'other', status: 'submitted' },
+  { vendor: 'Ashok Leyland Genuine Parts', description: 'Air filter elements × 6', kind: 'spares', status: 'validated' },
+  { vendor: 'Annai Tyres', description: 'Tube and flap set × 4', kind: 'tyre', status: 'paid' },
+];
+
+EXPENSE_BILLS.push(
+  ...STORES_BILLS.map((b, i): ExpenseBill => {
+    const submittedAt = hoursFromNow(-between(fleetRng, 2, 120, 1));
+    return {
+      id: `exp-st-${String(i + 1).padStart(3, '0')}`,
+      desk: 'stores',
+      billNumber: `INV/${Math.floor(between(fleetRng, 10000, 99999))}`,
+      kind: b.kind,
+      billDate: submittedAt,
+      vehicleId: null,
+      driverId: null,
+      vendor: b.vendor,
+      description: b.description,
+      litres: null,
+      amount: money(between(fleetRng, 1800, 46000, 0)),
+      status: b.status,
+      submittedBy: 'Ganesh K',
+      submittedAt,
+      siteId: 'site-wsp',
+      provenance: 'human',
+      attachment: null,
+    };
+  }),
+);
 
 export { NOW };

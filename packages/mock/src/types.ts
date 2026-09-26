@@ -443,8 +443,19 @@ export type ExpenseStatus =
   | 'paid'
   | 'rejected';
 
+/** A scanned copy of the paper bill, as uploaded. */
+export interface BillAttachment {
+  fileName: string;
+  mimeType: string;
+  sizeKb: number;
+  /** Where the scan can be opened. An object URL until the API stores it. */
+  url: string;
+}
+
 export interface ExpenseBill {
   id: string;
+  /** Which desk raised it — the fleet manager's or the store manager's. */
+  desk: 'fleet' | 'stores';
   billNumber: string;
   kind: ExpenseKind;
   billDate: string;
@@ -460,4 +471,5 @@ export interface ExpenseBill {
   submittedAt: string;
   siteId: string;
   provenance: Provenance;
+  attachment: BillAttachment | null;
 }

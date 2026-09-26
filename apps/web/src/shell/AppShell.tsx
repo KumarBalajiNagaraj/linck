@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { can } from '@linck/domain';
 import { DENSITIES, type Density } from '@linck/tokens';
-import { ALERTS, documentExposure, fleetCounts, INDENTS, EXTRACTION_JOBS, pendingVerification, SITES } from '@linck/mock';
+import { ALERTS, documentExposure, expensesForSite, fleetCounts, INDENTS, EXTRACTION_JOBS, pendingVerification, SITES } from '@linck/mock';
 import { Button, StatusStamp, useIsPhone } from '@linck/ui';
 import { PERSONAS } from '../auth/personas.js';
 import { CommandPalette } from './CommandPalette.js';
@@ -554,6 +554,7 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
       extraction_queue: { count: EXTRACTION_JOBS.length, tone: 'neutral' },
       open_indents: { count: INDENTS.filter((i) => i.status === 'submitted').length, tone: 'neutral' },
       breakdowns: { count: fleet.breakdown, tone: fleet.breakdown > 0 ? 'critical' : 'neutral' },
+      pending_expenses: { count: expensesForSite(siteScope).filter((e) => e.status === 'submitted').length, tone: 'neutral' },
     };
   }, [siteScope]);
 }

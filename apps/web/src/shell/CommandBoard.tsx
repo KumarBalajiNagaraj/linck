@@ -21,6 +21,11 @@ export interface BoardDestination {
   label: string;
   /** Must be a route listed in the nav manifest; the gates are read from there. */
   to: string;
+  /**
+   * The destination's own unfiltered view, when its default is filtered — a
+   * button opens the whole database, never the same slice as a card.
+   */
+  view?: string;
 }
 
 export interface UrgentAction extends BoardDestination {
@@ -158,6 +163,7 @@ export function DestinationRow({ caption, destinations }: { caption: string; des
           <Link
             key={d.label}
             to={d.to}
+            search={d.view ? { view: d.view } : {}}
             className="inline-flex h-9 items-center gap-1.5 px-3 text-[12px] [@media(hover:hover)]:h-7 [@media(hover:hover)]:px-2.5"
             style={{
               borderRadius: 'var(--r-1)',

@@ -234,6 +234,13 @@ export interface Indent {
   quantity: number;
   uom: string;
   forAsset: string | null;
+  /**
+   * Whose requisition it is. The fleet manager answers for spares, oil and
+   * tyres raised for the tippers; crusher parts are the plant's. Stored rather
+   * than guessed from the item, because DEF bought for the fleet and belting
+   * bought for a conveyor sit in the same stores.
+   */
+  requestedFor: 'fleet' | 'plant';
   status: 'submitted' | 'approved' | 'issued' | 'rejected';
   urgency: 'routine' | 'urgent' | 'breakdown';
   stockOnHand: number;
@@ -398,4 +405,66 @@ export interface PurchaseOrder {
   value: string;
   status: PurchaseOrderStatus;
   takenBy: string;
+}
+
+/**
+ * BREAKDOWN REGISTER.
+ *
+ * One row per breakdown event, open or closed. The vehicle's live status says
+ * THAT it is down; the register says what failed, where, since when and what
+ * it cost — the history a fleet manager needs to spot the tipper that breaks
+ * down every month.
+ */
+export interface BreakdownRecord {
+  id: string;
+  number: string;
+  vehicleId: string;
+  driverId: string | null;
+  reportedAt: string;
+  reportedBy: string;
+  location: string;
+  cause: string;
+  status: 'open' | 'in_workshop' | 'resolved';
+  resolvedAt: string | null;
+  /** Hours off the road. Open breakdowns count to now. */
+  downtimeHours: number;
+  repairCost: string | null;
+}
+
+/**
+ * EXPENSE BILLS — diesel, repair, tyre and the rest.
+ *
+ * The approval chain is fixed and ordered: the fleet manager validates, the
+ * director approves, accounts pays. `status` records how far along that chain
+ * a bill has got; nothing skips a step.
+ */
+export type ExpenseKind = 'diesel' | 'repair' | 'tyre' | 'spares' | 'toll' | 'other';
+
+export type ExpenseStatus =
+  /** Uploaded or keyed, waiting on the fleet manager. */
+  | 'submitted'
+  /** Validated by the fleet manager, waiting on the director. */
+  | 'validated'
+  /** Approved by the director, waiting on accounts to pay. */
+  | 'approved'
+  | 'paid'
+  | 'rejected';
+
+export interface ExpenseBill {
+  id: string;
+  billNumber: string;
+  kind: ExpenseKind;
+  billDate: string;
+  vehicleId: string | null;
+  driverId: string | null;
+  vendor: string;
+  description: string;
+  /** Litres, for diesel bills only. */
+  litres: number | null;
+  amount: string;
+  status: ExpenseStatus;
+  submittedBy: string;
+  submittedAt: string;
+  siteId: string;
+  provenance: Provenance;
 }

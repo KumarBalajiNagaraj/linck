@@ -95,7 +95,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Insurance, road tax, insurance end date, permit dates — manually entered | Partial — the register displays them; **there is nowhere to enter them** |
 | The hard rule: invoice does not close until cross-verified | Partial — enforced in the UI, not yet in the database, and a page refresh erases it |
 | Billing | Partial — read-only; the permission exists, no screen writes |
-| Expense management | Not started |
+| Expense management | Partial — an expense register (diesel, repair, tyre, spares, toll) exists on mock data; the approval chain is not built |
 | Ad-hoc expenses | Not started |
 | Vehicle EMI | Not started |
 | Employee salary | Not started |
@@ -119,7 +119,9 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **The job.** Keeps 58 tippers earning. Knows which are on trip, ready, idle, in service or broken down; chases the paperwork and the service that would stop one at the gate; and polices diesel, the largest operating cost and the largest leak.
 
-**Built for him.** The fleet command board, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+**Built for them.** The fleet command board, vehicle status, the driver list, the breakdown register, the expenses register, diesel and DEF entry, the document register, the dispatch board, the indent queue, and extraction review.
+
+- **The fleet command board** (`/fleet/board`, their landing page) links to the seven databases the desk works in: Vehicles, Driver List, Delivery Order & Dispatch, Breakdown Register, Expenses Approval, Maintenance Stores and Vehicle Documents. Below the links are seven urgent counts: breakdown, documents expired, due for service, drivers absent, expenses awaiting approval, open store requests, and idle. Each count opens its pre-filtered list via `?view=`. The uptime tiles, status bar, uptime trend and diesel scatter moved unchanged to **Vehicle status** (`/fleet/vehicles`).
 
 - **Idle is an attention state and uptime forgives planned service.** Uptime is on-trip plus ready over total, with under-service excluded from downtime — counting a planned service as a failure teaches the team to skip services to protect the number.
 - **Diesel is policed against each vehicle's own benchmark and own tank**, not a fleet average. One threshold — 82% of benchmark — is applied identically in the table cell, the sparkline, the scatter flag and the exception filter.
@@ -133,7 +135,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Vehicle mileage, diesel bill entries | Mock only |
 | **Tyre mileage** | **Not started** — no type, no field, no screen. Also the largest single downtime cause in our own data. |
 | Exhaust fluid (DEF) | Partial — the field is on screen and validated, and the save silently discards it |
-| Driver attendance | Partial — the data generator and the heat-grid chart both exist and are wired to nothing |
+| Driver attendance | Partial — the Driver list shows today's attendance, and absence is counted on the command board; marking attendance is not built |
 | Regular scheduled services / expected for maintenance | Partial — one bare "service due in km" integer with no history and no schedule |
 | How many services and expenses | Not started |
 | Telematics APIs for 35T/48T tippers | Not started — correctly last; manual entry must work first |
@@ -146,7 +148,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | 2 | Make "raise an indent" actually raise one — the button has no handler and the palette advertises it | S |
 | 3 | Reconcile the frontend fleet persona with the seeded backend role — they disagree on three permissions | S |
 | 4 | Driver attendance screen — the generator and the chart exist; only the marking action is missing | M |
-| 5 | Breakdown lifecycle: reason code, repair job, downtime hours, per-vehicle Pareto | M |
+| 5 | Breakdown lifecycle: reason code, repair job, per-vehicle Pareto. A read-only breakdown register with downtime and repair cost exists; recording and closing a breakdown there does not | M |
 | 6 | Service records and schedule — three of the brief's asks rest on this | L |
 | 7 | **Tyre register** — serialised fitment by axle position, km at fit and removal, cost per km | L |
 | 8 | Per-vehicle cost view: diesel, DEF, tyres, services and renewals in one place, per km and per tonne | L |
@@ -162,7 +164,7 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **What exists.** Breakdown is a first-class urgency on the indent queue, and the queue sorts urgency above age. Crusher stoppage capture on the shift form is wear-part specific — jaw plate change, cone liner wear, belt slip — and downtime hours without a reason is the only thing that blocks a save on that screen.
 
-**What does not.** Job cards. Service history. Any asset record for the work to hang off — "Jaw + VSI — KRP 250TPH" exists only as text on three indent rows, and the sheet's "also queued against this asset" works by string equality. "Report breakdown" on the fleet board is one-way: there is no way to set under-service, no way to clear a breakdown, and no record of what was done.
+**What does not.** Job cards. Service history. Any asset record for the work to hang off — "Jaw + VSI — KRP 250TPH" exists only as text on three indent rows, and the sheet's "also queued against this asset" works by string equality. "Report breakdown" on Vehicle status is one-way: there is no way to set under-service, no way to clear a breakdown, and no record of what was done.
 
 **Next, in order.**
 
@@ -254,7 +256,7 @@ This is the best-served domain model in the product:
 
 **The job.** Turns a phone call into a loaded tipper and eventually into money.
 
-**Built for them.** The dispatch board, the invoice ledger, the stock board, the e-way bill console, and the fleet board.
+**Built for them.** The dispatch board, the invoice ledger, the stock board, the e-way bill console, and the vehicle list (to see which lorries are free — not the fleet manager's command board).
 
 - **The sales command board** (`/sales/board`, their landing page) — five urgent-action counts (unraised invoices, orders pending approval, dispatches unconfirmed or delayed, invoices overdue, stock below safety level), each opening its own pre-filtered list via `?view=`, over a row of links to Material Stock, Customers, Purchase Orders, Material Dispatch and Invoices.
 - **Customer and purchase-order databases** (`/sales/customers`, `/sales/orders`) on seeded mock data, with approve / reject on an order awaiting sign-off.

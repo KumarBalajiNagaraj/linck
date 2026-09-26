@@ -452,6 +452,30 @@ export interface BillAttachment {
   url: string;
 }
 
+/**
+ * What automatic capture read off a bill, field by field, and what a human
+ * did with it. The captured value is kept even after a correction: the
+ * corrections are the only measure of how well capture works per vendor.
+ */
+export interface CapturedBillField {
+  key: string;
+  label: string;
+  /** What capture read. Null when capture found nothing for this field. */
+  captured: string | null;
+  confidence: 1 | 2 | 3 | null;
+  /** What the ledger holds now. */
+  value: string;
+  overridden: boolean;
+  overriddenBy: string | null;
+}
+
+export interface BillCaptureRecord {
+  engine: string;
+  capturedAt: string;
+  fields: CapturedBillField[];
+  warnings: string[];
+}
+
 export interface ExpenseBill {
   id: string;
   /** Which desk raised it — the fleet manager's or the store manager's. */
@@ -472,4 +496,6 @@ export interface ExpenseBill {
   siteId: string;
   provenance: Provenance;
   attachment: BillAttachment | null;
+  /** Null for a bill keyed by hand with no capture run. */
+  capture: BillCaptureRecord | null;
 }

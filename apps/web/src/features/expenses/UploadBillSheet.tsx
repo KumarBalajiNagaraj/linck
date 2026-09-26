@@ -1,8 +1,18 @@
-import { useEffect, useState } from 'react';
-import { EXPENSE_KIND_LABEL, NOW, vehiclesForSite, type ExpenseBill } from '@linck/mock';
-import { Button, Note, SheetSection, SideSheet } from '@linck/ui';
+import { useEffect, useRef, useState } from 'react';
+import { captureExpenseBill, type BillCapture, type BillFieldKey } from '@linck/domain';
+import {
+  EXPENSE_KIND_LABEL,
+  NOW,
+  VEHICLES,
+  vehiclesForSite,
+  type BillCaptureRecord,
+  type CapturedBillField,
+  type ExpenseBill,
+} from '@linck/mock';
+import { Button, ConfidenceMeter, Note, SheetSection, SideSheet } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
 import { newBillId, useExpenses } from './expenseStore.js';
+import { readBillImage } from './ocr.js';
 
 /**
  * UPLOAD A SCANNED BILL.
@@ -11,6 +21,12 @@ import { newBillId, useExpenses } from './expenseStore.js';
  * paid. So the scan is required and shown beside the form while the fields are
  * keyed — a bill whose amount was typed without the paper in view is the one
  * that gets paid twice.
+ *
+ * AUTOMATIC CAPTURE (LIN-12). Attaching a photo reads it and fills the form
+ * with what it found — each filled field marked with its confidence and the
+ * line it came from. Every captured value is a proposal: the person keying
+ * the bill checks it against the paper and corrects it, and a correction is
+ * recorded beside the original rather than replacing it.
  *
  * The bill goes in as `submitted`, the first step of the fixed chain: its
  * desk validates, the director approves, accounts pays.
@@ -72,6 +88,14 @@ export function UploadBillSheet({
   const [draft, setDraft] = useState<Draft>(() => blank(desk));
   const [preview, setPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [capture, setCapture] = useState<{ result: BillCapture; engine: string; text: string } | null>(null);
+  const [reading, setReading] = useState<{ state: 'idle' | 'reading' | 'done' | 'failed' | 'pdf'; progress: number }>({
+    state: 'idle',
+    progress: 0,
+  });
+  const [pasted, setPasted] = useState('');
+  /** Ignores a slow read that finishes after the file was replaced. */
+  const readToken = useRef(0);
 
   // The preview URL is released when it is replaced or the sheet closes —
   // except once it has been handed to a saved bill, which now owns it.
@@ -80,6 +104,10 @@ export function UploadBillSheet({
       setDraft(blank(desk));
       setPreview(null);
       setFileError(null);
+      setCapture(null);
+      setReading({ state: 'idle', progress: 0 });
+      setPasted('');
+      readToken.current += 1;
     }
   }, [open, desk]);
 
@@ -99,7 +127,66 @@ export function UploadBillSheet({
     if (preview) URL.revokeObjectURL(preview);
     setPreview(URL.createObjectURL(file));
     set('file', file);
+    setCapture(null);
+    if (file.type === 'application/pdf') {
+      setReading({ state: 'pdf', progress: 0 });
+      return;
+    }
+    const token = ++readToken.current;
+    setReading({ state: 'reading', progress: 0 });
+    readBillImage(file, (progress) => {
+      if (token === readToken.current) setReading({ state: 'reading', progress });
+    })
+      .then((ocr) => {
+        if (token !== readToken.current) return;
+        applyCapture(captureExpenseBill(ocr.text, ocr.lineConfidence), ocr.engine, ocr.text);
+        setReading({ state: 'done', progress: 1 });
+      })
+      .catch(() => {
+        if (token === readToken.current) setReading({ state: 'failed', progress: 0 });
+      });
   };
+
+  /** Fills the form from a capture. Only fields capture actually found are touched. */
+  const applyCapture = (result: BillCapture, engine: string, text: string) => {
+    setCapture({ result, engine, text });
+    const f = result.fields;
+    setDraft((d) => {
+      const kind = f.kind && KINDS_BY_DESK[desk].includes(f.kind.value as ExpenseBill['kind']) ? (f.kind.value as ExpenseBill['kind']) : d.kind;
+      // Matched only against the vehicles the form can offer at this scope —
+      // a match elsewhere would set a value the select cannot show.
+      const vehicle = f.vehicle ? vehiclesForSite(siteScope).find((v) => v.registrationNumber === f.vehicle!.value) : undefined;
+      return {
+        ...d,
+        kind,
+        billNumber: f.billNumber?.value ?? d.billNumber,
+        // A date capture could not read is cleared, not left on today: a
+        // default that looks like an answer gets submitted without a glance.
+        billDate: f.billDate?.value ?? '',
+        vendor: f.vendor?.value ?? d.vendor,
+        amount: f.amount?.value ?? d.amount,
+        litres: f.litres?.value ?? d.litres,
+        vehicleId: vehicle?.id ?? d.vehicleId,
+      };
+    });
+  };
+
+  /** The captured reading for one form field, and whether the form now disagrees with it. */
+  const capturedFor = (key: BillFieldKey, current: string): CapturedMark | null => {
+    const field = capture?.result.fields[key];
+    if (!field) return null;
+    // A registration read cleanly but not in this site's fleet is not a
+    // correction the user made — it is a vehicle the form cannot pick.
+    if (key === 'vehicle' && !current && !vehiclesForSite(siteScope).some((v) => v.registrationNumber === field.value)) {
+      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: true };
+    }
+    const same =
+      key === 'amount' || key === 'litres'
+        ? Number.parseFloat(current) === Number.parseFloat(field.value)
+        : current.trim().toUpperCase() === field.value.trim().toUpperCase();
+    return { value: field.value, confidence: field.confidence, source: field.source, corrected: !same, unmatched: false };
+  };
+
 
   const amount = Number.parseFloat(draft.amount);
   const litres = Number.parseFloat(draft.litres);
@@ -107,6 +194,7 @@ export function UploadBillSheet({
   const problems = [
     draft.file ? null : 'Attach the scanned bill',
     draft.billNumber.trim() ? null : 'Bill number',
+    draft.billDate ? null : 'Bill date',
     draft.vendor.trim() ? null : 'Vendor',
     Number.isFinite(amount) && amount > 0 ? null : 'Amount',
     draft.kind === 'diesel' && !(Number.isFinite(litres) && litres > 0) ? 'Litres' : null,
@@ -122,6 +210,36 @@ export function UploadBillSheet({
   const save = () => {
     if (problems.length > 0 || !draft.file || !preview) return;
     const vehicle = vehicles.find((v) => v.id === draft.vehicleId) ?? null;
+    const record: BillCaptureRecord | null = capture
+      ? {
+          engine: capture.engine,
+          capturedAt: NOW.toISOString(),
+          warnings: capture.result.warnings,
+          fields: (
+            [
+              ['kind', 'Type', draft.kind],
+              ['billNumber', 'Bill number', draft.billNumber.trim()],
+              ['billDate', 'Bill date', draft.billDate],
+              ['vendor', 'Vendor', draft.vendor.trim()],
+              ['vehicle', 'Vehicle', vehicle?.registrationNumber ?? ''],
+              ['litres', 'Litres', draft.kind === 'diesel' ? String(litres) : ''],
+              ['amount', 'Amount', amount.toFixed(2)],
+            ] as [BillFieldKey, string, string][]
+          ).map(([key, label, value]): CapturedBillField => {
+            const c = capturedFor(key, value);
+            return {
+              key,
+              label,
+              captured: c?.value ?? null,
+              confidence: c?.confidence ?? null,
+              value,
+              overridden: c?.corrected ?? false,
+              overriddenBy: c?.corrected ? persona.name : null,
+            };
+          }),
+        }
+      : null;
+    const anyOverride = record?.fields.some((f) => f.overridden) ?? false;
     add({
       id: newBillId(),
       desk,
@@ -138,7 +256,10 @@ export function UploadBillSheet({
       submittedBy: persona.name,
       submittedAt: NOW.toISOString(),
       siteId,
-      provenance: 'human',
+      // Keyed with no capture is a human value; captured and accepted as read
+      // is confirmed; any correction marks the whole bill overridden.
+      provenance: record ? (anyOverride ? 'overridden' : 'confirmed') : 'human',
+      capture: record,
       attachment: {
         fileName: draft.file.name,
         mimeType: draft.file.type,
@@ -197,6 +318,30 @@ export function UploadBillSheet({
               onChange={(e) => pickFile(e.target.files?.[0])}
             />
           </label>
+          <CaptureStatus reading={reading} warnings={capture?.result.warnings ?? []} />
+          {capture ? (
+            <details className="mt-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              <summary className="cursor-pointer">Text read from the {capture.engine === 'pasted text' ? 'pasted bill' : 'photo'}</summary>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap p-2 font-mono text-[11px]" style={FIELD_STYLE}>
+                {capture.text}
+              </pre>
+            </details>
+          ) : null}
+          {reading.state === 'failed' || reading.state === 'pdf' || reading.state === 'done' ? (
+            <details className="mt-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              <summary className="cursor-pointer">Read from pasted text instead</summary>
+              <textarea
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+                rows={6}
+                aria-label="Bill text"
+                placeholder="Paste the bill's text here"
+                className="mt-2 w-full p-2 font-mono text-[12px]"
+                style={FIELD_STYLE}
+              />
+              <Button onClick={() => pasted.trim() && applyCapture(captureExpenseBill(pasted), 'pasted text', pasted)}>Capture from text</Button>
+            </details>
+          ) : null}
           {fileError ? (
             <p className="mt-2 text-[12px]" style={{ color: 'var(--status-critical)' }}>
               {fileError}
@@ -206,7 +351,7 @@ export function UploadBillSheet({
 
         <SheetSection caption="What the bill says">
           <div className="flex flex-col gap-3">
-            <Field label="Type">
+            <Field label="Type" captured={capturedFor('kind', draft.kind)}>
               <select value={draft.kind} onChange={(e) => set('kind', e.target.value as ExpenseBill['kind'])} className={FIELD_CLASS} style={FIELD_STYLE}>
                 {KINDS_BY_DESK[desk].map((k) => (
                   <option key={k} value={k}>
@@ -215,20 +360,23 @@ export function UploadBillSheet({
                 ))}
               </select>
             </Field>
-            <Field label="Bill number">
+            <Field label="Bill number" captured={capturedFor('billNumber', draft.billNumber)}>
               <input value={draft.billNumber} onChange={(e) => set('billNumber', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
-            <Field label="Bill date">
+            <Field label="Bill date" captured={capturedFor('billDate', draft.billDate)}>
               <input type="date" value={draft.billDate} onChange={(e) => set('billDate', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
-            <Field label="Vendor">
+            <Field label="Vendor" captured={capturedFor('vendor', draft.vendor)}>
               <input value={draft.vendor} onChange={(e) => set('vendor', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
             <Field label="What for">
               <input value={draft.description} onChange={(e) => set('description', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
             {desk === 'fleet' ? (
-              <Field label={needsVehicle ? 'Vehicle' : 'Vehicle (optional)'}>
+              <Field
+                label={needsVehicle ? 'Vehicle' : 'Vehicle (optional)'}
+                captured={capturedFor('vehicle', VEHICLES.find((v) => v.id === draft.vehicleId)?.registrationNumber ?? '')}
+              >
                 <select value={draft.vehicleId} onChange={(e) => set('vehicleId', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE}>
                   <option value="">—</option>
                   {vehicles.map((v) => (
@@ -240,11 +388,11 @@ export function UploadBillSheet({
               </Field>
             ) : null}
             {draft.kind === 'diesel' ? (
-              <Field label="Litres">
+              <Field label="Litres" captured={capturedFor('litres', draft.litres)}>
                 <input inputMode="decimal" value={draft.litres} onChange={(e) => set('litres', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
               </Field>
             ) : null}
-            <Field label="Amount ₹ (bill total, incl. GST)">
+            <Field label="Amount ₹ (bill total, incl. GST)" captured={capturedFor('amount', draft.amount)}>
               <input inputMode="decimal" value={draft.amount} onChange={(e) => set('amount', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
           </div>
@@ -255,13 +403,72 @@ export function UploadBillSheet({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+interface CapturedMark {
+  value: string;
+  confidence: 1 | 2 | 3;
+  source: string;
+  corrected: boolean;
+  /** Read cleanly, but matches nothing the form can select. */
+  unmatched: boolean;
+}
+
+function Field({
+  label,
+  children,
+  captured,
+}: {
+  label: string;
+  children: React.ReactNode;
+  captured?: CapturedMark | null;
+}) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
+      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
         {label}
+        {captured ? (
+          <span className="flex items-center gap-1.5 normal-case tracking-normal" title={`Read from: ${captured.source}`}>
+            <ConfidenceMeter level={captured.confidence} />
+            {captured.unmatched ? (
+              <span style={{ color: 'var(--status-attention)' }}>scan read {captured.value} — no such vehicle at this site</span>
+            ) : captured.corrected ? (
+              <span style={{ color: 'var(--status-attention)' }}>corrected — scan read {captured.value}</span>
+            ) : (
+              <span>read from scan</span>
+            )}
+          </span>
+        ) : null}
       </span>
       {children}
     </label>
+  );
+}
+
+function CaptureStatus({
+  reading,
+  warnings,
+}: {
+  reading: { state: 'idle' | 'reading' | 'done' | 'failed' | 'pdf'; progress: number };
+  warnings: string[];
+}) {
+  const text =
+    reading.state === 'reading'
+      ? `Reading the bill… ${Math.round(reading.progress * 100)}%`
+      : reading.state === 'done'
+        ? 'Read. Check every filled field against the paper — the bars show how sure the reading is.'
+        : reading.state === 'failed'
+          ? 'Could not read this photo. Key the fields from the paper.'
+          : reading.state === 'pdf'
+            ? 'PDFs are not read automatically yet. Key the fields, or paste the text below.'
+            : null;
+  if (!text) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-1 text-[12px]" style={{ color: reading.state === 'failed' ? 'var(--status-critical)' : 'var(--text-secondary)' }}>
+      <span aria-live="polite">{text}</span>
+      {warnings.map((w) => (
+        <span key={w} style={{ color: 'var(--status-attention)' }}>
+          {w}
+        </span>
+      ))}
+    </div>
   );
 }

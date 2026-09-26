@@ -948,6 +948,7 @@ export const EXPENSE_BILLS: ExpenseBill[] = EXPENSE_STATUS_PLAN.map((status, i) 
     siteId: v.siteId,
     provenance: kind === 'diesel' ? ('proposed' as const) : ('human' as const),
     attachment: null,
+    capture: null,
   };
 });
 
@@ -980,6 +981,7 @@ EXPENSE_BILLS.push(
       siteId: 'site-wsp',
       provenance: 'human',
       attachment: null,
+      capture: null,
     };
   }),
 );

@@ -122,6 +122,12 @@ export function UploadBillSheet({
   const [pasted, setPasted] = useState('');
   /** Ignores a slow read that finishes after the file was replaced. */
   const readToken = useRef(0);
+  /**
+   * Fields the person has set since this file was picked. A reading that
+   * lands afterwards never overwrites them: reading takes seconds, and a
+   * person who has already chosen "Repair" must not find "Other" back.
+   */
+  const touched = useRef(new Set<keyof Draft>());
 
   // The preview URL is released when it is replaced, when the sheet closes
   // without saving, and when the screen goes — but not once a saved bill
@@ -146,7 +152,10 @@ export function UploadBillSheet({
     }
   }, [open, desk]);
 
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => {
+    touched.current.add(key);
+    setDraft((d) => ({ ...d, [key]: value }));
+  };
 
   // Vehicles at every site this person may upload for, the one in scope first.
   const uploadSites = sitesFor(persona.grants, UPLOAD_PERMISSION[desk], ALL_SITE_IDS);
@@ -166,7 +175,7 @@ export function UploadBillSheet({
       release();
       readToken.current += 1;
       setPreview(null);
-      set('file', null);
+      setDraft((d) => ({ ...d, file: null }));
       setCapture(null);
       setReading({ state: 'idle', progress: 0 });
       setFileError(message);
@@ -185,7 +194,8 @@ export function UploadBillSheet({
     setFileError(null);
     setUnviewable(false);
     setPreview(url);
-    set('file', file);
+    setDraft((d) => ({ ...d, file }));
+    touched.current = new Set();
     setCapture(null);
     if (file.type === 'application/pdf') {
       setReading({ state: 'pdf', progress: 0 });
@@ -206,26 +216,33 @@ export function UploadBillSheet({
       });
   };
 
-  /** Fills the form from a capture. Only fields capture actually found are touched. */
-  const applyCapture = (result: BillCapture, engine: string, text: string) => {
+  /**
+   * Fills the form from a capture. Only fields capture actually found are
+   * filled, and — for a photo read in the background — only fields the
+   * person has not set meanwhile. Text they paste and ask to capture is a
+   * deliberate request, so it fills every field it finds.
+   */
+  const applyCapture = (result: BillCapture, engine: string, text: string, requested = false) => {
     setCapture({ result, engine, text });
     const f = result.fields;
+    const free = (key: keyof Draft) => requested || !touched.current.has(key);
     setDraft((d) => {
-      const kind = f.kind && KINDS_BY_DESK[desk].includes(f.kind.value as ExpenseBill['kind']) ? (f.kind.value as ExpenseBill['kind']) : d.kind;
+      // "Other" with no word behind it is capture finding nothing, not a reading.
+      const kindRead = f.kind && f.kind.source !== '' && KINDS_BY_DESK[desk].includes(f.kind.value as ExpenseBill['kind']);
       // Matched only against the vehicles the form can offer — a match
       // elsewhere would set a value the select cannot show.
       const match = f.vehicle ? offered.find((v) => v.registrationNumber === f.vehicle!.value) : undefined;
       return {
         ...d,
-        kind,
-        billNumber: f.billNumber?.value ?? d.billNumber,
+        kind: kindRead && free('kind') ? (f.kind!.value as ExpenseBill['kind']) : d.kind,
+        billNumber: f.billNumber && free('billNumber') ? f.billNumber.value : d.billNumber,
         // A date capture could not read is cleared, not left on today: a
         // default that looks like an answer gets submitted without a glance.
-        billDate: f.billDate?.value ?? '',
-        vendor: f.vendor?.value ?? d.vendor,
-        amount: f.amount?.value ?? d.amount,
-        litres: f.litres?.value ?? d.litres,
-        vehicleId: match?.id ?? d.vehicleId,
+        billDate: free('billDate') ? (f.billDate?.value ?? '') : d.billDate,
+        vendor: f.vendor && free('vendor') ? f.vendor.value : d.vendor,
+        amount: f.amount && free('amount') ? f.amount.value : d.amount,
+        litres: f.litres && free('litres') ? f.litres.value : d.litres,
+        vehicleId: match && free('vehicleId') ? match.id : d.vehicleId,
       };
     });
   };
@@ -233,7 +250,7 @@ export function UploadBillSheet({
   /** The captured reading for one form field, and whether the form now disagrees with it. */
   const capturedFor = (key: BillFieldKey, current: string): CapturedMark | null => {
     const field = capture?.result.fields[key];
-    if (!field) return null;
+    if (!field || (key === 'kind' && field.source === '')) return null;
     // A registration read cleanly but not among the vehicles offered is not a
     // correction the user made — it is a vehicle the form cannot pick.
     if (key === 'vehicle' && !current && !offered.some((v) => v.registrationNumber === field.value)) {
@@ -406,7 +423,7 @@ export function UploadBillSheet({
                 className="mt-2 w-full p-2 font-mono text-[12px]"
                 style={FIELD_STYLE}
               />
-              <Button onClick={() => pasted.trim() && applyCapture(captureExpenseBill(pasted), 'pasted text', pasted)}>Capture from text</Button>
+              <Button onClick={() => pasted.trim() && applyCapture(captureExpenseBill(pasted), 'pasted text', pasted, true)}>Capture from text</Button>
             </details>
           ) : null}
           {fileError ? (

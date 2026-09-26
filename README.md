@@ -71,7 +71,7 @@ cd apps/api && .venv/bin/python -m pytest tests
 | `packages/domain` | Platform-neutral: Indian money formatting, the UOM/CFT conversion authority, IST and financial-year dates, scoped RBAC. No DOM, no React — the React Native app will consume it unchanged. |
 | `packages/ui` | The ERP composites: `DataTable`, `StatusStamp`, `Rail`, `KpiTile`, `Provisional`, cells. |
 | `packages/mock` | A seeded Tamil Nadu quarry-and-fleet dataset shaped like the eventual API responses. Deleted at cutover. |
-| `apps/web` | Vite + React 19 + TypeScript. Eleven screens across seven personas. |
+| `apps/web` | Vite + React 19 + TypeScript. Screens for seven personas, all on mock data. |
 | `docs/DATABASE.md` | The Postgres design — twelve schemas, the invariants, and the Alembic/Drizzle arrangement. |
 | `docs/PERSONAS.md` | Who uses Linck, what is built for each of them, where it falls short of the brief, and what to build next. |
 | `docs/COMPLIANCE.md` | The Indian statutory surface — e-way bill, GST, e-invoicing, returns, withholding, mineral permits — with what is built against each and what is missing. |
@@ -136,6 +136,6 @@ Both exist because `SECURITY DEFINER` escapes the caller's privileges but **not*
 
 ## Not built yet
 
-No screen is wired to the API yet — the web app still runs on mock data, and `apps/web/src/auth/session.ts` is written but deliberately unimported (a half-wired session that fails at boot would take down all twelve screens). The cutover steps are in that file's header.
+No screen is wired to the API yet — the web app still runs on mock data, and `apps/web/src/auth/session.ts` is written but deliberately unimported (a half-wired session that fails at boot would take down every screen). The cutover steps are in that file's header.
 
 Beyond `core`, the eleven business schemas in `docs/DATABASE.md` are designed but not migrated. Phase 2 is the money: production costing, GST invoicing, receipts with the cross-verification rule, and the double-entry ledger.

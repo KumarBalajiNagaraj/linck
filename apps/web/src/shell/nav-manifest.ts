@@ -103,6 +103,9 @@ export const WORKSPACES: Workspace[] = [
     glyph: '◨',
     module: 'sales',
     items: [
+      { key: 'sales-board', label: 'Command board', route: '/sales/board', permission: 'sales.board.read' },
+      { key: 'customers', label: 'Customers', route: '/sales/customers', permission: 'sales.customer.read' },
+      { key: 'orders', label: 'Purchase orders', route: '/sales/orders', permission: 'sales.order.read' },
       { key: 'dispatch', label: 'Dispatch board', route: '/sales/dispatch', permission: 'sales.dispatch.read' },
       { key: 'invoices', label: 'Invoices', route: '/sales/invoices', permission: 'sales.invoice.read' },
     ],

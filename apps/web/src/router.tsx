@@ -11,6 +11,9 @@ import { StockBoard } from './features/production/StockBoard.js';
 import { ProductionRunEntry } from './features/production/ProductionRunEntry.js';
 import { DispatchBoard } from './features/sales/DispatchBoard.js';
 import { InvoiceLedger } from './features/sales/InvoiceLedger.js';
+import { SalesCommandBoard } from './features/sales/SalesCommandBoard.js';
+import { CustomerDatabase } from './features/sales/CustomerDatabase.js';
+import { PurchaseOrderDatabase } from './features/sales/PurchaseOrderDatabase.js';
 import { IndentQueue } from './features/stores/IndentQueue.js';
 import { VerificationQueue } from './features/finance/VerificationQueue.js';
 import { ExtractionReview } from './features/ai/ExtractionReview.js';
@@ -70,6 +73,9 @@ const routeTree = rootRoute.addChildren([
   route('/compliance/ewb', () => <EwayBillConsole />, 'compliance.ewb.read'),
   route('/production/stock', () => <StockBoard />, 'production.stock.read'),
   route('/production/runs/new', () => <ProductionRunEntry />, 'production.run.create'),
+  route('/sales/board', () => <SalesCommandBoard />, 'sales.board.read'),
+  route('/sales/customers', () => <CustomerDatabase />, 'sales.customer.read'),
+  route('/sales/orders', () => <PurchaseOrderDatabase />, 'sales.order.read'),
   route('/sales/dispatch', () => <DispatchBoard />, 'sales.dispatch.read'),
   route('/sales/invoices', () => <InvoiceLedger />, 'sales.invoice.read'),
   route('/stores/indents', () => <IndentQueue />, 'stores.indent.read'),

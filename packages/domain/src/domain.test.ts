@@ -101,4 +101,13 @@ describe('permissions', () => {
     expect(resolveHome(grants)).toBe('/overview');
     expect(resolveHome({ 'fleet.board.read': { orgWide: true, siteIds: [] } })).toBe('/fleet/board');
   });
+
+  it('lands a sales coordinator on the sales board even though they can read the fleet board', () => {
+    const sales: Grants = {
+      'fleet.board.read': { orgWide: false, siteIds: ['site-krp'] },
+      'sales.board.read': { orgWide: false, siteIds: ['site-krp'] },
+      'sales.dispatch.read': { orgWide: false, siteIds: ['site-krp'] },
+    };
+    expect(resolveHome(sales)).toBe('/sales/board');
+  });
 });

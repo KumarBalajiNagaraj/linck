@@ -16,6 +16,8 @@ import {
   TRIP_STATUS_FAMILY,
   TRIP_STATUS_LABEL,
   VEHICLES,
+  isDispatchUnconfirmed,
+  isUnbilledDispatch,
   type Trip,
 } from '@linck/mock';
 import {
@@ -49,6 +51,7 @@ import {
   type Column,
 } from '@linck/ui';
 import { useApp } from '../../shell/store.js';
+import { useViewParam } from '../../shell/useViewParam.js';
 
 /**
  * The delivery order and dispatch board.
@@ -76,7 +79,12 @@ import { useApp } from '../../shell/store.js';
  * has ever been shown it.
  */
 
-type Lane = 'all' | Trip['status'] | 'own_use' | 'variance' | 'override';
+type Lane = 'all' | Trip['status'] | 'own_use' | 'variance' | 'override' | 'unconfirmed' | 'unbilled';
+
+const LANE_VIEWS: readonly Lane[] = [
+  'all', 'planned', 'loaded', 'in_transit', 'delivered', 'completed', 'returned', 'cancelled',
+  'own_use', 'variance', 'override', 'unconfirmed', 'unbilled',
+];
 
 const BASIS_SHORT: Record<Trip['qtyBasis'], string> = {
   loader_buckets: 'buckets',
@@ -157,7 +165,7 @@ const siteOf = (t: Trip) => SITES.find((s) => s.id === vehicleOf(t)?.siteId)?.na
 export function DispatchBoard() {
   const { persona, siteScope, density } = useApp();
   const isPhone = useIsPhone();
-  const [lane, setLane] = useState<Lane>('all');
+  const [lane, setLane] = useViewParam(LANE_VIEWS, 'all');
   const [customerFocus, setCustomerFocus] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | undefined>(undefined);
   /** Keys are `${tripId}:wb` and `${tripId}:rate` — one set, two confirmations. */
@@ -180,6 +188,10 @@ export function DispatchBoard() {
   const returned = today.filter((t) => t.status === 'returned');
   const cancelledLoads = today.filter((t) => t.status === 'cancelled');
   const overridden = today.filter((t) => t.rateOverridden);
+  // The same predicates the sales command board counts with, so a card's
+  // number is the number of rows it opens onto.
+  const unconfirmed = today.filter((t) => isDispatchUnconfirmed(t));
+  const unbilled = today.filter(isUnbilledDispatch);
   const exceptions = today.filter((t) => t.variancePct !== null && isVarianceExceptional(t.variancePct));
   const unreviewed = exceptions.filter((t) => !accepted.has(`${t.id}:wb`));
   const outUnits = today
@@ -248,7 +260,11 @@ export function DispatchBoard() {
             ? today.filter((t) => t.rateOverridden)
             : lane === 'variance'
               ? today.filter((t) => t.variancePct !== null && isVarianceExceptional(t.variancePct))
-              : today.filter((t) => t.status === lane);
+              : lane === 'unconfirmed'
+                ? today.filter((t) => isDispatchUnconfirmed(t))
+                : lane === 'unbilled'
+                  ? today.filter(isUnbilledDispatch)
+                  : today.filter((t) => t.status === lane);
     return customerFocus ? laneRows.filter((t) => t.customerId === customerFocus) : laneRows;
   }, [today, lane, customerFocus]);
 
@@ -482,6 +498,7 @@ export function DispatchBoard() {
           row — the shell's own section strip behaves the same way, so the
           gesture is already learned. On a desk there is room to wrap. */}
       <div
+        id="list"
         className="mt-7 flex items-center gap-2 overflow-x-auto px-6 pb-3 [&>*]:shrink-0 [&>*]:whitespace-nowrap md:flex-wrap md:overflow-visible"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
@@ -507,6 +524,12 @@ export function DispatchBoard() {
           </Chip>
         ) : null}
         <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-strong)' }} />
+        <Chip active={lane === 'unconfirmed'} onClick={() => setLane('unconfirmed')} count={unconfirmed.length}>
+          Pending confirmation / delayed
+        </Chip>
+        <Chip active={lane === 'unbilled'} onClick={() => setLane('unbilled')} count={unbilled.length}>
+          Invoice not yet raised
+        </Chip>
         <Chip active={lane === 'override'} onClick={() => setLane('override')} count={overridden.length}>
           Rate overridden
         </Chip>

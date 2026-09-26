@@ -152,6 +152,10 @@ ROLES: dict[str, RoleSpec] = {
             "stores.indent.read",
             "stores.indent.approve",
             "ai.extraction.review",
+            "sales.board.read",
+            "sales.customer.read",
+            "sales.order.read",
+            "sales.order.approve",
         ),
     ),
     "accounts": RoleSpec(
@@ -205,6 +209,10 @@ ROLES: dict[str, RoleSpec] = {
         "Sales Coordinator",
         "sales",
         (
+            "sales.board.read",
+            "sales.customer.read",
+            "sales.order.read",
+            "sales.order.approve",
             "sales.dispatch.read",
             "sales.dispatch.write",
             "sales.trip.read",

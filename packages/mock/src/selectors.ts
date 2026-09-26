@@ -5,13 +5,14 @@ import {
   EWAY_BILLS,
   GSTIN_STANDINGS,
   INVOICES,
+  PURCHASE_ORDERS,
   RECEIPTS,
   STOCK,
   TRIPS,
   VEHICLES,
 } from './data.js';
 import { NOW } from './seed.js';
-import type { EwayBill, GstinStanding, Invoice, Trip, Vehicle, VehicleStatus } from './types.js';
+import type { EwayBill, GstinStanding, Invoice, PurchaseOrder, Trip, Vehicle, VehicleStatus } from './types.js';
 
 /**
  * Derived figures.
@@ -445,4 +446,108 @@ export function blockedGstinsFor(bills: EwayBill[]): GstinStanding[] {
 /** Consignments held by one blocked registration — the count that makes it urgent. */
 export function ewbHeldByGstin(bills: EwayBill[], gstin: string): EwayBill[] {
   return bills.filter((b) => b.supplierGstin === gstin && b.stage === 'not_generated');
+}
+
+/* ------------------------------------------------------------ sales desk */
+
+/** The walk-in customer. Paid at the gate, so a load to it is never unbilled. */
+export const COUNTER_CASH_CUSTOMER_ID = 'cus-06';
+
+/**
+ * A planned load older than this has missed its slot. Six hours is one loading
+ * shift: an order taken at 06:30 that still has not reached the chute by
+ * lunch is a customer about to ring.
+ */
+export const DISPATCH_DELAY_HOURS = 6;
+
+export const PO_STATUS_FAMILY: Record<PurchaseOrder['status'], StatusFamily> = {
+  pending_approval: 'pending',
+  approved: 'active',
+  part_dispatched: 'attention',
+  fulfilled: 'ready',
+  rejected: 'dormant',
+};
+
+export const PO_STATUS_LABEL: Record<PurchaseOrder['status'], string> = {
+  pending_approval: 'Pending approval',
+  approved: 'Approved',
+  part_dispatched: 'Part dispatched',
+  fulfilled: 'Fulfilled',
+  rejected: 'Rejected',
+};
+
+/** A trip belongs to the site of the vehicle carrying it. */
+export function tripsForSite(siteId: string | null): Trip[] {
+  if (!siteId) return TRIPS;
+  const vehicleIds = new Set(vehiclesForSite(siteId).map((v) => v.id));
+  return TRIPS.filter((t) => vehicleIds.has(t.vehicleId));
+}
+
+/**
+ * An invoice carries no site of its own — its site is the site of the trips it
+ * bills. One with no trips (advance, counter sale) is org-level and stays
+ * visible at every scope rather than silently vanishing.
+ */
+export function invoicesForSite(siteId: string | null): Invoice[] {
+  if (!siteId) return INVOICES;
+  const tripIds = new Set(tripsForSite(siteId).map((t) => t.id));
+  return INVOICES.filter((i) => i.tripIds.length === 0 || i.tripIds.some((id) => tripIds.has(id)));
+}
+
+export function purchaseOrdersForSite(siteId: string | null): PurchaseOrder[] {
+  return siteId ? PURCHASE_ORDERS.filter((p) => p.siteId === siteId) : PURCHASE_ORDERS;
+}
+
+/**
+ * Loaded but not yet confirmed out of the gate, or planned and past its slot.
+ * Either way the customer has been promised a lorry that is not on the road.
+ */
+export function isDispatchUnconfirmed(trip: Trip, now: Date = NOW): boolean {
+  if (trip.status === 'loaded') return true;
+  return trip.status === 'planned' && now.getTime() - Date.parse(trip.date) > DISPATCH_DELAY_HOURS * 3_600_000;
+}
+
+/**
+ * Material that left the yard for a paying customer with no invoice behind it.
+ *
+ * "Left the yard" starts at in-transit: under GST the tax invoice is due before
+ * or at the removal of goods, so a load on the road without one is already
+ * unbilled — not only once it is signed for. Own-use and cancelled loads are
+ * never sales; the counter customer paid at the gate. What remains is revenue
+ * that exists only in a driver's memory.
+ */
+export function isUnbilledDispatch(trip: Trip): boolean {
+  return (
+    trip.purpose === 'sale' &&
+    trip.customerId !== COUNTER_CASH_CUSTOMER_ID &&
+    (trip.status === 'in_transit' || trip.status === 'delivered' || trip.status === 'completed') &&
+    trip.invoiceId === null
+  );
+}
+
+/** Past due with money still owed. Drafts and closed files are not receivables. */
+export function isInvoiceOverdue(invoice: Invoice): boolean {
+  return (
+    invoice.status !== 'draft' &&
+    invoice.status !== 'closed' &&
+    invoice.daysOverdue > 0 &&
+    Number.parseFloat(invoice.balanceDue) > 0
+  );
+}
+
+/**
+ * The five counts the sales coordinator's command board leads with. Each one
+ * uses the same predicate as the pre-filtered list it links to, so the number
+ * on the card is the number of rows on the other side of the click.
+ */
+export function salesAttention(siteId: string | null, now: Date = NOW) {
+  const trips = tripsForSite(siteId);
+  const stock = siteId ? STOCK.filter((s) => s.siteId === siteId) : STOCK;
+  return {
+    ordersPendingApproval: purchaseOrdersForSite(siteId).filter((p) => p.status === 'pending_approval').length,
+    dispatchUnconfirmed: trips.filter((t) => isDispatchUnconfirmed(t, now)).length,
+    unbilledDispatch: trips.filter(isUnbilledDispatch).length,
+    invoicesOverdue: invoicesForSite(siteId).filter(isInvoiceOverdue).length,
+    stockBelowSafety: stock.filter((s) => s.units < s.safetyUnits).length,
+  };
 }

@@ -41,6 +41,30 @@ def include_object(obj, name, type_, reflected, compare_to):
     return True
 
 
+def create_version_schema(connection: Connection) -> None:
+    """Create VERSION_SCHEMA if it is missing, or say exactly why we cannot.
+
+    Checked by hand rather than with CREATE SCHEMA IF NOT EXISTS, which demands
+    CREATE on the database even when the schema is already there.
+    """
+    exists, can_create, role = connection.execute(
+        text(
+            "SELECT to_regnamespace(:schema) IS NOT NULL, "
+            "has_database_privilege(current_database(), 'CREATE'), current_user"
+        ),
+        {"schema": VERSION_SCHEMA},
+    ).one()
+    if exists:
+        return
+    if not can_create:
+        raise RuntimeError(
+            f"{role} cannot create the {VERSION_SCHEMA!r} schema that holds Alembic's version table: it "
+            "needs CREATE on the database. Re-run apps/api/scripts/init-roles.sql as a superuser "
+            "(psql -d linck_dev -f apps/api/scripts/init-roles.sql); it is safe to run again."
+        )
+    connection.execute(text(f"CREATE SCHEMA {VERSION_SCHEMA}"))
+
+
 def move_version_table_out_of_public(connection: Connection) -> None:
     """Adopt the version table this file used to keep in public.
 
@@ -86,7 +110,7 @@ def run_migrations_online() -> None:
             compare_type=True,
         )
         with context.begin_transaction():
-            context.execute(f"CREATE SCHEMA IF NOT EXISTS {VERSION_SCHEMA}")
+            create_version_schema(connection)
             move_version_table_out_of_public(connection)
             context.run_migrations()
 

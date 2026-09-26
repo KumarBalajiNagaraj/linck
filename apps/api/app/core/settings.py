@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     # a pre-registered user, so this is defence in depth, not the gate.
     allowed_hosted_domains: list[str] = []
 
+    # WhatsApp Business Cloud API. Drivers send the bunk slip's photo to the
+    # fleet's WhatsApp Business number; Meta posts it to /webhooks/whatsapp.
+    # The number belongs to one tenant, named here, because the webhook is
+    # called by Meta with no session and RLS needs a tenant to write under.
+    # Empty values leave the webhook answering 503 rather than half-working.
+    whatsapp_verify_token: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_organization_id: str = ""
+    whatsapp_graph_url: str = "https://graph.facebook.com/v21.0"
+    whatsapp_media_dir: str = "var/whatsapp-media"
+    whatsapp_react_on_receipt: bool = True
+
     session_secret: str = "dev-only-not-a-secret-change-me"
     session_cookie_name: str = "__Host-linck_session"
     session_ttl_minutes: int = 60

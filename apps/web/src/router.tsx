@@ -8,6 +8,8 @@ import { VehicleStatus } from './features/fleet/VehicleStatus.js';
 import { DriverList } from './features/fleet/DriverList.js';
 import { BreakdownRegister } from './features/fleet/BreakdownRegister.js';
 import { ExpenseRegister } from './features/expenses/ExpenseRegister.js';
+import { WhatsAppDieselImport } from './features/expenses/WhatsAppDieselImport.js';
+import { DieselSummary } from './features/expenses/DieselSummary.js';
 import { FuelEntryScreen } from './features/fleet/FuelEntryScreen.js';
 import { DocumentRegister } from './features/compliance/DocumentRegister.js';
 import { EwayBillConsole } from './features/compliance/EwayBillConsole.js';
@@ -76,6 +78,8 @@ const routeTree = rootRoute.addChildren([
   route('/fleet/drivers', () => <DriverList />, 'fleet.driver.read'),
   route('/fleet/breakdowns', () => <BreakdownRegister />, 'fleet.breakdown.read'),
   route('/fleet/expenses', () => <ExpenseRegister desk="fleet" />, 'fleet.expense.read'),
+  route('/fleet/whatsapp', () => <WhatsAppDieselImport />, 'fleet.expense.upload'),
+  route('/fleet/diesel-summary', () => <DieselSummary />, 'fleet.expense.read'),
   route('/stores/expenses', () => <ExpenseRegister desk="stores" />, 'stores.expense.read'),
   route('/fleet/fuel/new', () => <FuelEntryScreen />, 'fleet.fuel.create'),
   route('/compliance/documents', () => <DocumentRegister />, 'compliance.document.read'),

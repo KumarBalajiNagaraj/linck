@@ -22,30 +22,59 @@ export interface OcrResult {
   engine: string;
 }
 
-export async function readBillImage(file: File, onProgress?: (share: number) => void): Promise<OcrResult> {
+/** One OCR engine kept open across many photos — a WhatsApp import reads dozens. */
+export interface BillReader {
+  read: (file: File, onProgress?: (share: number) => void) => Promise<OcrResult>;
+  close: () => Promise<void>;
+}
+
+const ENGINE = 'tesseract.js (eng)';
+
+export async function openBillReader(): Promise<BillReader> {
   const { createWorker, OEM } = await import('tesseract.js');
   const at = (path: string) => new URL(path, document.baseURI).href;
+  // The logger is fixed when the worker is created, so progress is routed to
+  // whichever read is running now.
+  let report: ((share: number) => void) | undefined;
   const worker = await createWorker('eng', OEM.LSTM_ONLY, {
     workerPath: at('/ocr/worker.min.js'),
     corePath: at('/ocr/core'),
     langPath: at('/ocr/lang'),
     logger: (m: { status: string; progress: number }) => {
-      if (m.status === 'recognizing text') onProgress?.(m.progress);
+      if (m.status === 'recognizing text') report?.(m.progress);
     },
   });
+  return {
+    read: async (file, onProgress) => {
+      report = onProgress;
+      try {
+        const { data } = await worker.recognize(file, {}, { text: true, blocks: true });
+        const lines = (data.blocks ?? []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
+        if (lines.length > 0) {
+          return {
+            text: lines.map((l) => l.text.replace(/\n$/, '')).join('\n'),
+            lineConfidence: lines.map((l) => l.confidence),
+            engine: ENGINE,
+          };
+        }
+        const text = data.text ?? '';
+        return { text, lineConfidence: text.split('\n').map(() => data.confidence), engine: ENGINE };
+      } finally {
+        report = undefined;
+      }
+    },
+    close: async () => {
+      await worker.terminate();
+    },
+  };
+}
+
+/** Read a single photo with an engine opened for it and closed after. */
+export async function readBillImage(file: File, onProgress?: (share: number) => void): Promise<OcrResult> {
+  const reader = await openBillReader();
   try {
-    const { data } = await worker.recognize(file, {}, { text: true, blocks: true });
-    const lines = (data.blocks ?? []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
-    if (lines.length > 0) {
-      return {
-        text: lines.map((l) => l.text.replace(/\n$/, '')).join('\n'),
-        lineConfidence: lines.map((l) => l.confidence),
-        engine: 'tesseract.js (eng)',
-      };
-    }
-    const text = data.text ?? '';
-    return { text, lineConfidence: text.split('\n').map(() => data.confidence), engine: 'tesseract.js (eng)' };
+    return await reader.read(file, onProgress);
   } finally {
-    await worker.terminate();
+    await reader.close();
   }
 }

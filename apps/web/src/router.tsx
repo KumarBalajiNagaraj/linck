@@ -81,6 +81,7 @@ const routeTree = rootRoute.addChildren([
   route('/fleet/whatsapp', () => <WhatsAppDieselImport />, 'fleet.expense.upload'),
   route('/fleet/diesel-summary', () => <DieselSummary />, 'fleet.expense.read'),
   route('/stores/expenses', () => <ExpenseRegister desk="stores" />, 'stores.expense.read'),
+  route('/finance/expenses', () => <ExpenseRegister desk={null} />, 'finance.expense.read'),
   route('/fleet/fuel/new', () => <FuelEntryScreen />, 'fleet.fuel.create'),
   route('/compliance/documents', () => <DocumentRegister />, 'compliance.document.read'),
   route('/compliance/ewb', () => <EwayBillConsole />, 'compliance.ewb.read'),

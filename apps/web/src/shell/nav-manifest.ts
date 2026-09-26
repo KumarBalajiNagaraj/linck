@@ -139,6 +139,7 @@ export const WORKSPACES: Workspace[] = [
         permission: 'finance.receipt.read',
         badge: 'unverified_receipts',
       },
+      { key: 'expense-bills', label: 'Expense bills', route: '/finance/expenses', permission: 'finance.expense.read' },
     ],
   },
   {

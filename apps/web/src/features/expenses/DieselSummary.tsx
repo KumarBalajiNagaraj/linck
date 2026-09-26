@@ -11,7 +11,7 @@ import { useExpenses } from './expenseStore.js';
  *
  * Every diesel bill in Linck — slips read off WhatsApp, bills uploaded,
  * bills keyed — summed per vehicle or per the driver who filled. Rejected
- * bills are left out; bills nobody has validated yet are counted, and their
+ * and deleted bills are left out; bills nobody has validated yet are counted, and their
  * rupees are hatched, because until the fleet manager checks a slip the
  * figure is only what was read off it.
  *
@@ -39,7 +39,7 @@ export function DieselSummary() {
   const [view, setView] = useViewParam(VIEWS, 'vehicle');
 
   const diesel = useMemo(
-    () => expensesForSite(siteScope, 'fleet', bills).filter((b) => b.kind === 'diesel' && b.status !== 'rejected'),
+    () => expensesForSite(siteScope, 'fleet', bills).filter((b) => b.kind === 'diesel' && b.status !== 'rejected' && b.status !== 'deleted'),
     [siteScope, bills],
   );
 

@@ -160,6 +160,8 @@ ROLES: dict[str, RoleSpec] = {
             "fleet.breakdown.read",
             "fleet.expense.read",
             "stores.expense.read",
+            "finance.expense.read",
+            "finance.expense.approve",
         ),
     ),
     "accounts": RoleSpec(
@@ -177,6 +179,9 @@ ROLES: dict[str, RoleSpec] = {
             "compliance.ewb.write",
             "fleet.vehicle.read",
             "ai.extraction.review",
+            "finance.expense.read",
+            "finance.expense.pass",
+            "finance.expense.pay",
         ),
     ),
     "fleet_manager": RoleSpec(
@@ -189,6 +194,8 @@ ROLES: dict[str, RoleSpec] = {
             "fleet.expense.read",
             "fleet.expense.validate",
             "fleet.expense.upload",
+            "stores.expense.read",
+            "stores.expense.validate",
             "fleet.vehicle.read",
             "fleet.vehicle.write",
             "fleet.fuel.create",

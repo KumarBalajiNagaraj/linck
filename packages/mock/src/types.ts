@@ -1,3 +1,4 @@
+import type { BillEvent, PaymentRecord } from '@linck/domain';
 import type { Provenance, StatusFamily } from '@linck/tokens';
 
 /**
@@ -445,10 +446,14 @@ export type ExpenseStatus =
   | 'submitted'
   /** Validated by the fleet manager, waiting on the director. */
   | 'validated'
-  /** Approved by the director, waiting on accounts to pay. */
+  /** Approved by the director, waiting on accounts. */
   | 'approved'
+  /** Passed for payment by accounts, waiting for the money to go. */
+  | 'passed'
   | 'paid'
-  | 'rejected';
+  | 'rejected'
+  /** Deleted before anyone signed it. Kept on record, never counted. */
+  | 'deleted';
 
 /** A scanned copy of the paper bill, as uploaded. */
 export interface BillAttachment {
@@ -507,6 +512,12 @@ export interface ExpenseBill {
   capture: BillCaptureRecord | null;
   /** Set for a bill that came in on WhatsApp rather than being keyed or uploaded. */
   source?: BillSource;
+  /** Who raised it, as an actor id (`user:fleet`, `driver:drv-001`, `wa:+91…`), for the four-eyes rule. */
+  submittedById?: string | null;
+  /** Every move along the approval chain, oldest first. Never edited. */
+  history?: BillEvent[];
+  /** Set when accounts records the payment. */
+  payment?: PaymentRecord | null;
 }
 
 /** Where a WhatsApp bill came from: enough to find the message again and to refuse a second import. */

@@ -35,6 +35,8 @@ export interface ChatMessage {
   mediaOmitted: boolean;
   /** 1-based line in the export where the message starts. */
   line: number;
+  /** Lines of follow-up messages folded into this one: the caption typed after its photo. */
+  mergedLines?: number[];
 }
 
 export interface ChatExport {
@@ -164,6 +166,43 @@ export function parseWhatsAppExport(text: string, options: { utcOffsetMinutes?: 
   return { format, dateOrder, messages, systemLines };
 }
 
+/* ---------------------------------------------------------------- pairing */
+
+/** A photo and its caption, sent as two messages, are one report if they are this close. */
+const PAIR_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Drivers often send the slip photo and then type the figures as a second
+ * message — or the other way round. A photo-only message takes the same
+ * sender's next text-only message within ten minutes, or failing that the one
+ * just before it, so the figures and their evidence stay together. Nothing
+ * else is merged.
+ */
+export function pairFollowUps(messages: readonly ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = messages.map((m) => ({ ...m, attachments: [...m.attachments] }));
+  const absorbed = new Set<number>();
+  const photoOnly = (m: ChatMessage) => (m.attachments.length > 0 || m.mediaOmitted) && m.text === '';
+  const textOnly = (m: ChatMessage) => m.attachments.length === 0 && !m.mediaOmitted && m.text !== '';
+  const near = (a: ChatMessage, b: ChatMessage) => Math.abs(Date.parse(a.at) - Date.parse(b.at)) <= PAIR_WINDOW_MS;
+
+  out.forEach((photo, i) => {
+    if (absorbed.has(i) || !photoOnly(photo)) return;
+    // Nothing else from this sender may sit between the two.
+    const next = out.findIndex((m, j) => j > i && m.sender === photo.sender);
+    const prev = out.map((m, j) => (j < i && m.sender === photo.sender ? j : -1)).filter((j) => j >= 0).pop() ?? -1;
+    const take = next !== -1 && !absorbed.has(next) && textOnly(out[next]!) && near(photo, out[next]!)
+      ? next
+      : prev !== -1 && !absorbed.has(prev) && textOnly(out[prev]!) && near(photo, out[prev]!)
+        ? prev
+        : -1;
+    if (take === -1) return;
+    photo.text = out[take]!.text;
+    photo.mergedLines = [...(photo.mergedLines ?? []), out[take]!.line];
+    absorbed.add(take);
+  });
+  return out.filter((_, i) => !absorbed.has(i));
+}
+
 /* ------------------------------------------------------------- extraction */
 
 export interface FleetVehicleRef {
@@ -211,6 +250,19 @@ export interface DieselClaim {
   issues: string[];
   /** Key of an earlier claim in the same import this one repeats, if any. */
   duplicateOf: string | null;
+  /**
+   * How it repeats the earlier one. The same photo is the same bill and is
+   * not added twice; the same figures within hours may be a second fill, so
+   * it is flagged and kept.
+   */
+  duplicateReason: 'same_photo' | 'same_figures' | null;
+  /**
+   * Mentions diesel but reports no fill: no litres, no amount and no photo —
+   * "diesel bills before 6pm", "filled?". Nothing here could be paid.
+   */
+  noFill: boolean;
+  /** Lines of follow-up messages folded into this claim. */
+  mergedLines: number[];
 }
 
 /** "diesel" and the ways drivers actually write it, including Tamil. */
@@ -242,21 +294,29 @@ const normalizeName = (s: string) => s.toLowerCase().replace(/[^a-z0-9஀-௿]+/
 const digits = (s: string) => s.replace(/\D/g, '');
 
 /**
- * The driver who posted. An exact saved name, or the phone number WhatsApp
- * shows for an unsaved contact, or a saved name that contains every word of
- * exactly one driver's name ("Murugan S Driver" → "Murugan S"). Anything
- * looser is left for a human: paying the wrong driver's batta is worse than
- * one extra click.
+ * The driver who posted. The phone number WhatsApp shows for an unsaved
+ * contact first — a number is one person; then an exact saved name; then a
+ * saved name that contains every word of exactly one driver's name ("Murugan
+ * S Driver" → "Murugan S"). Anything looser is left for a human: paying the
+ * wrong driver's batta is worse than one extra click.
+ *
+ * `notDrivers` are group members who are not reporting fills — the fleet
+ * manager importing the chat, whose name may also be on the driver roster.
  */
-export function matchDriver(sender: string, drivers: readonly DriverRef[]): { driverId: string | null; how: DieselClaim['driverMatch'] } {
+export function matchDriver(
+  sender: string,
+  drivers: readonly DriverRef[],
+  notDrivers: readonly string[] = [],
+): { driverId: string | null; how: DieselClaim['driverMatch'] } {
   const name = normalizeName(sender);
+  if (notDrivers.some((n) => normalizeName(n) === name)) return { driverId: null, how: 'none' };
+  const phone = digits(sender).slice(-10);
+  if (phone.length === 10 && /^[\d\s+()-]+$/.test(sender)) {
+    const byPhone = drivers.filter((d) => digits(d.phone).slice(-10) === phone);
+    return byPhone.length === 1 ? { driverId: byPhone[0]!.id, how: 'phone' } : { driverId: null, how: 'none' };
+  }
   const exact = drivers.filter((d) => normalizeName(d.name) === name);
   if (exact.length === 1) return { driverId: exact[0]!.id, how: 'name' };
-  const phone = digits(sender).slice(-10);
-  if (phone.length === 10) {
-    const byPhone = drivers.filter((d) => digits(d.phone).slice(-10) === phone);
-    if (byPhone.length === 1) return { driverId: byPhone[0]!.id, how: 'phone' };
-  }
   const words = new Set(name.split(' '));
   const contained = drivers.filter((d) => normalizeName(d.name).split(' ').every((w) => words.has(w)));
   if (contained.length === 1) return { driverId: contained[0]!.id, how: 'name' };
@@ -299,16 +359,32 @@ export function matchVehicle(
  */
 export function extractDieselClaims(
   chat: ChatExport,
-  context: { fleet?: readonly FleetVehicleRef[]; drivers?: readonly DriverRef[] } = {},
+  context: {
+    fleet?: readonly FleetVehicleRef[];
+    drivers?: readonly DriverRef[];
+    /** Members whose posts are not fill reports: the person importing, say. */
+    notDrivers?: readonly string[];
+    /** Fold a photo and its separately-sent caption into one message. On by default. */
+    pairPhotos?: boolean;
+    /**
+     * Treat a photo posted with no words as a claim, to be filled from its
+     * slip. For an import that reads the slips; off otherwise, since with no
+     * slip reading such a claim has nothing in it.
+     */
+    photoOnly?: boolean;
+  } = {},
 ): DieselClaim[] {
   const fleet = context.fleet ?? [];
   const drivers = context.drivers ?? [];
+  const notDrivers = context.notDrivers ?? [];
+  const messages = context.pairPhotos === false ? chat.messages : pairFollowUps(chat.messages);
   const claims: DieselClaim[] = [];
 
-  for (const msg of chat.messages) {
+  for (const msg of messages) {
     const hasPhoto = msg.attachments.length > 0 || msg.mediaOmitted;
     const litresMatch = LITRES.exec(msg.text);
-    if (!DIESEL_WORDS.test(msg.text) && !(hasPhoto && litresMatch)) continue;
+    const bareSlip = context.photoOnly === true && hasPhoto && msg.text === '';
+    if (!DIESEL_WORDS.test(msg.text) && !(hasPhoto && litresMatch) && !bareSlip) continue;
 
     let litres = toNumber(litresMatch?.[1] ?? litresMatch?.[2]);
     let amount = toNumber((AMOUNT_BEFORE.exec(msg.text) ?? AMOUNT_AFTER.exec(msg.text))?.[1]);
@@ -382,16 +458,26 @@ export function extractDieselClaims(
       );
     }
     if (!hasPhoto) issues.push('No bill photo posted with it.');
+    if (bareSlip) issues.unshift('A photo with no message — its figures can only come from the slip.');
     if (msg.mediaOmitted) issues.push('The chat was exported without media — the photo is not in this file.');
 
     if (!vehicle.vehicleText) issues.push('No vehicle number in the message.');
     else if (!vehicle.vehicleId) issues.push(`"${vehicle.vehicleText}" does not match exactly one vehicle in the fleet.`);
 
-    const driver = matchDriver(msg.sender, drivers);
-    if (!driver.driverId) issues.push(`"${msg.sender}" is not a driver on the roster.`);
+    const driver = matchDriver(msg.sender, drivers, notDrivers);
+    if (notDrivers.some((n) => normalizeName(n) === normalizeName(msg.sender))) {
+      issues.push(`Posted by ${msg.sender}, who is not reporting a fill of their own.`);
+    } else if (!driver.driverId) {
+      issues.push(`"${msg.sender}" is not a driver on the roster.`);
+    }
+    const noFill = litres === null && amount === null && !hasPhoto;
+    if (noFill) issues.unshift('Mentions diesel but gives no litres, amount or slip — nothing here could be paid.');
 
     claims.push({
-      key: `${msg.at}|${normalizeName(msg.sender)}|${msg.text.replace(/\s+/g, ' ').toLowerCase()}|${msg.attachments.join(',')}`,
+      // Stable across re-imports, and across phones: the sender's saved name
+      // and the photo file names differ on each phone that exports the group,
+      // so neither is part of the key.
+      key: `${msg.at.slice(0, 16)}|${msg.text.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase()}|${msg.attachments.length + (msg.mediaOmitted ? 1 : 0)}`,
       line: msg.line,
       at: msg.at,
       sender: msg.sender,
@@ -412,6 +498,9 @@ export function extractDieselClaims(
       driverMatch: driver.how,
       issues,
       duplicateOf: null,
+      duplicateReason: null,
+      noFill,
+      mergedLines: msg.mergedLines ?? [],
     });
   }
 
@@ -419,21 +508,26 @@ export function extractDieselClaims(
   // else — is the commonest way one tank gets paid for twice. Same vehicle,
   // same litres, same amount inside six hours is flagged, never dropped.
   claims.forEach((c, i) => {
-    const earlier = claims
-      .slice(0, i)
-      .find(
-        (e) =>
-          (c.attachments.length > 0 && e.attachments.some((a) => c.attachments.includes(a))) ||
-          (e.vehicleId !== null &&
-            e.vehicleId === c.vehicleId &&
-            e.litres !== null &&
-            e.litres === c.litres &&
-            e.amount === c.amount &&
-            Math.abs(Date.parse(e.at) - Date.parse(c.at)) <= 6 * 3_600_000),
-      );
+    const before = claims.slice(0, i);
+    const samePhoto = before.find((e) => c.attachments.length > 0 && e.attachments.some((a) => c.attachments.includes(a)));
+    const sameFigures = before.find(
+      (e) =>
+        e.vehicleId !== null &&
+        e.vehicleId === c.vehicleId &&
+        e.litres !== null &&
+        e.litres === c.litres &&
+        e.amount === c.amount &&
+        Math.abs(Date.parse(e.at) - Date.parse(c.at)) <= 6 * 3_600_000,
+    );
+    const earlier = samePhoto ?? sameFigures;
     if (earlier) {
       c.duplicateOf = earlier.key;
-      c.issues.unshift(`Looks like a repeat of the message on line ${earlier.line}.`);
+      c.duplicateReason = samePhoto ? 'same_photo' : 'same_figures';
+      c.issues.unshift(
+        samePhoto
+          ? `The same photo as the message on line ${earlier.line} — the same bill posted again.`
+          : `Looks like a repeat of the message on line ${earlier.line}: same vehicle, litres and amount.`,
+      );
     }
   });
 
@@ -449,20 +543,90 @@ export interface DieselTotal {
   amount: number;
 }
 
-/** Litres and rupees per driver, per vehicle, or per anything else keyed. */
-export function summarizeDiesel<T extends { litres: number | null; amount: number | null }>(
+/**
+ * Litres and rupees per driver, per vehicle, or per anything else keyed.
+ * Summed in whole paise and hundredths of a litre, so forty fills add up to
+ * exactly what the forty bills say.
+ */
+export function summarizeDiesel<T extends { litres: number | null; amount: number | string | null }>(
   rows: readonly T[],
   keyOf: (row: T) => string | null,
 ): DieselTotal[] {
-  const map = new Map<string, DieselTotal>();
+  const map = new Map<string, { key: string; fills: number; centiLitres: number; paise: number }>();
   for (const r of rows) {
     const key = keyOf(r);
     if (key === null) continue;
-    const t = map.get(key) ?? { key, fills: 0, litres: 0, amount: 0 };
+    const t = map.get(key) ?? { key, fills: 0, centiLitres: 0, paise: 0 };
     t.fills += 1;
-    t.litres = Math.round((t.litres + (r.litres ?? 0)) * 100) / 100;
-    t.amount = Math.round((t.amount + (r.amount ?? 0)) * 100) / 100;
+    t.centiLitres += Math.round((r.litres ?? 0) * 100);
+    t.paise += Math.round(Number(r.amount ?? 0) * 100);
     map.set(key, t);
   }
-  return [...map.values()].sort((a, b) => b.amount - a.amount);
+  return [...map.values()]
+    .map((t) => ({ key: t.key, fills: t.fills, litres: t.centiLitres / 100, amount: t.paise / 100 }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
+/* ---------------------------------------------------- against the ledger */
+
+/** What an import needs to know about a bill already in Linck. */
+export interface LedgerBill {
+  id: string;
+  /** The claim it was imported from, for a bill that came from WhatsApp. */
+  claimKey: string | null;
+  attachmentNames: readonly string[];
+  vendor: string;
+  billNumber: string;
+  submittedAt: string;
+}
+
+export type ImportOutcome = 'add' | 'needs_details' | 'repeat' | 'already_imported' | 'already_in_linck' | 'no_fill';
+
+export interface PlannedClaim<C extends DieselClaim = DieselClaim> {
+  claim: C;
+  outcome: ImportOutcome;
+  /** Why it is not being added, in a sentence. Null for 'add'. */
+  reason: string | null;
+}
+
+const billKey = (vendor: string, billNumber: string) =>
+  vendor.trim() && billNumber.trim() ? `${normalizeName(vendor)}|${billNumber.replace(/\s+/g, '').toUpperCase()}` : null;
+
+/**
+ * What an import will do with each claim, checked against the bills already
+ * in Linck as well as against the rest of the import:
+ *
+ *   - a claim imported before (by its key) is not added again, whatever phone
+ *     the export came from;
+ *   - the same photo as a bill already in Linck, or as an earlier claim, is
+ *     the same bill posted again;
+ *   - the same bunk's bill number already in Linck is the same bill, however
+ *     it came in — uploaded, keyed or imported;
+ *   - a claim with no fill in it is shown, never added;
+ *   - a claim without a matched vehicle or an amount waits for those details.
+ */
+export function planDieselImport<C extends DieselClaim & { billNumber?: string | null; vendor?: string | null }>(
+  claims: readonly C[],
+  ledger: readonly LedgerBill[],
+): PlannedClaim<C>[] {
+  const byKey = new Map(ledger.filter((b) => b.claimKey).map((b) => [b.claimKey!, b]));
+  const byPhoto = new Map(ledger.flatMap((b) => b.attachmentNames.map((n) => [n, b] as const)));
+  const byBill = new Map(ledger.map((b) => [billKey(b.vendor, b.billNumber), b] as const).filter(([k]) => k !== null) as [string, LedgerBill][]);
+  const day = (iso: string) => iso.slice(0, 10).split('-').reverse().join('-');
+
+  return claims.map((claim) => {
+    const plan = (outcome: ImportOutcome, reason: string | null): PlannedClaim<C> => ({ claim, outcome, reason });
+    const imported = byKey.get(claim.key);
+    if (imported) return plan('already_imported', `Already imported on ${day(imported.submittedAt)}.`);
+    const photo = claim.attachments.map((a) => byPhoto.get(a)).find(Boolean);
+    if (photo) return plan('repeat', `The same photo as a bill already in Linck (${photo.billNumber || photo.id}).`);
+    if (claim.duplicateReason === 'same_photo') return plan('repeat', claim.issues[0] ?? 'The same photo posted again.');
+    const key = billKey(claim.vendor ?? '', claim.billNumber ?? '');
+    const same = key ? byBill.get(key) : undefined;
+    if (same) return plan('already_in_linck', `Bill ${same.billNumber} from ${same.vendor} is already in Linck.`);
+    if (claim.noFill) return plan('no_fill', 'No litres, amount or slip — nothing here could be paid.');
+    const missing = [claim.vehicleId ? null : 'the vehicle', claim.amount === null ? 'the amount' : null].filter(Boolean);
+    if (missing.length > 0) return plan('needs_details', `Needs ${missing.join(' and ')} before it can go for validation.`);
+    return plan('add', null);
+  });
 }

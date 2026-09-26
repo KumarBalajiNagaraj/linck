@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { extractDieselClaims, matchDriver, matchVehicle, parseWhatsAppExport, summarizeDiesel } from './whatsapp.js';
+import {
+  extractDieselClaims,
+  matchDriver,
+  matchVehicle,
+  pairFollowUps,
+  parseWhatsAppExport,
+  planDieselImport,
+  summarizeDiesel,
+  type LedgerBill,
+} from './whatsapp.js';
 
 const FLEET = [
   { id: 'veh-001', registrationNumber: 'TN29AB1001' },
@@ -122,10 +131,11 @@ describe('extractDieselClaims', () => {
     expect(c.issues).toContain('No bill photo posted with it.');
   });
 
-  it('flags the same slip posted again, and keeps it', () => {
+  it('recognises the same slip posted again', () => {
     const repeat = claims[3]!;
     expect(repeat.duplicateOf).toBe(claims[0]!.key);
-    expect(repeat.issues[0]).toMatch(/repeat of the message on line 3/);
+    expect(repeat.duplicateReason).toBe('same_photo');
+    expect(repeat.issues[0]).toMatch(/same photo as the message on line 3/);
   });
 
   it('does not pick one of two vehicles that share the last four digits', () => {
@@ -177,5 +187,122 @@ describe('summarizeDiesel', () => {
       { key: 'a', fills: 2, litres: 120.5, amount: 11450.25 },
       { key: 'b', fills: 1, litres: 50, amount: 4800 },
     ]);
+  });
+});
+
+describe('pairing a photo with its caption', () => {
+  const at = (hhmm: string, sender: string, body: string) => `06/08/26, ${hhmm} - ${sender}: ${body}`;
+
+  it('joins a photo and the figures typed just after it', () => {
+    const chat = parseWhatsAppExport(
+      [at('7:42 am', 'Murugan S', 'IMG-20260806-WA0012.jpg (file attached)'), at('7:44 am', 'Murugan S', '1001 diesel 432 ltr Rs 41,277')].join('\n'),
+    );
+    const paired = pairFollowUps(chat.messages);
+    expect(paired).toHaveLength(1);
+    expect(paired[0]).toMatchObject({ attachments: ['IMG-20260806-WA0012.jpg'], text: '1001 diesel 432 ltr Rs 41,277', mergedLines: [2] });
+    const [claim] = extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS });
+    expect(claim!.issues).not.toContain('No bill photo posted with it.');
+  });
+
+  it('joins figures sent just before the photo, when nothing follows it', () => {
+    const chat = parseWhatsAppExport(
+      [at('7:40 am', 'Murugan S', '1001 diesel 432 ltr Rs 41,277'), at('7:41 am', 'Murugan S', 'IMG-20260806-WA0012.jpg (file attached)')].join('\n'),
+    );
+    expect(pairFollowUps(chat.messages)).toHaveLength(1);
+  });
+
+  it('never joins two people, or messages far apart', () => {
+    const chat = parseWhatsAppExport(
+      [
+        at('7:42 am', 'Murugan S', 'IMG-20260806-WA0012.jpg (file attached)'),
+        at('7:43 am', 'Selvam P', '1015 diesel 150 ltr 14325'),
+        at('8:30 am', 'Murugan S', '1001 diesel 432 ltr Rs 41,277'),
+      ].join('\n'),
+    );
+    expect(pairFollowUps(chat.messages)).toHaveLength(3);
+  });
+});
+
+describe('who posted', () => {
+  it('matches an unsaved number by phone before anything else', () => {
+    expect(matchDriver('+91 98400 12345', DRIVERS)).toEqual({ driverId: 'drv-001', how: 'phone' });
+  });
+
+  it('does not attribute the importer\'s own posts to a driver who shares the name', () => {
+    const roster = [...DRIVERS, { id: 'drv-005', name: 'Anbu Selvan M', phone: '9444400005' }];
+    expect(matchDriver('Anbu Selvan M', roster).driverId).toBe('drv-005');
+    expect(matchDriver('Anbu Selvan M', roster, ['Anbu Selvan M']).driverId).toBeNull();
+    const [c] = extractDieselClaims(parseWhatsAppExport('06/08/26, 4:40 pm - Anbu Selvan M: Diesel bills without photo will not be paid'), {
+      fleet: FLEET,
+      drivers: roster,
+      notDrivers: ['Anbu Selvan M'],
+    });
+    expect(c!.driverId).toBeNull();
+    expect(c!.noFill).toBe(true);
+  });
+});
+
+describe('claim keys', () => {
+  it('are the same whichever phone exported the group', () => {
+    // Another phone saves Murugan under another name, and numbers its photos differently.
+    const other = ANDROID.replace(/Murugan S:/g, 'Murugan Driver KRP:').replace(/WA0012/g, 'WA0441');
+    const mine = extractDieselClaims(parseWhatsAppExport(ANDROID), { fleet: FLEET, drivers: DRIVERS }).map((c) => c.key);
+    const theirs = extractDieselClaims(parseWhatsAppExport(other), { fleet: FLEET, drivers: DRIVERS }).map((c) => c.key);
+    expect(theirs).toEqual(mine);
+  });
+});
+
+describe('planDieselImport', () => {
+  const chat = parseWhatsAppExport(ANDROID);
+  const claims = extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS });
+  const none: LedgerBill[] = [];
+
+  it('adds a complete claim, and says what an incomplete one still needs', () => {
+    const plan = planDieselImport(claims, none);
+    expect(plan[0]!.outcome).toBe('add');
+    expect(plan.find((p) => p.claim.vehicleText === '1050')!.outcome).toBe('needs_details');
+    expect(plan.find((p) => p.claim.vehicleText === '1050')!.reason).toMatch(/the vehicle/);
+  });
+
+  it('does not add the same photo twice', () => {
+    expect(planDieselImport(claims, none)[3]!.outcome).toBe('repeat');
+    const ledger: LedgerBill[] = [
+      { id: 'exp-1', claimKey: null, attachmentNames: ['IMG-20260806-WA0012.jpg'], vendor: 'Sakthi Fuels', billNumber: 'BK/48213', submittedAt: '2026-08-06T03:00:00Z' },
+    ];
+    expect(planDieselImport(claims, ledger)[0]!.outcome).toBe('repeat');
+  });
+
+  it('recognises a claim imported before, and a bunk bill already in Linck', () => {
+    const ledger: LedgerBill[] = [
+      { id: 'exp-wa-1', claimKey: claims[1]!.key, attachmentNames: [], vendor: '', billNumber: '', submittedAt: '2026-08-06T04:00:00Z' },
+      { id: 'exp-2', claimKey: null, attachmentNames: [], vendor: 'SAKTHI FUELS', billNumber: 'BK/48213', submittedAt: '2026-08-06T05:00:00Z' },
+    ];
+    const withSlip = claims.map((c, i) => (i === 2 ? { ...c, vendor: 'Sakthi Fuels', billNumber: 'BK / 48213' } : c));
+    const plan = planDieselImport(withSlip, ledger);
+    expect(plan[1]).toMatchObject({ outcome: 'already_imported', reason: 'Already imported on 06-08-2026.' });
+    expect(plan[2]!.outcome).toBe('already_in_linck');
+  });
+
+  it('shows a message with no fill in it, and never adds it', () => {
+    const [c] = extractDieselClaims(parseWhatsAppExport('06/08/26, 7:42 am - Murugan S: 1001 diesel filled'), { fleet: FLEET, drivers: DRIVERS });
+    expect(planDieselImport([c!], none)[0]!.outcome).toBe('no_fill');
+  });
+});
+
+describe('summarizeDiesel, to the paisa', () => {
+  it('adds amounts written as strings exactly', () => {
+    const rows = Array.from({ length: 3 }, () => ({ litres: 0.1, amount: '0.10' }));
+    expect(summarizeDiesel(rows, () => 'a')[0]).toEqual({ key: 'a', fills: 3, litres: 0.3, amount: 0.3 });
+  });
+});
+
+describe('a slip photo posted on its own', () => {
+  const chat = parseWhatsAppExport('08/08/26, 9:30 am - Selvam P: IMG-20260808-WA0058.jpg (file attached)');
+
+  it('is a claim only for an import that reads the slips', () => {
+    expect(extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS })).toHaveLength(0);
+    const [c] = extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS, photoOnly: true });
+    expect(c).toMatchObject({ litres: null, amount: null, noFill: false, driverId: 'drv-003' });
+    expect(c!.issues[0]).toMatch(/figures can only come from the slip/);
   });
 });

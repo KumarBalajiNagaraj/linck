@@ -21,6 +21,7 @@ import { PurchaseOrderDatabase } from './features/sales/PurchaseOrderDatabase.js
 import { IndentQueue } from './features/stores/IndentQueue.js';
 import { VerificationQueue } from './features/finance/VerificationQueue.js';
 import { ExtractionReview } from './features/ai/ExtractionReview.js';
+import { DeliveryDocCrossCheck } from './features/ai/DeliveryDocCrossCheck.js';
 import { Forbidden } from './features/Forbidden.js';
 
 const rootRoute = createRootRoute({
@@ -89,6 +90,7 @@ const routeTree = rootRoute.addChildren([
   route('/stores/indents', () => <IndentQueue />, 'stores.indent.read'),
   route('/finance/receipts/verification', () => <VerificationQueue />, 'finance.receipt.read'),
   route('/ai/review', () => <ExtractionReview />, 'ai.extraction.review'),
+  route('/ai/crosscheck', () => <DeliveryDocCrossCheck />, 'ai.extraction.review'),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

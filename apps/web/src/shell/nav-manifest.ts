@@ -146,6 +146,7 @@ export const WORKSPACES: Workspace[] = [
     module: 'ai',
     items: [
       { key: 'review', label: 'Extraction review', route: '/ai/review', permission: 'ai.extraction.review', badge: 'extraction_queue' },
+      { key: 'crosscheck', label: 'Delivery paper cross-check', route: '/ai/crosscheck', permission: 'ai.extraction.review' },
     ],
   },
 ];

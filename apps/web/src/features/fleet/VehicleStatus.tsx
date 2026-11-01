@@ -46,6 +46,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useDayMonth } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { fleetWords, vehicleWords } from './words.js';
@@ -128,6 +129,7 @@ export function VehicleStatus() {
   const t = useWords(vehicleWords);
   const f = useWords(fleetWords);
   const status = useWords(statusWords);
+  const dayMonth = useDayMonth();
   const { siteScope, density } = useApp();
   const [filter, setFilter] = useViewParam(VIEWS, 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -214,7 +216,7 @@ export function VehicleStatus() {
   // Ranked, never auto-applied, and dismissal is recorded.
   const idleWithDrivers = idleRoadworthy.filter((v) => v.driverId !== null).length;
 
-  // Day labels as 08-08 — digits read the same in both languages.
+  // Day labels as `08 Aug` / `08 ஆக.`, the same shape as every other axis.
   const uptimeSeries = LAST_14.map((d) => ({
     label: dayMonth(d.date),
     value: d.uptimePct,
@@ -296,9 +298,7 @@ export function VehicleStatus() {
               text: t.workingSplit(counts.onTrip, counts.ready, counts.total),
               tone: counts.breakdown > 0 ? 'critical' : 'neutral',
             }}
-            asOf="14:42"
-            source={f.from.vehicles}
-            freshness="live"
+            asOfInHeader
           />
           {/* The sparkline sits level with the figure, not the caption: the
               caption is longer in Tamil and runs under a sparkline parked at
@@ -318,8 +318,7 @@ export function VehicleStatus() {
                 : t.idleNone,
             tone: idleRoadworthy.length > 0 ? 'attention' : 'neutral',
           }}
-          asOf="14:42"
-          source={f.from.vehicles}
+          asOfInHeader
         />
         <KpiTile
           eyebrow={status.vehicle.breakdown}
@@ -328,8 +327,7 @@ export function VehicleStatus() {
             text: counts.breakdown > 0 ? t.breakdownNow : t.breakdownNone,
             tone: counts.breakdown > 0 ? 'critical' : 'neutral',
           }}
-          asOf="14:42"
-          source={f.from.vehicles}
+          asOfInHeader
         />
         <KpiTile
           eyebrow={t.lowMileage}
@@ -527,6 +525,7 @@ export function VehicleStatus() {
 function VehicleDetail({ vehicle }: { vehicle: Vehicle }) {
   const v = useWords(vehicleWords);
   const f = useWords(fleetWords);
+  const dayMonth = useDayMonth();
   const t = v.sheet;
   const driver = DRIVERS.find((d) => d.id === vehicle.driverId) ?? null;
   const site = SITES.find((s) => s.id === vehicle.siteId);
@@ -700,11 +699,6 @@ function timeSince(iso: string, f: FleetText): string {
   if (h < 1) return f.min(Math.round(h * 60));
   if (h < 48) return f.hours(Math.round(h));
   return f.days(Math.round(h / 24));
-}
-
-/** `2026-08-08` → `08-08`. */
-function dayMonth(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}-${isoDate.slice(5, 7)}`;
 }
 
 /** What was written down, except the reason this board writes, which is worded. */

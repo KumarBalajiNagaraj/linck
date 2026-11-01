@@ -681,7 +681,7 @@ const ta: typeof en = {
     readText: 'இந்த உரையைப் படி',
     whatTheBillSays: 'பில்லில் உள்ளது',
     vehicleOptional: 'வண்டி (இருந்தால்)',
-    amountTotal: 'மொத்தம் ₹ (GST உட்பட)',
+    amountTotal: 'மொத்தம் ₹ (ஜிஎஸ்டி உட்பட)',
     readAs: (v) => `${v} எனப் படித்தது`,
     fromPhoto: 'போட்டோவிலிருந்து',
     correctedFrom: (v) => `திருத்தியது — போட்டோவில் ${v}`,

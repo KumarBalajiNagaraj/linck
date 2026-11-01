@@ -1,4 +1,5 @@
 import type { ComplianceDocument } from '@linck/mock';
+import { monthNames } from '../../i18n/format.js';
 import { words } from '../../i18n/words.js';
 
 /**
@@ -12,8 +13,9 @@ import { words } from '../../i18n/words.js';
 
 type DocType = ComplianceDocument['type'];
 
-const EN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const TA_MONTHS = ['ஜன.', 'பிப்.', 'மார்ச்', 'ஏப்.', 'மே', 'ஜூன்', 'ஜூலை', 'ஆக.', 'செப்.', 'அக்.', 'நவ.', 'டிச.'];
+// Short month names are shared with every chart axis in the product.
+const EN_MONTHS = monthNames.en;
+const TA_MONTHS = monthNames.ta;
 const EN_MONTHS_LONG = [
   'January',
   'February',
@@ -233,7 +235,6 @@ export const complianceWords = words({
     ewb: {
       title: 'e-Way bills',
       source: 'e-Way bill records',
-      returnsSource: 'GST return records',
       interLine: (n: number, limit: string) => `${n} to other states · bill needed above ${limit}`,
       intraLine: (n: number, limit: string) => `${n} inside Tamil Nadu · bill needed above ${limit}`,
       banner: {
@@ -553,7 +554,6 @@ export const complianceWords = words({
     ewb: {
       title: 'இ-வே பில்கள்',
       source: 'இ-வே பில் பதிவுகள்',
-      returnsSource: 'GST ரிட்டர்ன் பதிவுகள்',
       interLine: (n, limit) => `வெளி மாநிலம் ${n} · ${limit}-க்கு மேல் பில் தேவை`,
       intraLine: (n, limit) => `தமிழ்நாட்டுக்குள் ${n} · ${limit}-க்கு மேல் பில் தேவை`,
       banner: {
@@ -618,7 +618,7 @@ export const complianceWords = words({
       say: {
         notNeeded: 'வரம்புக்குக் கீழ். இன்வாய்ஸ் போதும்.',
         notNeededShort: 'இ-வே பில் தேவையில்லை.',
-        blocked: 'GSTIN தடை. முதலில் GST ரிட்டர்ன் தாக்கல் செய்யுங்கள்.',
+        blocked: 'GSTIN தடை. முதலில் ஜிஎஸ்டி ரிட்டர்ன் தாக்கல் செய்யுங்கள்.',
         toMake: 'லோடு கிளம்பும் முன் இ-வே பில் உருவாக்குங்கள்.',
         addVehicle: (n) => (n <= 0 ? 'இன்றே வண்டி எண் சேருங்கள்.' : `${n} நாளுக்குள் வண்டி எண் சேருங்கள்.`),
         lapsed: 'காலம் கடந்தது. புதிய இ-வே பில் உருவாக்குங்கள்.',

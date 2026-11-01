@@ -43,9 +43,9 @@ APP_PASSWORD = os.environ.get("LINCK_TEST_APP_PASSWORD", "linck_app")
 # nothing behind that the next run cannot identify and sweep.
 SLUG_PREFIX = "zz-test-"
 
-# The schemas migrations 0011 and 0030 created, and the tables the app role may
-# only INSERT into and read, like core.audit_logs.
-GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance", "logistics", "procurement")
+# The schemas migrations 0011, 0020 and 0030 created, and the tables the app
+# role may only INSERT into and read, like core.audit_logs.
+GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance", "ai", "logistics", "procurement")
 APPEND_ONLY_TABLES = ("finance.payments", "finance.expense_bill_events")
 
 
@@ -89,11 +89,11 @@ def _provision_app_role() -> None:
         # the migration, which targets PUBLIC rather than a named role.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE ON core.audit_logs FROM {}").format(role))
 
-        # The business schemas migrations 0011 and 0030 created grant linck_app
-        # what core does, from the migration itself. Only where the role did not exist when
-        # the migration ran (so it skipped the grants) are they restated here,
-        # append-only tables included; otherwise the suite tests the
-        # migration's own grants rather than this file's.
+        # The business schemas migrations 0011, 0020 and 0030 created grant
+        # linck_app what core does, from the migration itself. Only where the role
+        # did not exist when the migration ran (so it skipped the grants) are they
+        # restated here, append-only tables included; otherwise the suite tests
+        # the migration's own grants rather than this file's.
         cur.execute(
             "SELECT nspname FROM pg_namespace"
             " WHERE nspname = ANY(%s) AND NOT has_schema_privilege(%s, oid, 'USAGE')",
@@ -145,6 +145,7 @@ _TEARDOWN_ORDER = [
     "logistics.trips",
     "logistics.vehicle_duty_logs",
     "master.items",
+    "ai.industry_digests",
     "finance.expense_bill_events",
     "finance.expense_bill_fields",
     "finance.expense_bills",
@@ -449,3 +450,82 @@ def file_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     root = tmp_path / "files"
     monkeypatch.setattr(get_settings(), "file_storage_dir", str(root))
     return root
+
+
+class FakeS3:
+    """The three calls app.core.storage.S3FileStore makes, answered from a dict,
+    under boto3's own argument names.
+
+    Errors are the ones boto3 raises, shaped as Spaces and S3 send them: HEAD
+    has no body, so a missing key is the bare status "404"; GET says NoSuchKey.
+    `refuse` makes every call fail as a key without access to the bucket would.
+    """
+
+    def __init__(self) -> None:
+        self.objects: dict[tuple[str, str], tuple[bytes, str]] = {}
+        self.calls: list[tuple[str, str]] = []
+        self.refuse = False
+
+    def _check(self, op: str, key: str) -> None:
+        from botocore.exceptions import ClientError
+
+        self.calls.append((op, key))
+        if self.refuse:
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}, op)
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict:
+        from botocore.exceptions import ClientError
+
+        self._check("HeadObject", Key)
+        if (Bucket, Key) not in self.objects:
+            raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+        body, content_type = self.objects[(Bucket, Key)]
+        return {"ContentLength": len(body), "ContentType": content_type}
+
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str) -> dict:
+        self._check("PutObject", Key)
+        self.objects[(Bucket, Key)] = (bytes(Body), ContentType)
+        return {}
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict:
+        import io
+
+        from botocore.exceptions import ClientError
+        from botocore.response import StreamingBody
+
+        self._check("GetObject", Key)
+        if (Bucket, Key) not in self.objects:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}}, "GetObject"
+            )
+        body, content_type = self.objects[(Bucket, Key)]
+        return {
+            "Body": StreamingBody(io.BytesIO(body), len(body)),
+            "ContentLength": len(body),
+            "ContentType": content_type,
+        }
+
+    def keys(self, bucket: str = "linck-test") -> set[str]:
+        return {key for (b, key) in self.objects if b == bucket}
+
+
+@pytest.fixture
+def bucket(monkeypatch: pytest.MonkeyPatch) -> FakeS3:
+    """Files go to a stand-in for the Spaces bucket, through the seam the API
+    uses in production (LINCK_FILE_STORE=s3), with no network."""
+    from app.core import storage
+    from app.core.settings import get_settings
+
+    fake = FakeS3()
+    settings = get_settings()
+    for name, value in {
+        "file_store": "s3",
+        "s3_endpoint_url": "https://blr1.digitaloceanspaces.com",
+        "s3_region": "blr1",
+        "s3_bucket": "linck-test",
+        "s3_access_key_id": "test-key",
+        "s3_secret_access_key": "test-secret",
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    monkeypatch.setattr(storage, "s3_client", lambda *config: fake)
+    return fake

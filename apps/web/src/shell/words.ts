@@ -46,7 +46,6 @@ export const shellWords = words({
     askAdmin: 'Ask your admin to give you access.',
     board: {
       priority: { highest: 'Most urgent', high: 'Urgent', medium: 'Soon' },
-      openList: 'Open list →',
       noneNow: (definition: string) => `None now — ${definition.charAt(0).toLowerCase()}${definition.slice(1)}`,
     },
     palette: {
@@ -101,7 +100,7 @@ export const shellWords = words({
     alertKind: {
       breakdown: 'பழுது',
       expiry: 'காலாவதி',
-      receivable: 'வர வேண்டிய பணம்',
+      receivable: 'பாக்கி',
       anomaly: 'வழக்கத்துக்கு மாறானது',
       approval: 'அனுமதி',
     },
@@ -110,7 +109,6 @@ export const shellWords = words({
     askAdmin: 'அனுமதி தர உங்கள் அட்மினிடம் கேளுங்கள்.',
     board: {
       priority: { highest: 'மிக அவசரம்', high: 'அவசரம்', medium: 'விரைவில்' },
-      openList: 'பட்டியல் திற →',
       noneNow: (definition) => `இப்போது இல்லை — ${definition}`,
     },
     palette: {

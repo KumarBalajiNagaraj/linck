@@ -521,11 +521,12 @@ FILE_PURPOSES = ("expense_bill", "purchase_invoice")
 class File(Base):
     """One upload: a scanned bill, or a vendor's invoice for material bought on a trip.
 
-    The bytes live on disk under the tenant's own directory, named by their
-    SHA-256 (see app/core/storage.py), and are reachable only through this
-    row, so only through RLS. The row is per upload rather than per content:
-    the same photo uploaded twice is two uploads, each attached to at most one
-    bill, while the disk keeps it once.
+    The bytes live in the file store under the tenant's own prefix, named by
+    their SHA-256 (app/core/storage.py: a directory in development, a private
+    bucket in production), and are reachable only through this row, so only
+    through RLS. The row is per upload rather than per content: the same photo
+    uploaded twice is two uploads, each attached to at most one bill, while the
+    store keeps it once.
     """
 
     __tablename__ = "files"

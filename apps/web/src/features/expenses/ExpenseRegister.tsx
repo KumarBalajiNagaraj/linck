@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { availableActions, businessDate, can, formatDate, formatINRCompact, parseTypedAmount } from '@linck/domain';
+import { availableActions, businessDate, can, formatDate, parseTypedAmount } from '@linck/domain';
 import {
   DRIVERS,
   EXPENSE_STATUS_FAMILY,
@@ -34,6 +34,7 @@ import {
 import { useLang, type Lang } from '../../i18n/lang.js';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords, wordsNow } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { BatchBar, BillHistory, ChainActions, STEP_ACTION } from './ApprovalChain.js';
@@ -62,6 +63,7 @@ const UPLOAD_KEY: Record<ExpenseBill['desk'], string> = {
 };
 
 export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) {
+  const inr = useInrCompact();
   const { persona, siteScope, density } = useApp();
   const bills = useExpenses((s) => s.bills);
   const [view, setView] = useViewParam(VIEWS, 'all');
@@ -109,7 +111,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <AsOfStamp asOf="14:42" source="expense_bills" freshness="live" />
             <span className="text-[14px]" style={{ color: awaiting.length > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-              {t.register.waitingForYou(awaiting.length, formatINRCompact(awaitingValue))}
+              {t.register.waitingForYou(awaiting.length, inr(awaitingValue))}
             </span>
           </span>
         }

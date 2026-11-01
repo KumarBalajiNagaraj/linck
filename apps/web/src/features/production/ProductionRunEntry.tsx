@@ -28,6 +28,7 @@ import {
   type FlowOutput,
 } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
+import { useDayMonth } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { DOWNTIME_REASONS, shiftWords, unitWords, type DowntimeReason } from './words.js';
 
@@ -100,11 +101,6 @@ function productLabel(code: string): string {
   return PRODUCTS.find((p) => p.code === code)?.label ?? PRODUCT_DENSITIES[code]?.label ?? code;
 }
 
-/** `08-08` — a chart label in the screen's own date shape, with no month names. */
-function dayMonth(iso: string): string {
-  return formatDate(iso).slice(0, 5);
-}
-
 /** A stop reason in the reader's language; one typed some other way stays as typed. */
 function reasonLabel(raw: string, t: Words): string {
   return (DOWNTIME_REASONS as readonly string[]).includes(raw) ? t.reasons[raw as DowntimeReason] : raw;
@@ -129,6 +125,7 @@ export function ProductionRunEntry() {
   const { siteScope, density } = useApp();
   const t = useWords(shiftWords);
   const u = useWords(unitWords);
+  const dayMonth = useDayMonth();
   // The sheet footer is a fixed 56px row that does not wrap. On a phone the
   // caveat sentence cannot share it with the button, so it moves into the body
   // — still the last thing read before the thumb reaches the action.

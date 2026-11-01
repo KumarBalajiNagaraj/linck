@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatDate, formatDateTime, formatINR, formatINRCompact } from '@linck/domain';
+import { formatDate, formatDateTime, formatINR } from '@linck/domain';
 import {
   blockedGstinsFor,
   ewayBillsForSite,
@@ -56,6 +56,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { complianceWords, ENGLISH_MONTH_NAMES, type ComplianceWords } from './words.js';
 
@@ -131,6 +132,7 @@ const CONSOLE_CANCEL_REASON = 'Cancelled from the console inside the 24-hour win
 export function EwayBillConsole() {
   const { siteScope, density } = useApp();
   const t = useWords(complianceWords);
+  const inr = useInrCompact();
   const standingWords = useWords(statusWords).ewb;
   const w = t.ewb;
   const [filter, setFilter] = useState<Filter>('all');
@@ -359,8 +361,7 @@ export function EwayBillConsole() {
           hero
           value={String(summary.inForce)}
           delta={{ text: w.kpi.toOther(summary.interStateInForce) }}
-          asOf="14:42"
-          source={w.source}
+          asOfInHeader
         />
         {/* Part A stands 15 days without a vehicle number, then dies. */}
         <KpiTile
@@ -374,8 +375,7 @@ export function EwayBillConsole() {
                   tone: summary.partBTightestDaysLeft <= 3 ? 'attention' : 'neutral',
                 }
           }
-          asOf="14:42"
-          source={w.source}
+          asOfInHeader
         />
         {/* An extension can be filed 8 hours either side of expiry, and only
             while the vehicle is still on the road. */}
@@ -386,8 +386,7 @@ export function EwayBillConsole() {
             text: w.kpi.alreadyExpired(summary.expired),
             tone: summary.expired > 0 ? 'critical' : summary.expiring > 0 ? 'attention' : 'neutral',
           }}
-          asOf="14:42"
-          source={w.source}
+          asOfInHeader
         />
         <KpiTile
           eyebrow={w.kpi.blocked}
@@ -396,9 +395,7 @@ export function EwayBillConsole() {
             text: blocked.length === 0 ? w.kpi.allFiled : w.kpi.cannotGetBill(summary.blocked),
             tone: blocked.length > 0 ? 'critical' : 'neutral',
           }}
-          asOf="14:42"
-          source={w.returnsSource}
-          freshness="materialised"
+          asOfInHeader
         />
       </TileRow>
 
@@ -443,7 +440,7 @@ export function EwayBillConsole() {
                 marker: e.threshold,
                 ...(lane === e.key ? { tone: 'var(--chart-1)' } : {}),
               }))}
-              format={(v) => (wideLabels ? formatINR(v, { decimals: 0 }) : formatINRCompact(v))}
+              format={(v) => (wideLabels ? formatINR(v, { decimals: 0 }) : inr(v))}
               labelWidth={wideLabels ? 140 : 84}
               onSelect={(d) => {
                 const hit = lanes.find((e) => laneLabel(e.from, e.to, e.count) === d.label);
@@ -663,11 +660,6 @@ function ConsignmentDetail({
   const w = t.ewb;
   const s = w.sheet;
   const L = s.labels;
-  /* A wide field spans two columns, and on a phone the grid has only one: the
-     span then invents a second, auto-sized column and every field after it is
-     squeezed beside its neighbour (in Tamil, on top of it). One column, no
-     spans, below `sm`. */
-  const roomy = useMinWidth('sm');
   const { bill, clock, keyed } = row;
   const value = Number.parseFloat(bill.consignmentValue);
   const threshold = ewbThreshold(bill);
@@ -691,7 +683,7 @@ function ConsignmentDetail({
           </Detail>
           <Detail label={L.invoiceDate}>{formatDate(bill.documentDate)}</Detail>
           <Detail label={L.madeOn}>{bill.generatedAt === null ? w.notMade : formatDateTime(bill.generatedAt)}</Detail>
-          <Detail label={L.gstin} wide={roomy}>
+          <Detail label={L.gstin} wide>
             <IdCell>{bill.supplierGstin}</IdCell>
             {supplier ? <span style={{ color: 'var(--text-secondary)' }}> · {supplier.legalEntityName}</span> : null}
           </Detail>
@@ -700,7 +692,7 @@ function ConsignmentDetail({
 
       <SheetSection caption={s.load}>
         <DetailGrid>
-          <Detail label={L.customer} wide={roomy}>
+          <Detail label={L.customer} wide>
             {bill.customerName}
           </Detail>
           <Detail label={L.material}>
@@ -804,7 +796,7 @@ function ConsignmentDetail({
                 <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
                   {s.addedAs}
                 </span>
-                <Provisional confirmed={false}>
+                <Provisional confirmed={false} by="person">
                   <span className="font-id text-[13px]">{spacedReg(bill.partBVehicle ?? '')}</span>
                 </Provisional>
                 <Button onClick={onUndo}>{t.common.undo}</Button>
@@ -836,7 +828,7 @@ function ConsignmentDetail({
                 '–'
               )
             ) : keyed ? (
-              <Provisional confirmed={false}>
+              <Provisional confirmed={false} by="person">
                 <span className="font-id">{spacedReg(bill.partBVehicle)}</span>
               </Provisional>
             ) : (
@@ -859,7 +851,7 @@ function ConsignmentDetail({
             {clock.validityDays === null ? '–' : s.daysFor(clock.validityDays, bill.distanceKm)}
           </Detail>
           <Detail label={L.validTill}>{clock.validUntil === null ? '–' : formatDateTime(clock.validUntil)}</Detail>
-          <Detail label={L.timeLeft} wide={roomy}>
+          <Detail label={L.timeLeft} wide>
             {clock.msLeft === null ? (
               '–'
             ) : clock.msLeft <= 0 ? (
@@ -1303,7 +1295,7 @@ function makeColumns(t: ComplianceWords, standingWords: Record<EwbStanding, stri
         const reg = <span className="font-id">{spacedReg(bill.partBVehicle)}</span>;
         return (
           <Stacked
-            primary={keyed ? <Provisional confirmed={false}>{reg}</Provisional> : reg}
+            primary={keyed ? <Provisional confirmed={false} by="person">{reg}</Provisional> : reg}
             secondary={
               interCompany ? `${bill.transporterName ?? ''} · ${w.otherCompany}` : (bill.transporterName ?? undefined)
             }

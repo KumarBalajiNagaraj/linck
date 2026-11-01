@@ -21,7 +21,7 @@ export type { ModalProps } from './composites/Modal.js';
 /* Charts — hand-built SVG so they inherit the CSS token variables directly and
    a theme switch costs nothing. See charts/core.tsx for why this is not a
    charting library. */
-export { ChartFrame, ChartCaption, GridLines, ReferenceLine, AxisLabels, DirectLabel, linearScale, niceDomain, ticks } from './charts/core.js';
+export { ChartFrame, ChartCaption, GridLines, ReferenceLine, AxisLabels, DirectLabel, labelWidth, linearScale, niceDomain, ticks } from './charts/core.js';
 export type { PlotBox, Scale } from './charts/core.js';
 export { TrendChart, Sparkline, ProportionBar } from './charts/Trend.js';
 export type { TrendPoint, TrendChartProps } from './charts/Trend.js';

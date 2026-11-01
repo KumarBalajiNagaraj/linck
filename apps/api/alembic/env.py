@@ -5,6 +5,7 @@ from sqlalchemy import Connection, create_engine, pool, text
 
 # Importing for the side effect of registering every model on Base.metadata.
 # Without this, autogenerate cheerfully proposes dropping the whole schema.
+import app.models.ai  # noqa: F401
 import app.models.core  # noqa: F401
 import app.models.finance  # noqa: F401
 import app.models.fleet  # noqa: F401

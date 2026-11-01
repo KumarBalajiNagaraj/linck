@@ -125,7 +125,9 @@ export function YieldFlow({
                       style={{ fontVariantNumeric: 'tabular-nums' }}
                     >
                       {format(lane.value)} {unit} · {Math.round(pct * 10) / 10}%
-                      {drift !== undefined ? ` (${drift >= 0 ? '+' : ''}${Math.round(drift * 10) / 10} vs usual)` : ''}
+                      {drift !== undefined
+                        ? ` (${words.chart.vsUsual(`${drift >= 0 ? '+' : ''}${Math.round(drift * 10) / 10}`)})`
+                        : ''}
                     </text>
                   ) : null}
                 </g>

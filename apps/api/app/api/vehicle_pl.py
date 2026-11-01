@@ -33,7 +33,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +43,7 @@ from app.api.customers import gstin_is_valid
 from app.api.deps import CurrentSessionDep
 from app.api.problems import gone, invalid, needs_permission, refuse
 from app.core.settings import get_settings
-from app.core.storage import UploadRefused, clean_file_name, file_store, read_capped
+from app.core.storage import UploadRefused, clean_file_name, file_store, read_capped, stored_file_response
 from app.domain import vehicle_pl as pl
 from app.models.core import File, Site
 from app.models.finance import ExpenseBill
@@ -410,8 +410,9 @@ async def upload_attachment(current: CurrentSessionDep, file: UploadFile) -> Att
 
 
 @router.get("/attachments/{file_id}")
-async def download_attachment(file_id: uuid.UUID, current: CurrentSessionDep) -> FileResponse:
-    """The file, to whoever may read the trip it is on, or to whoever uploaded it before it was."""
+async def download_attachment(file_id: uuid.UUID, current: CurrentSessionDep) -> StreamingResponse:
+    """The file, streamed through here so the trip's read keys still decide: to whoever
+    may read the trip it is on, or to whoever uploaded it before it was."""
     db = current.db
     access = await access_for(current)
     file = await db.get(File, file_id)
@@ -428,16 +429,10 @@ async def download_attachment(file_id: uuid.UUID, current: CurrentSessionDep) ->
             raise gone("file-gone")
     elif not may_read(access, trip):
         raise needs_permission(READ)
-    path = file_store().path_for(current.organization_id, file.sha256)
-    if not path.is_file():
+    stored = await file_store().open(current.organization_id, file.sha256)
+    if stored is None:
         raise gone("file-missing")
-    return FileResponse(
-        path,
-        media_type=file.mime_type,
-        filename=file.original_name,
-        content_disposition_type="inline",
-        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"},
-    )
+    return stored_file_response(stored, media_type=file.mime_type, filename=file.original_name)
 
 
 # ----------------------------------------------------------------- reports

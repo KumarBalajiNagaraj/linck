@@ -23,7 +23,7 @@ Two things in that config are load-bearing and easy to delete by accident:
 
 Note `vercel.json` permits no comment keys — the schema rejects unknown properties — which is why this reasoning lives here.
 
-Only the frontend deploys. The API needs a Postgres with row-level security and is not a serverless target; the deployed site runs entirely on seeded mock data.
+The API is not a serverless target: it needs Postgres with row-level security. It deploys to DigitalOcean App Platform from `.do/app.yaml`, beside a managed PostgreSQL 16 cluster and a private Spaces bucket for files; [docs/DEPLOY.md](docs/DEPLOY.md) is the owner's step-by-step. Once it is live, `vercel.json` gains an `/api/*` rewrite to it, ahead of the catch-all, so the browser sees one origin.
 
 ## Running it
 
@@ -73,6 +73,7 @@ cd apps/api && .venv/bin/python -m pytest tests
 | `packages/mock` | A seeded Tamil Nadu quarry-and-fleet dataset shaped like the eventual API responses. Deleted at cutover. |
 | `apps/web` | Vite + React 19 + TypeScript. Screens for seven personas, all on mock data. |
 | `docs/DATABASE.md` | The Postgres design — twelve schemas, the invariants, and the Alembic/Drizzle arrangement. |
+| `docs/DEPLOY.md` | Putting the API on DigitalOcean — Spaces, managed PostgreSQL, App Platform and the Vercel `/api` rewrite — step by step. |
 | `docs/PERSONAS.md` | Who uses Linck, what is built for each of them, where it falls short of the brief, and what to build next. |
 | `docs/COMPLIANCE.md` | The Indian statutory surface — e-way bill, GST, e-invoicing, returns, withholding, mineral permits — with what is built against each and what is missing. |
 

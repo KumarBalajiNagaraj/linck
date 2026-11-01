@@ -39,8 +39,12 @@ export function PageHeader({
  * EMPTY STATE — no illustration, no mascot, no oversized icon, ever.
  *
  * A sentence stating the fact, an italic line giving the cause or consequence,
- * and exactly one text button. Filtered-empty and genuinely-empty are
- * different problems and never share copy.
+ * and exactly one button. Filtered-empty and genuinely-empty are different
+ * problems and never share copy.
+ *
+ * The action is a real `Button` — 44px on a touch screen — not a line of
+ * 13px link text: "Show all" is usually the only way off an empty list, and a
+ * thumb has to be able to hit it.
  */
 export function EmptyState({
   fact,
@@ -62,14 +66,9 @@ export function EmptyState({
         </p>
       ) : null}
       {action ? (
-        <button
-          type="button"
-          onClick={action.onClick}
-          className="mt-2 text-[13px] font-medium"
-          style={{ color: 'var(--brand)' }}
-        >
+        <Button className="mt-2" onClick={action.onClick}>
           {action.label}
-        </button>
+        </Button>
       ) : null}
     </div>
   );

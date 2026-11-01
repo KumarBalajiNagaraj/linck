@@ -1,6 +1,6 @@
 """Expense bills: the register, the scans, corrections, and the approval chain.
 
-    POST /expenses/attachments          multipart scan  ──▶ core.files + <dir>/<org>/<sha256>
+    POST /expenses/attachments          multipart scan  ──▶ core.files + the file store's <org>/<sha256>
     POST /expenses                      keyed, or from that scan and what was read off it
     PATCH /expenses/{id}                correct what capture read, while nobody has signed
     POST /expenses/{id}/actions         validate, approve, pass, pay, reject, send back, delete, restore
@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,7 @@ from app.api.access import Access, TenantCalendar, access_for, calendar_for
 from app.api.deps import CurrentSessionDep
 from app.api.problems import gone, invalid, needs_permission, refuse
 from app.core.settings import get_settings
-from app.core.storage import UploadRefused, clean_file_name, file_store, read_capped
+from app.core.storage import UploadRefused, clean_file_name, file_store, read_capped, stored_file_response
 from app.domain.expense_workflow import (
     ActionInput,
     PaymentRecord,
@@ -210,20 +210,17 @@ async def upload_attachment(
 
 
 @router.get("/{bill_id}/attachment")
-async def download_attachment(bill_id: uuid.UUID, current: CurrentSessionDep) -> FileResponse:
+async def download_attachment(bill_id: uuid.UUID, current: CurrentSessionDep) -> StreamingResponse:
+    """The scan, streamed through here so the bill's read permission still decides."""
     access = await access_for(current)
     bill = await _readable_bill(current.db, access, bill_id)
     if bill.attachment is None:
         raise gone("no-attachment")
-    path = file_store().path_for(current.organization_id, bill.attachment.sha256)
-    if not path.is_file():
+    stored = await file_store().open(current.organization_id, bill.attachment.sha256)
+    if stored is None:
         raise gone("file-missing")
-    return FileResponse(
-        path,
-        media_type=bill.attachment.mime_type,
-        filename=bill.attachment.original_name,
-        content_disposition_type="inline",
-        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"},
+    return stored_file_response(
+        stored, media_type=bill.attachment.mime_type, filename=bill.attachment.original_name
     )
 
 

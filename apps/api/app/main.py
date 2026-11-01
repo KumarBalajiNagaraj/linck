@@ -21,6 +21,7 @@ from starlette.responses import Response
 from app.api.breakdowns import router as breakdowns_router
 from app.api.customers import router as customers_router
 from app.api.expenses import router as expenses_router
+from app.api.insights import router as insights_router
 from app.api.me import router as me_router
 from app.api.purchase_orders import router as purchase_orders_router
 from app.api.vehicle_pl import router as vehicle_pl_router
@@ -28,8 +29,9 @@ from app.api.whatsapp import router as whatsapp_router
 from app.api.whatsapp import webhook_router as whatsapp_webhook_router
 from app.api.whatsapp_imports import router as whatsapp_imports_router
 from app.core.db import check_rls_posture, engine
+from app.core.security import session_secret_problems
 from app.core.settings import get_settings
-from app.core.storage import UploadSizeLimit
+from app.core.storage import UploadSizeLimit, file_store_problems
 
 log = logging.getLogger("linck.api")
 
@@ -59,6 +61,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.environment != "local":
             raise RuntimeError("refusing to start: app.api.auth is missing, so nobody can sign in")
         log.warning("app.api.auth not found — starting without sign-in routes (local only)")
+
+    # A forgeable session cookie, or uploads kept on a disk the next deploy
+    # wipes: both look fine until it is too late, so neither is allowed to boot.
+    unsafe = [*session_secret_problems(settings), *file_store_problems(settings)]
+    for problem in unsafe:
+        log.error("configuration: %s", problem)
+    if unsafe:
+        raise RuntimeError(f"refusing to start: {len(unsafe)} configuration problem(s), logged above")
 
     log.info("linck api ready (environment=%s)", settings.environment)
     yield
@@ -121,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(purchase_orders_router)
     app.include_router(breakdowns_router)
     app.include_router(expenses_router)
+    app.include_router(insights_router)
     app.include_router(vehicle_pl_router)
 
     return app

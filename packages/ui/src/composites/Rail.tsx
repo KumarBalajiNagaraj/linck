@@ -1,6 +1,7 @@
 import type { Provenance, RailPattern, StatusFamily } from '@linck/tokens';
-import { PROVENANCE_LABEL, STATUS } from '@linck/tokens';
+import { STATUS } from '@linck/tokens';
 import { cn } from '../lib/cn.js';
+import { useUiWords } from '../lib/words.js';
 
 /**
  * THE RAIL — signature move #3.
@@ -76,6 +77,7 @@ const PROVENANCE_PATTERN: Record<Provenance, RailPattern | null> = {
 };
 
 export function Rail({ status, provenance, fillRatio, selected, className }: RailProps) {
+  const words = useUiWords();
   const spec = status ? STATUS[status] : null;
 
   // A provenance-only rail must still render. Falling through to
@@ -89,9 +91,11 @@ export function Rail({ status, provenance, fillRatio, selected, className }: Rai
   // what makes a breakdown the loudest thing on a 27-inch screen.
   const width = selected ? 2 : pattern === 'solid-heavy' ? 5 : 3;
 
+  // Hover says where the figures came from, in the reader's language. The
+  // status family's `meaning` is a design note, not something to read here:
+  // the row's stamp already says the status in words.
   const title = [
-    spec ? spec.meaning : null,
-    provenance ? PROVENANCE_LABEL[provenance] : null,
+    provenance ? words.provenance[provenance] : null,
     fillRatio !== undefined ? `${Math.round(fillRatio * 100)}%` : null,
   ]
     .filter(Boolean)

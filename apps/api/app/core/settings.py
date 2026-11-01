@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,14 +40,51 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
     whatsapp_organization_id: str = ""
     whatsapp_graph_url: str = "https://graph.facebook.com/v21.0"
-    whatsapp_media_dir: str = "var/whatsapp-media"
     whatsapp_react_on_receipt: bool = True
 
-    # Uploaded files (bill scans). One directory per tenant under this root,
-    # one file per SHA-256 of its bytes; core.files holds what makes each one
-    # reachable. Ten megabytes covers a phone photo or a multi-page scan.
+    # Uploaded files: bill scans and the slip photos drivers send on WhatsApp.
+    # One object per tenant per SHA-256 of its bytes, `<org id>/<sha256>`;
+    # core.files and core.whatsapp_messages hold what makes each one reachable.
+    # Ten megabytes covers a phone photo or a multi-page scan.
+    #
+    # `local` keeps them under file_storage_dir, for development. `s3` keeps
+    # them in a private S3-compatible bucket: DigitalOcean Spaces in production,
+    # because App Platform's disk is wiped on every deploy. The API refuses to
+    # start with `local` anywhere but local development (app/core/storage.py).
+    file_store: Literal["local", "s3"] = "local"
     file_storage_dir: str = "var/files"
     file_max_bytes: int = 10 * 1024 * 1024
+    # Empty endpoint means AWS S3 itself; Spaces is https://<region>.digitaloceanspaces.com.
+    s3_endpoint_url: str = ""
+    s3_region: str = ""
+    s3_bucket: str = ""
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+
+    # Industry news (LIN-10). Headlines come from Google News RSS, which is
+    # free and needs no key: one search per query below (LINCK_NEWS_QUERIES,
+    # as a JSON list). The short summaries are written by any OpenAI-compatible
+    # chat-completions endpoint, chosen by three values: the base URL (the part
+    # before chat/completions), an API key and the model name. The default is
+    # Google Gemini's free tier; Google renames its free models now and then,
+    # so check its current list. The AI stays off, and nothing is sent to any
+    # model, until a key is set: the screen shows the top headlines alone and
+    # says so. Gemini first, then the alternatives, in .env.example.
+    ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    ai_api_key: SecretStr = SecretStr("")
+    ai_model: str = "gemini-2.5-flash"
+    # A hosted free model answers within a minute; a local model on a CPU may need several.
+    ai_timeout_seconds: int = 60
+    news_queries: list[str] = [
+        "Tamil Nadu construction",
+        "Chennai real estate",
+        "Tamil Nadu road OR highway project OR tender",
+        '"M-sand" price OR rules Tamil Nadu',
+        "cement price Tamil Nadu",
+        'Tamil Nadu quarry OR "sand mining" policy OR rules OR ban',
+        "northeast monsoon Tamil Nadu",
+        'Chennai metro OR airport OR "ring road" project',
+    ]
 
     session_secret: str = "dev-only-not-a-secret-change-me"
     session_cookie_name: str = "__Host-linck_session"

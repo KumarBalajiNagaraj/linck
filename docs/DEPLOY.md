@@ -160,16 +160,50 @@ with DigitalOcean's command-line tool, `doctl`.
 > The file has empty passwords, and they would replace the real ones. To change a
 > setting, use the control panel, as above.
 
-## 8. Lock the database door
+## 8. Register your company and yourself
+
+Nobody can sign in until they are registered: Linck matches a Google account to a
+person already in it, and never makes one up. Do this once, now, while your computer
+can still reach the database (step 3.7).
+
+1. In the repository on your computer:
+   ```sh
+   cd apps/api
+   export LINCK_MIGRATION_DATABASE_URL='<the URL after = on the second line from step 4.2>'
+   uv run python -m scripts.create_org \
+     --name "Your Company Name" --entity-type partnership \
+     --site-code PLT-1 --site-name "Main crusher plant" --site-type crusher_plant \
+     --admin-email you@gmail.com --admin-name "Your Name"
+   ```
+   - `--admin-email`: the Google account you will sign in with. You become the company's director and admin.
+   - `--entity-type`: `proprietorship`, `partnership`, `llp`, `private_limited`, `public_limited`, `huf` or `trust`.
+   - `--site-type`: `head_office`, `quarry`, `crusher_plant`, `stockyard`, `depot`, `workshop`,
+     `weighbridge_point` or `fuel_point`. `--state` is the site's GST state code; it is `33`
+     (Tamil Nadu) unless you say otherwise.
+2. It lists what it added and ends with the company id and the command to register
+   others. It is safe to run again: it only adds what is missing.
+3. Register each person who will sign in: their Google account, their role, and their
+   site code (leave the site out for someone who works across the whole company).
+   ```sh
+   uv run python -m scripts.create_org --org <the slug it printed> \
+     --add-user ravi@gmail.com fleet PLT-1 --name "Ravi K"
+   ```
+   Roles: `director`, `accounts`, `fleet`, `sales`, `stores`, `production`, `weighbridge`,
+   `driver`, `admin`. One Google account belongs to one company.
+4. Close the terminal, so the password is not left in it.
+
+## 9. Lock the database door
 
 1. **Databases** → **linck-db** → **Settings** → **Trusted sources** → **Edit**.
 2. Make sure **linck-api** (the app) is in the list. If it is not, type its name and add it.
-3. Remove your own IP address, unless you will run step 4 again soon. **Save**.
+3. Remove your own IP address, unless you will run step 4 or step 8 again soon. **Save**.
 
-## 9. Point Vercel at the API
+## 10. Point Vercel at the API
 
 1. In Vercel, open the Linck project → **Settings** → **Environment Variables**.
    Add `VITE_API_URL` with the value `/api`, for **Production**. **Save**.
+   This is what turns the demo into the real thing: with it, everyone signs in with
+   Google and sees what their roles allow; without it, the web app stays the demo.
 2. In the repository, edit `vercel.json`. In `"rewrites"`, add the API rule **first**,
    before the line that sends everything else to `index.html`:
    ```json
@@ -182,32 +216,30 @@ with DigitalOcean's command-line tool, `doctl`.
    The order matters: the second rule matches everything, so the API rule must come before it.
 3. Commit and push to `main`. Vercel deploys the web app with it.
 
-## 10. Check it works
+## 11. Check it works
 
 1. Open `https://<api host>/health`. It should say `{"status":"ok","environment":"production"}`.
 2. Open `https://<vercel domain>/api/health`. The same answer means Vercel passes requests on.
-3. Open `https://<vercel domain>/api/auth/google/login`. Google asks you to pick an
-   account, then sends you back to Linck.
+3. Open `https://<vercel domain>/`. Press **Sign in with Google** and pick the account
+   you registered in step 8. You land on your dashboard, with your name in the top bar.
 
-Signing in works only for people already registered in Linck, and there is no screen
-to register the first people yet. Until your organization and your own user are added
-to the database, step 3 ends with "This account is not registered for Linck". That
-message still proves Google sign-in is wired up. Ask your developer to add them.
+Signing in works only for people registered in step 8. Anyone else is sent back to
+the sign-in screen with "This account is not in Linck. Ask your admin to add you."
 
 The bucket is first used when a photo is saved through the API: a WhatsApp slip, or a
 bill once the expense screens save to the API (today they keep bills in the browser).
 If the Spaces key is wrong, that first save fails and the API's logs say why.
 
-## 11. WhatsApp slips (later)
+## 12. WhatsApp slips (later)
 
 When the WhatsApp Business number is ready, set these on the **api** component:
 `LINCK_WHATSAPP_VERIFY_TOKEN` 🔑 (any long random text), `LINCK_WHATSAPP_APP_SECRET` 🔑,
 `LINCK_WHATSAPP_ACCESS_TOKEN` 🔑, `LINCK_WHATSAPP_PHONE_NUMBER_ID`, and
-`LINCK_WHATSAPP_ORGANIZATION_ID` (your organization's id in Linck). In Meta's app
+`LINCK_WHATSAPP_ORGANIZATION_ID` (the company id step 8 printed). In Meta's app
 dashboard, set the webhook URL to `https://<vercel domain>/api/webhooks/whatsapp`,
 with the same verify token, and subscribe to **messages**.
 
-## 12. Industry news summaries (optional, free)
+## 13. Industry news summaries (optional, free)
 
 1. Open https://aistudio.google.com/apikey, sign in with a Google account, and create an API key.
 2. On the **api** component, set `LINCK_AI_API_KEY` 🔑 to that key and save. The app redeploys.
@@ -223,6 +255,9 @@ free tier is the default (`LINCK_AI_MODEL=gemini-2.5-flash`). To use another fre
 
 **Deploys.** Every push to `main` deploys the API. The **migrate** job runs first; if
 it fails, the deploy stops and the old version keeps running.
+
+**Register someone new.** Add your IP to the database's trusted sources (step 3.7),
+run step 8.3 for them, then remove your IP again. They can sign in straight away.
 
 **Roll back.** **App Platform** → **linck-api** → **Activity**. Find the last good
 deploy, open its **...** menu, choose **Rollback**. Then revert the bad commit on

@@ -45,7 +45,7 @@ holds one of the keys, any party is a vendor with no site, or any upload is a
 trip sheet's paper: silently dropping a grant or a party is not a schema change.
 
 Revision ID: 0030_vehicle_pl
-Revises: 0020_industry_news
+Revises: 0021_harden_access
 """
 
 from collections.abc import Sequence
@@ -54,7 +54,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0030_vehicle_pl"
-down_revision: str | None = "0020_industry_news"
+down_revision: str | None = "0021_harden_access"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

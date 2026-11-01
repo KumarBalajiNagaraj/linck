@@ -53,6 +53,28 @@ settings = get_settings()
 
 
 # ---------------------------------------------------------------------------
+# Who is stopped
+# ---------------------------------------------------------------------------
+# A person stood down by their admin, or everyone in a company that is stood
+# down, keeps a valid cookie until it expires. So both are checked on every
+# request (app/api/deps.py), on every renewal (rotate_session below) and at
+# every sign-in (app/api/auth.py), never only once.
+
+#: A person with one of these statuses can no longer use Linck.
+BLOCKED_USER_STATUSES = frozenset({"suspended", "disabled", "archived", "removed"})
+
+#: A company is switched on only while its status says exactly this. Anything
+#: else stops everyone in it, whatever their own status says. The column has
+#: no CHECK constraint, so an unknown value has to fail closed.
+ACTIVE_ORGANIZATION_STATUS = "active"
+
+
+def is_stopped(*, user_status: str | None, organization_status: str | None) -> bool:
+    """True when the person, or their whole company, has been stood down."""
+    return user_status in BLOCKED_USER_STATUSES or organization_status != ACTIVE_ORGANIZATION_STATUS
+
+
+# ---------------------------------------------------------------------------
 # Cookie names
 # ---------------------------------------------------------------------------
 # The __Host- prefix is a browser-enforced promise: the cookie must be Secure,
@@ -371,6 +393,10 @@ class RotationResult:
     detecting the replay — would be silently discarded. So the outcome is
     returned, the transaction commits, and the caller turns ``failure`` into a
     401 afterwards.
+
+    ``failure`` is one of ``unknown``, ``replay``, ``expired`` or ``stopped``
+    (the person or their company was stood down; nothing is revoked, so starting
+    the account again lets the same browser carry on).
     """
 
     credential: SessionCredential | None = None
@@ -397,8 +423,12 @@ async def rotate_session(
                        s.created_at < now() - cast(:days as int) * interval '1 day' as too_old,
                        exists (
                            select 1 from core.sessions c where c.replaces_session_id = s.id
-                       ) as superseded
+                       ) as superseded,
+                       u.status as user_status,
+                       o.status as organization_status
                 from core.sessions s
+                join core.users u on u.id = s.user_id
+                join core.organizations o on o.id = s.organization_id
                 where s.refresh_token_hash = :hash
                 limit 1
                 """
@@ -428,6 +458,13 @@ async def rotate_session(
     if row["too_old"]:
         await revoke_session_chain(db, row["id"], "refresh_window_elapsed")
         return RotationResult(failure="expired")
+
+    # After the replay check on purpose: a copied cookie still burns the chain
+    # even when the account is stopped. Before minting on purpose too: a stopped
+    # person or company gets no fresh credential, not merely one that every
+    # request then refuses.
+    if is_stopped(user_status=row["user_status"], organization_status=row["organization_status"]):
+        return RotationResult(failure="stopped")
 
     credential = await create_session(
         db,

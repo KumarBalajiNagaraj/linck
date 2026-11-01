@@ -10,7 +10,7 @@
  * anything else, and this file checks again before a link is ever shown.
  */
 
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
+import { apiFetch } from '../../auth/api.js';
 
 /** One line in each of the screen's languages. */
 export interface Both {
@@ -87,7 +87,7 @@ export function safeLink(link: string): string | null {
 async function call(path: string, init: RequestInit): Promise<IndustryNews> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, init);
+    res = await apiFetch(path, init);
   } catch {
     throw new NewsUnavailable({ kind: 'unreachable' });
   }

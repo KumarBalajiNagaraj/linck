@@ -12,6 +12,7 @@ import {
   type ReconciledClaim,
 } from '@linck/domain';
 import { DRIVERS, NOW, VEHICLES, WHATSAPP_DEMO, type ExpenseBill } from '@linck/mock';
+import { apiFetch } from '../../auth/api.js';
 import { openBillReader } from './ocr.js';
 import type { ChatArchive } from './whatsappArchive.js';
 
@@ -48,8 +49,6 @@ export type IntakeClaim = ReconciledClaim & { photo: File | null };
 
 const FLEET = VEHICLES.map((v) => ({ id: v.id, registrationNumber: v.registrationNumber }));
 const ROSTER = DRIVERS.map((d) => ({ id: d.id, name: d.name, phone: d.phone }));
-
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
 
 /* ---------------------------------------------------------------- sources */
 
@@ -104,7 +103,7 @@ interface InboxRow {
 export async function fetchInboxSource(): Promise<IntakeSource> {
   let rows: InboxRow[];
   try {
-    const res = await fetch(`${API_BASE}/whatsapp/inbox`, { credentials: 'include' });
+    const res = await apiFetch('/whatsapp/inbox');
     if (!res.ok) throw res.status === 401 ? new InboxUnavailable('sign-in') : new InboxUnavailable('status', res.status);
     rows = (await res.json()) as InboxRow[];
   } catch (err) {
@@ -117,7 +116,7 @@ export async function fetchInboxSource(): Promise<IntakeSource> {
   for (const [i, r] of rows.entries()) {
     const name = r.media_url ? `wa-${r.id}${r.media_mime === 'application/pdf' ? '.pdf' : '.jpg'}` : null;
     if (name && r.media_url) {
-      const blob = await fetch(`${API_BASE}${r.media_url}`, { credentials: 'include' }).then((x) => (x.ok ? x.blob() : null));
+      const blob = await apiFetch(r.media_url).then((x) => (x.ok ? x.blob() : null));
       if (blob) media.set(name, new File([blob], name, { type: r.media_mime ?? blob.type }));
     }
     inboxIds.set(i + 1, r.id);
@@ -137,9 +136,8 @@ export async function fetchInboxSource(): Promise<IntakeSource> {
 
 export async function markInboxImported(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  await fetch(`${API_BASE}/whatsapp/inbox/imported`, {
+  await apiFetch('/whatsapp/inbox/imported', {
     method: 'POST',
-    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
   });

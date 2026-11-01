@@ -178,19 +178,13 @@ async def test_no_money_or_quantity_is_stored_as_a_float() -> None:
     )
 
 
-# Core tables from before the audit gate existed that do not carry the trigger.
-# audit_logs is the log itself; sessions churn on every refresh and hold token
-# hashes. The rest are real gaps, listed so a NEW table can never join them
-# silently — shrink this set, never grow it.
+# The tables that carry no audit trigger, on purpose. audit_logs is the log
+# itself; sessions churn on every refresh and hold the hash each refresh token
+# is looked up by. Migration 0021 closed every other gap, so a NEW table can
+# never join these silently — shrink this set, never grow it.
 UNAUDITED = {
     "core.audit_logs",
     "core.sessions",
-    "core.user_identities",
-    "core.roles",
-    "core.role_permissions",
-    "core.invitations",
-    "core.gst_registrations",
-    "core.whatsapp_messages",
 }
 
 

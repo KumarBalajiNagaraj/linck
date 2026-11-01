@@ -4,19 +4,22 @@ import { can } from '@linck/domain';
 import { DENSITIES, type Density } from '@linck/tokens';
 import { ALERTS, documentExposure, expensesForSite, fleetCounts, INDENTS, EXTRACTION_JOBS, pendingVerification, SITES } from '@linck/mock';
 import { Button, StatusStamp, UiWordsProvider } from '@linck/ui';
+import { signOut } from '../auth/auth.js';
 import { PERSONAS } from '../auth/personas.js';
+import type { SessionRole } from '../auth/session.js';
 import { LanguageSwitch } from '../i18n/LanguageSwitch.js';
 import { useLang } from '../i18n/lang.js';
 import { uiWords } from '../i18n/uiWords.js';
 import { useWords } from '../i18n/words.js';
 import { CommandPalette } from './CommandPalette.js';
+import { Mark } from './Mark.js';
 import { MODULES, navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
 import { shellWords } from './words.js';
 import { useExpenses } from '../features/expenses/expenseStore.js';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { persona, siteScope, enabledModules, density, theme, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
+  const { persona, siteScope, enabledModules, density, theme, signedIn, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
     useApp();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const t = useWords(shellWords);
@@ -54,6 +57,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const badges = useBadges(siteScope);
   const criticalAlerts = ALERTS.filter((a) => a.status === 'critical').length;
+  // Live, the person and their roles are the server's; the demo's are a choice of seven.
+  const role = signedIn
+    ? rolesLine(signedIn.roles, t.roleNames) || signedIn.organizationName
+    : (t.roles[persona.key] ?? persona.roleLabel);
+  const scopeSites = signedIn ? signedIn.sites : SITES.filter((s) => persona.siteIds.includes(s.id));
 
   return (
     <UiWordsProvider value={ui}>
@@ -82,7 +90,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <ScopeSwitcher
           siteScope={siteScope}
           onChange={setSiteScope}
-          allowedSiteIds={persona.siteIds}
+          sites={scopeSites}
           canSeeAllSites={persona.defaultSiteId === null}
         />
 
@@ -177,10 +185,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <LanguageSwitch />
 
         {/* Two <select>s and a two-line name do not fit beside a scope chip on
-            a 390px screen. On a phone they move into a sheet behind one glyph. */}
+            a 390px screen. On a phone they move into a sheet behind one glyph.
+            Signed in for real, neither demo control exists: the server says who
+            this is and what the tenant has, and the bar says so, with the way out. */}
         <div className="hidden items-center gap-4 md:flex">
-          <TenantShapeSwitcher enabledModules={enabledModules} onChange={setEnabledModules} />
-          <PersonaSwitcher currentKey={persona.key} onChange={setPersona} name={persona.name} role={t.roles[persona.key] ?? persona.roleLabel} />
+          {signedIn ? (
+            <>
+              <span
+                className="hidden min-w-0 flex-col items-end leading-tight sm:flex"
+                title={`${signedIn.email} · ${signedIn.organizationName}`}
+              >
+                <span className="max-w-[220px] truncate text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                  {persona.name}
+                </span>
+                <span className="max-w-[220px] truncate text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                  {role}
+                </span>
+              </span>
+              <SignOutButton place="bar" />
+            </>
+          ) : (
+            <>
+              <TenantShapeSwitcher enabledModules={enabledModules} onChange={setEnabledModules} />
+              <PersonaSwitcher currentKey={persona.key} onChange={setPersona} name={persona.name} role={role} />
+            </>
+          )}
         </div>
 
         <button
@@ -215,33 +244,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="font-serif text-[18px]" style={{ color: 'var(--text-primary)' }}>
               {persona.name}
             </p>
-            <p className="mb-4 text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
-              {t.roles[persona.key] ?? persona.roleLabel}
+            <p className="text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
+              {role}
             </p>
+            {signedIn ? (
+              <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+                {signedIn.organizationName}
+              </p>
+            ) : null}
 
-            <div className="flex flex-col gap-3">
-              <label className="flex flex-col gap-1">
-                <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  {t.signedInAs}
-                </span>
-                <select
-                  value={persona.key}
-                  onChange={(e) => setPersona(e.target.value)}
-                  className="h-11 px-2 text-[14px]"
-                  style={{
-                    background: 'var(--surface)',
-                    color: 'var(--text-primary)',
-                    borderRadius: 'var(--r-1)',
-                    boxShadow: 'inset 0 0 0 1px var(--border-strong)',
-                  }}
-                >
-                  {PERSONAS.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {t.roles[p.key] ?? p.roleLabel}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="mt-4 flex flex-col gap-3">
+              {signedIn ? null : (
+                <label className="flex flex-col gap-1">
+                  <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                    {t.signedInAs}
+                  </span>
+                  <select
+                    value={persona.key}
+                    onChange={(e) => setPersona(e.target.value)}
+                    className="h-11 px-2 text-[14px]"
+                    style={{
+                      background: 'var(--surface)',
+                      color: 'var(--text-primary)',
+                      borderRadius: 'var(--r-1)',
+                      boxShadow: 'inset 0 0 0 1px var(--border-strong)',
+                    }}
+                  >
+                    {PERSONAS.map((p) => (
+                      <option key={p.key} value={p.key}>
+                        {t.roles[p.key] ?? p.roleLabel}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
 
               <label className="flex flex-col gap-1">
                 <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
@@ -286,6 +322,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   {theme === 'light' ? t.light : t.dark}
                 </span>
               </button>
+
+              {signedIn ? <SignOutButton place="sheet" /> : null}
             </div>
 
             <Button className="mt-5 w-full" onClick={() => setWhoOpen(false)}>
@@ -581,15 +619,15 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
 function ScopeSwitcher({
   siteScope,
   onChange,
-  allowedSiteIds,
+  sites,
   canSeeAllSites,
 }: {
   siteScope: string | null;
   onChange: (id: string | null) => void;
-  allowedSiteIds: string[];
+  /** The sites this person may act on: the session's, or the demo persona's. */
+  sites: readonly { id: string; code: string; name: string }[];
   canSeeAllSites: boolean;
 }) {
-  const sites = SITES.filter((s) => allowedSiteIds.includes(s.id));
   const current = siteScope ? sites.find((s) => s.id === siteScope) : null;
   const t = useWords(shellWords);
   // The plant code alone. A "SITE ·" prefix was 7 characters of a bar that
@@ -769,6 +807,91 @@ function PersonaSwitcher({
   );
 }
 
+/** Most of the desk first, member admin last: it is the role least about the day's work. */
+const ROLE_ORDER = [
+  'executive',
+  'accounts',
+  'fleet_manager',
+  'sales_coordinator',
+  'production_incharge',
+  'stores_incharge',
+  'weighbridge_operator',
+  'driver',
+  'org_admin',
+];
+
+/** Every role the person holds, in the reader's language where the shell has words for it. */
+function rolesLine(roles: readonly SessionRole[], names: Record<string, string>): string {
+  const rank = (key: string) => (ROLE_ORDER.includes(key) ? ROLE_ORDER.indexOf(key) : ROLE_ORDER.length);
+  return [...roles]
+    .sort((a, b) => rank(a.key) - rank(b.key))
+    .map((r) => names[r.key] ?? r.label)
+    .join(' · ');
+}
+
+/**
+ * Signing out ends the session at the API, then reloads at the sign-in screen
+ * (auth/auth.ts). If the API cannot be reached the person is still signed in,
+ * and is told so rather than left believing otherwise at a shared desk.
+ */
+function SignOutButton({ place }: { place: 'bar' | 'sheet' }) {
+  const t = useWords(shellWords);
+  const [state, setState] = useState<'idle' | 'working' | 'failed'>('idle');
+  const onClick = () => {
+    setState('working');
+    void signOut().then((done) => {
+      if (!done) setState('failed');
+    });
+  };
+  const failed = state === 'failed' ? (
+    <span role="alert" className={place === 'bar' ? 'sr-only' : 'text-[13px]'} style={{ color: 'var(--status-attention)' }}>
+      {t.signOutFailed}
+    </span>
+  ) : null;
+
+  if (place === 'bar') {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={state === 'working'}
+          title={state === 'failed' ? t.signOutFailed : undefined}
+          className="h-8 shrink-0 whitespace-nowrap px-2.5 text-[13px] disabled:opacity-60"
+          style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)', boxShadow: 'inset 0 0 0 1px var(--border-strong)' }}
+        >
+          {state === 'failed' ? (
+            <span aria-hidden="true" className="mr-1 text-[9px]" style={{ color: 'var(--status-attention)' }}>
+              ▲
+            </span>
+          ) : null}
+          {state === 'working' ? t.signingOut : t.signOut}
+        </button>
+        {failed}
+      </>
+    );
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={state === 'working'}
+        className="flex h-11 items-center px-2 text-[14px] disabled:opacity-60"
+        style={{
+          background: 'var(--surface)',
+          color: 'var(--text-primary)',
+          borderRadius: 'var(--r-1)',
+          boxShadow: 'inset 0 0 0 1px var(--border-strong)',
+        }}
+      >
+        {state === 'working' ? t.signingOut : t.signOut}
+      </button>
+      {failed}
+    </>
+  );
+}
+
 function AlertDrawer({ onClose }: { onClose: () => void }) {
   const t = useWords(shellWords);
   const lang = useLang((s) => s.lang);
@@ -802,14 +925,5 @@ function AlertDrawer({ onClose }: { onClose: () => void }) {
         ))}
       </ul>
     </aside>
-  );
-}
-
-function Mark() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="17" height="17" rx="2" fill="none" stroke="var(--brand)" strokeWidth="1.5" />
-      <path d="M6 14 V6 M6 14 H14" stroke="var(--brand)" strokeWidth="1.75" fill="none" />
-    </svg>
   );
 }

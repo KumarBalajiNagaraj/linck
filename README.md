@@ -53,6 +53,16 @@ cd apps/api && .venv/bin/uvicorn app.main:app --port 8000
 
 The seed prints the emails you can sign in as, across three tenants of deliberately different shapes. With no Google credentials configured, `POST /auth/dev-login {"email": "..."}` runs the same identity-resolution path without contacting Google; the route 404s in any non-local environment.
 
+**Web app on the API** — one setting turns the demo into the real thing:
+
+```bash
+VITE_API_URL=http://localhost:8000 pnpm dev
+```
+
+The app then asks `GET /me/session` before it shows anything, and without a session shows the sign-in screen: Google, and in a development build a *Developer sign-in* that uses dev-login with an email the seed printed. The persona and tenant-shape selectors are gone, because the session now says who you are and what the tenant has; the menu, the landing page and every `Forbidden` follow your real grants. The screens themselves are still on mock data. The API's `LINCK_WEB_APP_URL` must be the web app's origin, `http://localhost:5173` as in `.env.example`.
+
+A real company and its first admin come from `apps/api/scripts/create_org.py`, not the seed: see step 8 of [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ```bash
 pnpm typecheck && pnpm test && pnpm build
 ```
@@ -137,6 +147,6 @@ Both exist because `SECURITY DEFINER` escapes the caller's privileges but **not*
 
 ## Not built yet
 
-No screen is wired to the API yet — the web app still runs on mock data, and `apps/web/src/auth/session.ts` is written but deliberately unimported (a half-wired session that fails at boot would take down every screen). The cutover steps are in that file's header.
+Signing in is wired: with `VITE_API_URL` set, the shell boots from `GET /me/session` and the sign-in screen stands in front of it. The screens are not: every one still renders mock data, so moving them to the API one at a time is next. The cutover steps, and how far they have got, are in the header of `apps/web/src/auth/session.ts`.
 
 Beyond `core`, the eleven business schemas in `docs/DATABASE.md` are designed but not migrated. Phase 2 is the money: production costing, GST invoicing, receipts with the cross-verification rule, and the double-entry ledger.

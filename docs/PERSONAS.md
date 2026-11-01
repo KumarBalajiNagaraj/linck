@@ -304,7 +304,7 @@ This is the best-served domain model in the product:
 
 **The job.** Takes the tipper out, drives the load, fills diesel, gets marked present.
 
-**This persona is effectively not built.** He can key a diesel fill. That is all. His landing route is `/field`, which is in the home-resolver and *not in the route tree* — so a driver signing in and clicking the logo gets a bare "Not Found" inside a desk shell built for a 27-inch monitor.
+**This persona is effectively not built.** A driver can key a diesel fill. That is all. The driver's landing route is `/field`, which until LIN-21 was in the home-resolver and *not in the route tree*, so a driver signing in got a bare "Not Found". It now opens diesel entry, the one driver screen there is, until the field home exists.
 
 He also currently reads the whole site's fuel ledger — colleagues' names, amounts, flags — without holding the read permission, and the alert drawer shows him receivables alerts that route to screens he cannot open.
 
@@ -312,7 +312,7 @@ He also currently reads the whole site's fuel ledger — colleagues' names, amou
 
 | | Item | Effort |
 |---|---|---|
-| 1 | Make `/field` exist — at minimum stop the driver landing on a 404 | S |
+| 1 | ~~Make `/field` exist — at minimum stop the driver landing on a 404~~ — done: it opens diesel entry | S |
 | 2 | Scope "recent fills" to his own vehicle when he holds only create | S |
 | 3 | Filter the alert drawer by permission, the way the nav rail already is | S |
 | 4 | The real `/field` home on mock data: today's trips, the vehicle, the odometer, a shortcut into diesel entry | M |
@@ -337,7 +337,7 @@ Built and running against Postgres:
 - **Two independent gates** — module (did this tenant buy the vertical) and permission (may this person use it). A crusher-only tenant's admin cannot mis-assign Fleet Manager, because the role does not exist in their tenant.
 - **Tenant isolation enforced by Postgres**, with the app refusing to start if the posture is wrong.
 
-**What is missing is everything a human touches.** There is no member directory, no invitation screen, no role assignment UI, and no admin API — the entire surface is auth plus one session read. Adding a person to a tenant means editing the seed script and re-running it.
+**What is missing is everything a human touches.** There is no member directory, no invitation screen, no role assignment UI, and no admin API — the entire surface is auth plus one session read. Adding a person to a tenant means running `apps/api/scripts/create_org.py --add-user` against the database.
 
 And the delegation the owner actually asked for — "admins in *their* team" — is enforced nowhere. There is no team entity, and nothing stops a site-scoped admin granting any role at any site including org-wide.
 
@@ -359,7 +359,7 @@ And the delegation the owner actually asked for — "admins in *their* team" —
 
 ## The three things that block everything else
 
-**1. Wire the web app to the API.** Every roadmap item above is a mock until this happens. The cutover is four steps, already written in the header of `apps/web/src/auth/session.ts`: ship the endpoint, await it before mounting the router, feed the mapper into the store while deleting both demo switchers in the same commit, then migrate screens off mock data one at a time. Diesel entry is the right first screen — highest frequency, and named in Phase 1 as a paper-replacing surface.
+**1. Wire the web app to the API.** Every roadmap item above is a mock until this happens. The cutover is four steps, written in the header of `apps/web/src/auth/session.ts`: ship the endpoint, await it before mounting the router, feed the mapper into the store while deleting both demo switchers, then migrate screens off mock data one at a time. LIN-21 did the first three: with `VITE_API_URL` set, people sign in and the shell runs on the real session. The fourth is what remains. Diesel entry is the right first screen — highest frequency, and named in Phase 1 as a paper-replacing surface.
 
 **2. Migrate the finance slice.** The owner's hard rule — an invoice does not close until payment is cross-verified — is currently a UI convention that a page refresh erases. It becomes real as a database trigger. The same migration is what makes the P&L possible.
 
@@ -376,4 +376,4 @@ Worth fixing regardless of roadmap, because each one quietly misleads:
 - **Invoice close, e-way bill Part B and cancel are ungated** — they check no permission at all, so a persona with read access can close invoices, defeating the two-person rule on the screen built around it.
 - **DEF litres are collected and discarded** on save.
 - **"Raise an indent" has no handler**, on a button the command palette advertises as a startable action.
-- The **`/field` route does not exist**, though the home resolver sends drivers to it.
+- ~~The **`/field` route does not exist**, though the home resolver sends drivers to it.~~ It opens diesel entry now (LIN-21).

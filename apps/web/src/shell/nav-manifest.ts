@@ -76,6 +76,7 @@ export const WORKSPACES: Workspace[] = [
     items: [
       { key: 'exec', label: 'Dashboard', ta: 'டாஷ்போர்டு', route: '/overview', permission: 'executive.dashboard.read' },
       { key: 'expense-approvals', label: 'Approve bills', ta: 'பில் அனுமதி', route: '/overview/expenses', permission: 'finance.expense.approve', badge: 'awaiting_director' },
+      { key: 'industry-news', label: 'Industry news', ta: 'தொழில் செய்திகள்', route: '/overview/industry', permission: 'executive.dashboard.read' },
     ],
   },
   {

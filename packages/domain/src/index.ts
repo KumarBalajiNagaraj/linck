@@ -6,6 +6,8 @@ export * from './uom.js';
 export * from './date.js';
 export * from './calendar.js';
 export * from './sales-trends.js';
+export * from './sales-forecast.js';
+export * from './sales-heads-up.js';
 export * from './permissions.js';
 export * from './bill-capture.js';
 export * from './whatsapp.js';

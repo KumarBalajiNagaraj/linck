@@ -3,7 +3,7 @@ import { AsOfStamp, PageHeader } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { DestinationRow, UrgentActionsRow, type BoardDestination, type UrgentAction } from '../../shell/CommandBoard.js';
 import { useApp } from '../../shell/store.js';
-import { useExpenses } from '../expenses/expenseStore.js';
+import { useBills } from '../expenses/bills.js';
 import { boardWords, fleetWords } from './words.js';
 
 /**
@@ -28,8 +28,9 @@ export function FleetCommandBoard() {
   const { siteScope } = useApp();
   const counts = fleetAttention(siteScope);
   // Bills move in-session (uploaded, validated), so this one count reads the
-  // live expense store rather than the seeded dataset.
-  const bills = useExpenses((s) => s.bills);
+  // bills the expense screens read — the demo's store, or live the API —
+  // rather than the seeded dataset.
+  const { bills } = useBills();
   const expensesAwaiting = expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length;
 
   const destinations: BoardDestination[] = [

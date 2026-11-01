@@ -14,13 +14,18 @@ import { EXPENSE_BILLS, NOW, type ExpenseBill } from '@linck/mock';
 import type { Persona } from '../../auth/personas.js';
 
 /**
- * The expense bills, as one client-side store.
+ * The expense bills, as one client-side store: the DEMO's source.
  *
- * Every expense screen reads from here rather than from the mock array
- * directly, so a bill uploaded by the store manager, validated by the fleet
- * manager and approved by the director is the SAME row moving through all
- * three screens in one session. At cutover this becomes a TanStack Query cache
- * over `/expenses`, and these actions become its mutations.
+ * In the demo every expense screen reads from here rather than from the mock
+ * array directly, so a bill uploaded by the store manager, validated by the
+ * fleet manager and approved by the director is the SAME row moving through
+ * all three screens in one session. Live, the screens read the API instead,
+ * through a TanStack Query cache over `/expenses`, and these actions have
+ * their twins there as requests: bills.ts picks which, once, for the mode.
+ * The expense screens go through bills.ts, never straight to this store. A
+ * screen still wholly on sample data (the vehicle P&L, LIN-22) reads it
+ * directly: live, its diesel bills are the demo's like everything else on
+ * it, under the "Sample data" banner.
  *
  * Moves along the approval chain go only through `act` and `actMany`, which
  * apply the domain's rules: the right key at the bill's site, a reason where

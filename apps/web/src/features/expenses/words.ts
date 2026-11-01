@@ -1,5 +1,6 @@
-import type { BillAction, BillNotice, ImportOutcome, PaymentMode, PlanReason, WorkflowProblem } from '@linck/domain';
+import type { BillAction, BillNotice, ImportOutcome, PaymentMode, PlanReason } from '@linck/domain';
 import { words } from '../../i18n/words.js';
+import type { BillProblem } from './expenseApi.js';
 
 /**
  * Every word on the expense screens — the registers, adding a bill, the
@@ -19,6 +20,12 @@ const WHO_EN: Record<string, string> = {
   'finance.expense.approve': 'the director',
   'finance.expense.pass': 'accounts',
   'finance.expense.pay': 'accounts',
+  // Live, the API also refuses adding and reading a desk's bills by these keys.
+  'fleet.expense.upload': 'the fleet desk',
+  'fleet.expense.read': 'the fleet desk',
+  'stores.expense.upload': 'the store keeper',
+  'stores.expense.read': 'the stores desk',
+  'finance.expense.read': 'accounts or the director',
 };
 const WHO_TA: Record<string, string> = {
   'fleet.expense.validate': 'ஃப்ளீட் மேனேஜர்',
@@ -26,7 +33,66 @@ const WHO_TA: Record<string, string> = {
   'finance.expense.approve': 'இயக்குநர்',
   'finance.expense.pass': 'கணக்காளர்',
   'finance.expense.pay': 'கணக்காளர்',
+  'fleet.expense.upload': 'வண்டிப் பிரிவு',
+  'fleet.expense.read': 'வண்டிப் பிரிவு',
+  'stores.expense.upload': 'ஸ்டோர் கீப்பர்',
+  'stores.expense.read': 'ஸ்டோர்ஸ் பிரிவு',
+  'finance.expense.read': 'கணக்காளர் அல்லது இயக்குநர்',
 };
+
+/**
+ * A value the API would not store, said as the fix (docs/WRITING.md rule 3).
+ * `field` is the request's name for it; `reason` is the API's note, which is
+ * English for the log and is never shown — it only picks between two fixes.
+ */
+function invalidEn(field: string, reason: string): string {
+  switch (field) {
+    case 'amount':
+      return 'Type the total, like 12,500.00';
+    case 'litres':
+      return reason.includes('diesel bill needs') ? 'A diesel bill needs litres' : 'Type the litres, like 120.45';
+    case 'billDate':
+      return reason === 'after today' ? 'Date cannot be after today' : 'Pick the bill date';
+    case 'billNumber':
+      return 'Type the bill number';
+    case 'vendor':
+      return 'Type the shop';
+    case 'vehicleId':
+      return 'Type the vehicle number';
+    case 'siteId':
+      return 'Pick the site first';
+    case 'attachmentId':
+      return 'Add the photo again';
+    case 'kind':
+      return 'Pick the type of bill';
+    default:
+      return 'Check the details, then try again';
+  }
+}
+function invalidTa(field: string, reason: string): string {
+  switch (field) {
+    case 'amount':
+      return 'மொத்தம் டைப் செய்யுங்கள், உதா. 12,500.00';
+    case 'litres':
+      return reason.includes('diesel bill needs') ? 'டீசல் பில்லுக்கு லிட்டர் தேவை' : 'லிட்டர் டைப் செய்யுங்கள், உதா. 120.45';
+    case 'billDate':
+      return reason === 'after today' ? 'தேதி இன்றைக்குப் பிறகு இருக்கக்கூடாது' : 'பில் தேதியைத் தேர்ந்தெடுங்கள்';
+    case 'billNumber':
+      return 'பில் எண் டைப் செய்யுங்கள்';
+    case 'vendor':
+      return 'கடை பெயர் டைப் செய்யுங்கள்';
+    case 'vehicleId':
+      return 'வண்டி எண் டைப் செய்யுங்கள்';
+    case 'siteId':
+      return 'முதலில் சைட்டைத் தேர்ந்தெடுங்கள்';
+    case 'attachmentId':
+      return 'போட்டோவை மீண்டும் சேருங்கள்';
+    case 'kind':
+      return 'பில் வகையைத் தேர்ந்தெடுங்கள்';
+    default:
+      return 'விவரங்களைச் சரிபார்த்து, மீண்டும் முயலுங்கள்';
+  }
+}
 
 const ACTION_EN: Record<BillAction, string> = {
   validate: 'Check',
@@ -94,8 +160,11 @@ const en = {
   action: ACTION_EN,
   done: (action: BillAction, who: string) => `${DONE_EN[action]} by ${who}`,
 
-  /** Why a move cannot be made. `status` is the bill's status in words. */
-  problem: (p: WorkflowProblem | { code: 'bill-gone' }, status: (s: string) => string): string => {
+  /**
+   * Why a bill could not be moved, saved or read: a workflow rule, or — live —
+   * the API's refusal, or the API not answering. `status` is a status in words.
+   */
+  problem: (p: BillProblem, status: (s: string) => string): string => {
     switch (p.code) {
       case 'wrong-step':
         return `Not now — this bill is "${status(p.status)}".`;
@@ -121,6 +190,22 @@ const en = {
         return 'You signed it already — do it alone.';
       case 'bill-gone':
         return 'This bill is no longer here.';
+      case 'invalid':
+        return `${invalidEn(p.field, p.reason)}.`;
+      case 'too-big':
+        return 'File is over 10 MB. Take the photo again.';
+      case 'wrong-file':
+        return 'Use a JPG, PNG or PDF photo of the bill.';
+      case 'empty-file':
+        return 'The file is empty. Add the photo again.';
+      case 'signed-already':
+        return 'You signed this already. Someone else must do it.';
+      case 'signed-out':
+        return 'You were signed out. Sign in again.';
+      case 'offline':
+        return 'Linck did not answer. Check the internet, then try again.';
+      case 'server':
+        return p.status > 0 ? `Linck had a problem (error ${p.status}). Try again.` : 'Linck had a problem. Try again.';
     }
   },
 
@@ -351,6 +436,8 @@ const en = {
     readingSlip: (i: number, n: number) => `Reading slip ${i} of ${n}…`,
     couldNotRead: 'Could not read that file.',
     added: (n: number, amount: string) => `${n} ${n === 1 ? 'bill' : 'bills'} · ${amount} added. They wait to be checked in Expenses.`,
+    addedBefore: (n: number) => `${n} ${n === 1 ? 'was' : 'were'} added before.`,
+    savedTo: (site: string) => `Saved to ${site}.`,
     inbox: { signIn: 'Sign in to get WhatsApp bills.', status: (s: number) => `Server error (${s}).`, unreachable: 'Cannot reach Linck. Add the chat file instead.' },
     archive: { tooBig: 'This file is too big for a chat file.', noChat: 'No chat found. In WhatsApp use "Export chat" and pick the .zip.' },
     businessNumber: 'WhatsApp number',
@@ -377,6 +464,7 @@ const en = {
     addN: (n: number) => `Add ${n} ${n === 1 ? 'bill' : 'bills'}`,
     nothingYet: 'No slips yet.',
     nothingYetHow: 'Get them from WhatsApp, add a chat file, or try the demo.',
+    nothingYetHowLive: 'Get them from WhatsApp, or add a chat file.',
     confirmTitle: 'Add these diesel bills',
     confirmBody: (n: number, litres: number, amount: string) =>
       `${n} ${n === 1 ? 'bill' : 'bills'} · ${litres.toLocaleString('en-IN')} L · ${amount}. They go to the fleet desk to be checked.`,
@@ -468,6 +556,14 @@ const en = {
     nobodyTwice: 'Nobody signed a bill twice.',
     openPhoto: 'Open photo',
   },
+
+  /** Live only: the bills come from the API, and take a moment. */
+  live: {
+    loading: 'Getting the bills…',
+    failed: 'Could not get the bills.',
+    retry: 'Try again',
+    saving: 'Saving…',
+  },
 };
 
 const ta: typeof en = {
@@ -503,6 +599,22 @@ const ta: typeof en = {
         return 'ஏற்கனவே கையெழுத்திட்டீர்கள் — தனியாகச் செய்யுங்கள்.';
       case 'bill-gone':
         return 'இந்த பில் இப்போது இல்லை.';
+      case 'invalid':
+        return `${invalidTa(p.field, p.reason)}.`;
+      case 'too-big':
+        return 'ஃபைல் 10 MB-க்கு மேல். மீண்டும் போட்டோ எடுங்கள்.';
+      case 'wrong-file':
+        return 'பில்லின் JPG, PNG அல்லது PDF போட்டோவைச் சேருங்கள்.';
+      case 'empty-file':
+        return 'ஃபைல் காலியாக உள்ளது. போட்டோவை மீண்டும் சேருங்கள்.';
+      case 'signed-already':
+        return 'நீங்கள் ஏற்கனவே கையெழுத்திட்டீர்கள். வேறொருவர் செய்ய வேண்டும்.';
+      case 'signed-out':
+        return 'நீங்கள் வெளியேற்றப்பட்டீர்கள். மீண்டும் உள்நுழையுங்கள்.';
+      case 'offline':
+        return 'Linck பதில் தரவில்லை. இணையத்தைச் சரிபார்த்து, மீண்டும் முயலுங்கள்.';
+      case 'server':
+        return p.status > 0 ? `Linck-இல் பிழை (${p.status}). மீண்டும் முயலுங்கள்.` : 'Linck-இல் பிழை. மீண்டும் முயலுங்கள்.';
     }
   },
 
@@ -731,6 +843,8 @@ const ta: typeof en = {
     readingSlip: (i, n) => `சீட்டு ${i} / ${n} படிக்கிறது…`,
     couldNotRead: 'அந்த ஃபைலைப் படிக்க முடியவில்லை.',
     added: (n, amount) => `${n} பில்${n === 1 ? '' : 'கள்'} · ${amount} சேர்த்தது. செலவுகளில் சரிபார்க்கக் காத்திருக்கின்றன.`,
+    addedBefore: (n) => `${n} ஏற்கனவே சேர்க்கப்பட்டவை.`,
+    savedTo: (site) => `${site}-க்கு சேமிக்கப்படும்.`,
     inbox: {
       signIn: 'வாட்ஸ்அப் பில்கள் பெற உள்நுழையுங்கள்.',
       status: (s) => `சர்வர் பிழை (${s}).`,
@@ -761,6 +875,7 @@ const ta: typeof en = {
     addN: (n) => `${n} பில்${n === 1 ? '' : 'கள்'} சேர்`,
     nothingYet: 'இன்னும் சீட்டுகள் இல்லை.',
     nothingYetHow: 'வாட்ஸ்அப்பிலிருந்து எடுங்கள், சாட் ஃபைல் சேருங்கள், அல்லது டெமோ பாருங்கள்.',
+    nothingYetHowLive: 'வாட்ஸ்அப்பிலிருந்து எடுங்கள், அல்லது சாட் ஃபைல் சேருங்கள்.',
     confirmTitle: 'இந்த டீசல் பில்களைச் சேர்',
     confirmBody: (n, litres, amount) =>
       `${n} பில்${n === 1 ? '' : 'கள்'} · ${litres.toLocaleString('en-IN')} லி. · ${amount}. சரிபார்க்க வண்டிப் பிரிவுக்குச் செல்லும்.`,
@@ -851,6 +966,13 @@ const ta: typeof en = {
     signedTwiceTitle: 'ஒரே நபர் இரு முறை கையெழுத்து',
     nobodyTwice: 'யாரும் ஒரு பில்லில் இரு முறை கையெழுத்திடவில்லை.',
     openPhoto: 'போட்டோ திற',
+  },
+
+  live: {
+    loading: 'பில்களை எடுக்கிறது…',
+    failed: 'பில்களை எடுக்க முடியவில்லை.',
+    retry: 'மீண்டும் முயல்',
+    saving: 'சேமிக்கிறது…',
   },
 };
 

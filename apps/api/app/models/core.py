@@ -145,12 +145,15 @@ class LegalEntity(Base):
 class GstRegistration(Base):
     """One row per GSTIN. A legal entity registers separately in every state it
     has a place of business in, and the statutory invoice series is unique per
-    GSTIN per financial year — not per organization."""
+    GSTIN per financial year — not per organization (sales.invoice_series, LIN-27)."""
 
     __tablename__ = "gst_registrations"
     __table_args__ = (
         UniqueConstraint("organization_id", "gstin", name="uq_gst_registrations_organization_id_gstin"),
+        # What an invoice's composite tenant key points at (LIN-27).
+        UniqueConstraint("organization_id", "id", name="uq_gst_registrations_organization_id_id"),
         CheckConstraint("char_length(gstin) = 15", name="gstin_length"),
+        CheckConstraint("invoice_prefix ~ '^[A-Z0-9]{1,4}$'", name="invoice_prefix_shape"),
         {"schema": SCHEMA},
     )
 
@@ -169,6 +172,11 @@ class GstRegistration(Base):
     e_invoicing_applicable: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    # The first part of this GSTIN's invoice numbers, INV/26-27/0001 (LIN-27).
+    # Four characters at most, so a number stays within GST's 16 even past the
+    # 9,999th invoice of a year. Two GSTINs of one company may share it: a
+    # number is unique per GSTIN, and the seller's GSTIN is printed beside it.
+    invoice_prefix: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'INV'"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 

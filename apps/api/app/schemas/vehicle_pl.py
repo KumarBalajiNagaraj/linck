@@ -52,6 +52,10 @@ ItemCode = Annotated[
     str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r"^[A-Z0-9_-]{1,32}$")
 ]
 Note = Annotated[str, StringConstraints(max_length=1000)]
+#: A billing or delivery address as an invoice prints it (LIN-27).
+Address = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
+#: A GST state code: two digits, 33 for Tamil Nadu.
+StateCode = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[0-9]{2}$")]
 
 #: Lines per section, and trips per sheet: far beyond any real sheet, short of a runaway client.
 MAX_LINES = 50
@@ -245,17 +249,28 @@ class PartyIn(CamelIn):
     #: The site a new customer is served from. Not asked of a vendor.
     site_id: uuid.UUID | None = None
     locations: list[Name] = Field(default_factory=list, max_length=20)
+    #: The billing address an invoice prints (LIN-27).
+    address: Address = ""
 
 
 class PartyPatch(CamelIn):
-    """A GSTIN or phone typed on a trip line, saved into the master."""
+    """A GSTIN or phone typed on a trip line, saved into the master; or the billing address (LIN-27)."""
 
     gstin: Gstin | None = None
     phone: Phone | None = None
+    address: Address | None = None
 
 
 class LocationIn(CamelIn):
     name: Name
+    #: Where it is (LIN-27): the state is the place of supply of an invoice for goods delivered there.
+    address: Address = ""
+    state_code: StateCode | None = None
+
+
+class LocationPatch(CamelIn):
+    address: Address | None = None
+    state_code: StateCode | None = None
 
 
 class MaterialIn(CamelIn):
@@ -353,6 +368,14 @@ class PurchaseOut(CamelModel):
     attachments: list[TripAttachmentOut]
 
 
+class SaleInvoiceOut(CamelModel):
+    """The draft or issued invoice (LIN-27) a sale line is on: while it is, the line stays as billed."""
+
+    id: uuid.UUID
+    number: str | None
+    status: str
+
+
 class SaleOut(CamelModel):
     id: uuid.UUID
     customer_id: uuid.UUID
@@ -379,6 +402,7 @@ class SaleOut(CamelModel):
     invoice_number: str
     po_attachment: TripAttachmentOut | None
     dc_attachment: TripAttachmentOut | None
+    invoice: SaleInvoiceOut | None = None
 
 
 class PaymentOut(CamelModel):
@@ -611,6 +635,9 @@ class OutstandingReportOut(CamelModel):
 class LocationOut(CamelModel):
     id: uuid.UUID
     name: str
+    address: str = ""
+    #: The GST state code, when someone has said; an invoice's place of supply (LIN-27).
+    state_code: str | None = None
 
 
 class PartyOut(CamelModel):
@@ -621,6 +648,8 @@ class PartyOut(CamelModel):
     contact_name: str
     roles: list[str]
     locations: list[LocationOut]
+    #: The billing address an invoice prints (LIN-27).
+    address: str = ""
 
 
 class MaterialOut(CamelModel):

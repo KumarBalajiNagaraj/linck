@@ -75,6 +75,7 @@ class Party(Base):
             "NOT ('customer' = ANY (party_roles)) OR served_from_site_id IS NOT NULL",
             name="customer_has_site",
         ),
+        CheckConstraint("char_length(address) <= 300", name="address_length"),
         {"schema": SCHEMA},
     )
 
@@ -95,6 +96,8 @@ class Party(Base):
     # filter: the customer master is read org-wide. Null for a vendor that is
     # not also a customer.
     served_from_site_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # The billing address an invoice prints under the buyer's name (LIN-27), as written.
+    address: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     credit_limit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default=text("0"))
     # Warn by default (docs/DATABASE.md): a hard block at order time ends with
     # every limit set to 999999999 within a fortnight.
@@ -109,6 +112,8 @@ class Party(Base):
 #: (unit, tonne, cft, load...), typed once into the material master.
 HSN_SHAPE = "^[0-9]{4,8}$"
 UNIT_SHAPE = "char_length(unit) BETWEEN 1 AND 20"
+#: A GST state code: two digits, 33 for Tamil Nadu.
+STATE_CODE_SHAPE = "^[0-9]{2}$"
 
 
 class Item(Base):
@@ -150,7 +155,10 @@ class PartyLocation(Base):
     """Where a vendor sells from (a quarry, a crusher yard) or a customer takes delivery (LIN-22).
 
     The workbook's purchase and delivery locations: picked from here on a
-    trip line, or typed there and added here. A name, not an address.
+    trip line, or typed there and added here, by name. A customer's delivery
+    location may also carry its address and its state (LIN-27): the state is
+    the place of supply of an invoice for goods delivered there, and so
+    decides between CGST + SGST and IGST.
     """
 
     __tablename__ = "party_locations"
@@ -159,6 +167,8 @@ class PartyLocation(Base):
         UniqueConstraint("organization_id", "party_id", "name"),
         tenant_fk("party_id", "master.parties"),
         CheckConstraint("char_length(name) BETWEEN 1 AND 120", name="name_length"),
+        CheckConstraint("char_length(address) <= 300", name="address_length"),
+        CheckConstraint(f"state_code IS NULL OR state_code ~ '{STATE_CODE_SHAPE}'", name="state_code_shape"),
         {"schema": SCHEMA},
     )
 
@@ -166,6 +176,9 @@ class PartyLocation(Base):
     organization_id: Mapped[uuid.UUID] = org_fk()
     party_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    address: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    #: The two-digit GST state code; null until someone says.
+    state_code: Mapped[str | None] = mapped_column(String(2))
     created_at: Mapped[datetime] = created_at()
 
 

@@ -1,0 +1,1084 @@
+{
+  "about": "Golden figures for the vehicle P&L rules (LIN-22), worked by hand. Read by packages/domain/src/vehicle-pl.test.ts and apps/api/tests/test_vehicle_pl_domain.py, so the TypeScript and the Python rules cannot drift apart. Money is a two-place decimal string; litres, km and percentages are JSON numbers, as the API sends them. When the LIN-22 workbook can be read, its own rows belong here.",
+  "trips": [
+    {
+      "id": "t1",
+      "vehicleId": "veh-001",
+      "date": "2026-08-04",
+      "startKm": 218400,
+      "endKm": 218486,
+      "diesel": [{ "id": "t1-d1", "source": "typed", "litres": 28.5, "rate": "94.37", "billNumber": "HP-1102" }],
+      "purchases": [{ "id": "t1-p1", "vendorId": "ven-qry", "quantity": 7, "rate": "2850.00", "gstBilled": true, "gstRatePct": 5 }],
+      "sales": [
+        {
+          "id": "t1-s1",
+          "customerId": "cus-01",
+          "quantity": 7,
+          "rate": "4200.00",
+          "gstBilled": true,
+          "gstRatePct": 5,
+          "transport": "1500.00",
+          "transportGstRatePct": 18
+        }
+      ],
+      "costs": [
+        { "id": "t1-c1", "kind": "batta", "amount": "600.00" },
+        { "id": "t1-c2", "kind": "en_route", "amount": "350.00" },
+        { "id": "t1-c3", "kind": "other", "amount": "150.00" }
+      ],
+      "payments": [
+        { "id": "t1-m1", "direction": "in", "partyId": "cus-01", "amount": "20000.00" },
+        { "id": "t1-m2", "direction": "out", "partyId": "ven-qry", "amount": "10000.00" }
+      ]
+    },
+    {
+      "id": "t2",
+      "vehicleId": "veh-002",
+      "date": "2026-08-05",
+      "startKm": 120000,
+      "endKm": 120140,
+      "diesel": [{ "id": "t2-d1", "source": "typed", "litres": 41.2, "rate": "93.80", "billNumber": "IOC 5512" }],
+      "purchases": [
+        { "id": "t2-p1", "vendorId": "ven-loc", "quantity": 18.5, "rate": "640.00", "gstBilled": false, "gstRatePct": 5 },
+        { "id": "t2-p2", "vendorId": "ven-crs", "quantity": 2.25, "rate": "1033.33", "gstBilled": true, "gstRatePct": 5 }
+      ],
+      "sales": [
+        {
+          "id": "t2-s1",
+          "customerId": "cus-02",
+          "quantity": 20.75,
+          "rate": "1200.00",
+          "gstBilled": true,
+          "gstRatePct": 5,
+          "transport": null,
+          "transportGstRatePct": null
+        }
+      ],
+      "costs": [{ "id": "t2-c1", "kind": "batta", "amount": "800.00" }],
+      "payments": [
+        { "id": "t2-m1", "direction": "in", "partyId": "cus-02", "amount": "26145.00" },
+        { "id": "t2-m2", "direction": "out", "partyId": "ven-loc", "amount": "11840.00" }
+      ]
+    },
+    {
+      "id": "t3a",
+      "vehicleId": "veh-003",
+      "date": "2026-08-06",
+      "startKm": 300000,
+      "endKm": 300040,
+      "diesel": [{ "id": "t3a-d1", "source": "expense_bill", "expenseBillId": "bill-881", "litres": 30, "amount": "2833.21", "billNumber": "HP-881" }],
+      "purchases": [{ "id": "t3a-p1", "vendorId": "ven-qry", "quantity": 6, "rate": "2850.00", "gstBilled": true, "gstRatePct": 5 }],
+      "sales": [{ "id": "t3a-s1", "customerId": "cus-03", "quantity": 6, "rate": "3900.00", "gstBilled": true, "gstRatePct": 5 }],
+      "costs": [{ "id": "t3a-c1", "kind": "batta", "amount": "500.00" }],
+      "payments": []
+    },
+    {
+      "id": "t3b",
+      "vehicleId": "veh-003",
+      "date": "2026-08-06",
+      "startKm": 300040,
+      "endKm": 300075,
+      "diesel": [
+        { "id": "t3b-d1", "source": "expense_bill", "expenseBillId": "bill-881", "litres": 30, "amount": "2833.21", "billNumber": "HP-881" },
+        { "id": "t3b-d2", "source": "fuel_entry", "fuelEntryId": "fuel-017", "litres": 10.5, "amount": "999.99", "billNumber": "BK/4471" }
+      ],
+      "purchases": [],
+      "sales": [{ "id": "t3b-s1", "customerId": "cus-03", "quantity": 5, "rate": "3900.00", "gstBilled": true, "gstRatePct": 5 }],
+      "costs": [],
+      "payments": []
+    },
+    {
+      "id": "t3c",
+      "vehicleId": "veh-003",
+      "date": "2026-08-06",
+      "startKm": 300075,
+      "endKm": 300100,
+      "diesel": [
+        { "id": "t3c-d1", "source": "fuel_entry", "fuelEntryId": "fuel-017", "litres": 10.5, "amount": "999.99", "billNumber": "BK/4471" },
+        { "id": "t3c-d2", "source": "expense_bill", "expenseBillId": "bill-881", "litres": 30, "amount": "2833.21", "billNumber": "HP-881" }
+      ],
+      "purchases": [],
+      "sales": [{ "id": "t3c-s1", "customerId": "cus-04", "quantity": 4, "rate": "4100.00", "gstBilled": true, "gstRatePct": 5 }],
+      "costs": [],
+      "payments": [{ "id": "t3c-m1", "direction": "in", "partyId": "cus-04", "amount": "17220.00" }]
+    },
+    {
+      "id": "t4",
+      "vehicleId": "veh-004",
+      "date": "2026-08-07",
+      "startKm": 410200,
+      "endKm": null,
+      "diesel": [{ "id": "t4-d1", "source": "typed", "litres": 20, "rate": "94.00", "billNumber": "" }],
+      "purchases": [],
+      "sales": [],
+      "costs": [{ "id": "t4-c1", "kind": "batta", "amount": "400.00" }],
+      "payments": []
+    },
+    {
+      "id": "t5",
+      "vehicleId": "veh-005",
+      "date": "2026-07-15",
+      "startKm": 50000,
+      "endKm": 50120.5,
+      "diesel": [{ "id": "t5-d1", "source": "typed", "litres": 10.005, "rate": "94.37", "billNumber": "HP 7781" }],
+      "purchases": [{ "id": "t5-p1", "vendorId": "ven-crs", "quantity": 2.469, "rate": "500.00", "gstBilled": true, "gstRatePct": 5 }],
+      "sales": [
+        {
+          "id": "t5-s1",
+          "customerId": "cus-05",
+          "quantity": 7.125,
+          "rate": "1033.33",
+          "gstBilled": true,
+          "gstRatePct": 5,
+          "transport": "333.33",
+          "transportGstRatePct": 18
+        }
+      ],
+      "costs": [{ "id": "t5-c1", "kind": "en_route", "amount": "123.45" }],
+      "payments": [
+        { "id": "t5-m1", "direction": "in", "partyId": "cus-05", "amount": "5000.00" },
+        { "id": "t5-m2", "direction": "out", "partyId": "ven-crs", "amount": "1296.23" }
+      ]
+    },
+    {
+      "id": "t6",
+      "vehicleId": "veh-001",
+      "date": "2026-06-20",
+      "startKm": 218000,
+      "endKm": 218090,
+      "diesel": [{ "id": "t6-d1", "source": "typed", "litres": 7.5, "rate": "92.00", "billNumber": null }],
+      "purchases": [{ "id": "t6-p1", "vendorId": "ven-qry", "quantity": 4, "rate": "2600.00", "gstBilled": true, "gstRatePct": 5 }],
+      "sales": [
+        {
+          "id": "t6-s1",
+          "customerId": "cus-01",
+          "quantity": 4,
+          "rate": "2500.00",
+          "gstBilled": false,
+          "gstRatePct": 5,
+          "transport": null,
+          "transportGstRatePct": null
+        }
+      ],
+      "costs": [{ "id": "t6-c1", "kind": "batta", "amount": "144.50" }],
+      "payments": [{ "id": "t6-m1", "direction": "in", "partyId": "cus-01", "amount": "12000.00" }]
+    },
+    {
+      "id": "t7a",
+      "tripNumber": "TRP/26-27/0009",
+      "vehicleId": "veh-002",
+      "date": "2026-08-08",
+      "startKm": null,
+      "endKm": null,
+      "diesel": [
+        { "id": "t7a-d1", "source": "fuel_entry", "fuelEntryId": "fuel-031", "litres": 1.001, "amount": "100.01", "billNumber": "BK/9001" },
+        { "id": "t7a-d2", "source": "expense_bill", "expenseBillId": "bill-990", "litres": 50, "amount": "4700.00", "billNumber": "HP-990", "void": true }
+      ],
+      "purchases": [],
+      "sales": [],
+      "costs": [],
+      "payments": []
+    },
+    {
+      "id": "t7b",
+      "tripNumber": "TRP/26-27/0010",
+      "vehicleId": "veh-002",
+      "date": "2026-08-08",
+      "startKm": null,
+      "endKm": null,
+      "diesel": [{ "id": "t7b-d1", "source": "fuel_entry", "fuelEntryId": "fuel-031", "litres": 1.001, "amount": "100.01", "billNumber": "BK/9001" }],
+      "purchases": [],
+      "sales": [],
+      "costs": [],
+      "payments": []
+    },
+    {
+      "id": "t8a",
+      "tripNumber": "TRP/26-27/0021",
+      "vehicleId": "veh-006",
+      "date": "2026-08-01",
+      "startKm": 1000,
+      "endKm": 1030,
+      "diesel": [{ "id": "t8a-d1", "source": "fuel_entry", "fuelEntryId": "fuel-040", "litres": 20.001, "amount": "1900.01", "billNumber": "" }],
+      "purchases": [],
+      "sales": [],
+      "costs": [],
+      "payments": []
+    },
+    {
+      "id": "t8b",
+      "tripNumber": "TRP/26-27/0020",
+      "vehicleId": "veh-006",
+      "date": "2026-08-01",
+      "startKm": 1030,
+      "endKm": 1060,
+      "diesel": [{ "id": "t8b-d1", "source": "fuel_entry", "fuelEntryId": "fuel-040", "litres": 20.001, "amount": "1900.01", "billNumber": "" }],
+      "purchases": [],
+      "sales": [],
+      "costs": [],
+      "payments": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "a GST purchase and a GST sale with transport, both partly paid",
+      "trips": ["t1"],
+      "expect": {
+        "t1": {
+          "purchases": { "t1-p1": { "amount": "19950.00", "gstAmount": "997.50", "total": "20947.50", "cost": "19950.00", "inputCredit": "997.50" } },
+          "sales": {
+            "t1-s1": {
+              "amount": "29400.00",
+              "gstAmount": "1470.00",
+              "transport": "1500.00",
+              "transportGst": "270.00",
+              "taxable": "30900.00",
+              "gstTotal": "1740.00",
+              "total": "32640.00"
+            }
+          },
+          "diesel": { "t1-d1": { "amount": "2689.55", "shareLitres": 28.5, "shareAmount": "2689.55", "sharedBy": 1 } },
+          "pl": {
+            "distanceKm": 86,
+            "dieselLitres": 28.5,
+            "mileageKmpl": 3.02,
+            "sales": "30900.00",
+            "materialCost": "19950.00",
+            "gross": "10950.00",
+            "diesel": "2689.55",
+            "batta": "600.00",
+            "enRoute": "350.00",
+            "other": "150.00",
+            "net": "7160.45",
+            "profitPct": 23.17,
+            "outputGst": "1740.00",
+            "inputGst": "997.50",
+            "gstToPay": "742.50",
+            "customerBilled": "32640.00",
+            "received": "20000.00",
+            "customerDue": "12640.00",
+            "vendorBilled": "20947.50",
+            "paid": "10000.00",
+            "vendorDue": "10947.50"
+          },
+          "dues": [
+            { "partyId": "cus-01", "role": "customer", "billed": "32640.00", "settled": "20000.00", "due": "12640.00" },
+            { "partyId": "ven-qry", "role": "vendor", "billed": "20947.50", "settled": "10000.00", "due": "10947.50" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a non-GST purchase counts in full; a GST one counts without its GST",
+      "trips": ["t2"],
+      "expect": {
+        "t2": {
+          "purchases": {
+            "t2-p1": { "amount": "11840.00", "gstAmount": "0.00", "total": "11840.00", "cost": "11840.00", "inputCredit": "0.00" },
+            "t2-p2": { "amount": "2324.99", "gstAmount": "116.25", "total": "2441.24", "cost": "2324.99", "inputCredit": "116.25" }
+          },
+          "sales": {
+            "t2-s1": {
+              "amount": "24900.00",
+              "gstAmount": "1245.00",
+              "transport": "0.00",
+              "transportGst": "0.00",
+              "taxable": "24900.00",
+              "gstTotal": "1245.00",
+              "total": "26145.00"
+            }
+          },
+          "diesel": { "t2-d1": { "amount": "3864.56", "shareLitres": 41.2, "shareAmount": "3864.56", "sharedBy": 1 } },
+          "pl": {
+            "distanceKm": 140,
+            "dieselLitres": 41.2,
+            "mileageKmpl": 3.4,
+            "sales": "24900.00",
+            "materialCost": "14164.99",
+            "gross": "10735.01",
+            "diesel": "3864.56",
+            "batta": "800.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "6070.45",
+            "profitPct": 24.38,
+            "outputGst": "1245.00",
+            "inputGst": "116.25",
+            "gstToPay": "1128.75",
+            "customerBilled": "26145.00",
+            "received": "26145.00",
+            "customerDue": "0.00",
+            "vendorBilled": "14281.24",
+            "paid": "11840.00",
+            "vendorDue": "2441.24"
+          },
+          "dues": [
+            { "partyId": "cus-02", "role": "customer", "billed": "26145.00", "settled": "26145.00", "due": "0.00" },
+            { "partyId": "ven-loc", "role": "vendor", "billed": "11840.00", "settled": "11840.00", "due": "0.00" },
+            { "partyId": "ven-crs", "role": "vendor", "billed": "2441.24", "settled": "0.00", "due": "2441.24" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "one bill and one fuel entry split by km across a vehicle's day, adding up to the paisa",
+      "trips": ["t3a", "t3b", "t3c"],
+      "expect": {
+        "t3a": {
+          "purchases": { "t3a-p1": { "amount": "17100.00", "gstAmount": "855.00", "total": "17955.00", "cost": "17100.00", "inputCredit": "855.00" } },
+          "sales": {
+            "t3a-s1": {
+              "amount": "23400.00",
+              "gstAmount": "1170.00",
+              "transport": "0.00",
+              "transportGst": "0.00",
+              "taxable": "23400.00",
+              "gstTotal": "1170.00",
+              "total": "24570.00"
+            }
+          },
+          "diesel": { "t3a-d1": { "amount": "2833.21", "shareLitres": 12, "shareAmount": "1133.29", "sharedBy": 3 } },
+          "pl": {
+            "distanceKm": 40,
+            "dieselLitres": 12,
+            "mileageKmpl": 3.33,
+            "sales": "23400.00",
+            "materialCost": "17100.00",
+            "gross": "6300.00",
+            "diesel": "1133.29",
+            "batta": "500.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "4666.71",
+            "profitPct": 19.94,
+            "outputGst": "1170.00",
+            "inputGst": "855.00",
+            "gstToPay": "315.00",
+            "customerBilled": "24570.00",
+            "received": "0.00",
+            "customerDue": "24570.00",
+            "vendorBilled": "17955.00",
+            "paid": "0.00",
+            "vendorDue": "17955.00"
+          },
+          "dues": [
+            { "partyId": "cus-03", "role": "customer", "billed": "24570.00", "settled": "0.00", "due": "24570.00" },
+            { "partyId": "ven-qry", "role": "vendor", "billed": "17955.00", "settled": "0.00", "due": "17955.00" }
+          ]
+        },
+        "t3b": {
+          "purchases": {},
+          "sales": {
+            "t3b-s1": {
+              "amount": "19500.00",
+              "gstAmount": "975.00",
+              "transport": "0.00",
+              "transportGst": "0.00",
+              "taxable": "19500.00",
+              "gstTotal": "975.00",
+              "total": "20475.00"
+            }
+          },
+          "diesel": {
+            "t3b-d1": { "amount": "2833.21", "shareLitres": 10.5, "shareAmount": "991.62", "sharedBy": 3 },
+            "t3b-d2": { "amount": "999.99", "shareLitres": 6.125, "shareAmount": "583.33", "sharedBy": 2 }
+          },
+          "pl": {
+            "distanceKm": 35,
+            "dieselLitres": 16.625,
+            "mileageKmpl": 2.11,
+            "sales": "19500.00",
+            "materialCost": "0.00",
+            "gross": "19500.00",
+            "diesel": "1574.95",
+            "batta": "0.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "17925.05",
+            "profitPct": 91.92,
+            "outputGst": "975.00",
+            "inputGst": "0.00",
+            "gstToPay": "975.00",
+            "customerBilled": "20475.00",
+            "received": "0.00",
+            "customerDue": "20475.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": [{ "partyId": "cus-03", "role": "customer", "billed": "20475.00", "settled": "0.00", "due": "20475.00" }]
+        },
+        "t3c": {
+          "purchases": {},
+          "sales": {
+            "t3c-s1": {
+              "amount": "16400.00",
+              "gstAmount": "820.00",
+              "transport": "0.00",
+              "transportGst": "0.00",
+              "taxable": "16400.00",
+              "gstTotal": "820.00",
+              "total": "17220.00"
+            }
+          },
+          "diesel": {
+            "t3c-d1": { "amount": "999.99", "shareLitres": 4.375, "shareAmount": "416.66", "sharedBy": 2 },
+            "t3c-d2": { "amount": "2833.21", "shareLitres": 7.5, "shareAmount": "708.30", "sharedBy": 3 }
+          },
+          "pl": {
+            "distanceKm": 25,
+            "dieselLitres": 11.875,
+            "mileageKmpl": 2.11,
+            "sales": "16400.00",
+            "materialCost": "0.00",
+            "gross": "16400.00",
+            "diesel": "1124.96",
+            "batta": "0.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "15275.04",
+            "profitPct": 93.14,
+            "outputGst": "820.00",
+            "inputGst": "0.00",
+            "gstToPay": "820.00",
+            "customerBilled": "17220.00",
+            "received": "17220.00",
+            "customerDue": "0.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": [{ "partyId": "cus-04", "role": "customer", "billed": "17220.00", "settled": "17220.00", "due": "0.00" }]
+        }
+      }
+    },
+    {
+      "name": "no sales: a loss with no profit percentage, and no mileage without km",
+      "trips": ["t4"],
+      "expect": {
+        "t4": {
+          "purchases": {},
+          "sales": {},
+          "diesel": { "t4-d1": { "amount": "1880.00", "shareLitres": 20, "shareAmount": "1880.00", "sharedBy": 1 } },
+          "pl": {
+            "distanceKm": null,
+            "dieselLitres": 20,
+            "mileageKmpl": null,
+            "sales": "0.00",
+            "materialCost": "0.00",
+            "gross": "0.00",
+            "diesel": "1880.00",
+            "batta": "400.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "-2280.00",
+            "profitPct": null,
+            "outputGst": "0.00",
+            "inputGst": "0.00",
+            "gstToPay": "0.00",
+            "customerBilled": "0.00",
+            "received": "0.00",
+            "customerDue": "0.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": []
+        }
+      }
+    },
+    {
+      "name": "every figure rounds to the paisa once, half away from zero",
+      "trips": ["t5"],
+      "expect": {
+        "t5": {
+          "purchases": { "t5-p1": { "amount": "1234.50", "gstAmount": "61.73", "total": "1296.23", "cost": "1234.50", "inputCredit": "61.73" } },
+          "sales": {
+            "t5-s1": {
+              "amount": "7362.48",
+              "gstAmount": "368.12",
+              "transport": "333.33",
+              "transportGst": "60.00",
+              "taxable": "7695.81",
+              "gstTotal": "428.12",
+              "total": "8123.93"
+            }
+          },
+          "diesel": { "t5-d1": { "amount": "944.17", "shareLitres": 10.005, "shareAmount": "944.17", "sharedBy": 1 } },
+          "pl": {
+            "distanceKm": 120.5,
+            "dieselLitres": 10.005,
+            "mileageKmpl": 12.04,
+            "sales": "7695.81",
+            "materialCost": "1234.50",
+            "gross": "6461.31",
+            "diesel": "944.17",
+            "batta": "0.00",
+            "enRoute": "123.45",
+            "other": "0.00",
+            "net": "5393.69",
+            "profitPct": 70.09,
+            "outputGst": "428.12",
+            "inputGst": "61.73",
+            "gstToPay": "366.39",
+            "customerBilled": "8123.93",
+            "received": "5000.00",
+            "customerDue": "3123.93",
+            "vendorBilled": "1296.23",
+            "paid": "1296.23",
+            "vendorDue": "0.00"
+          },
+          "dues": [
+            { "partyId": "cus-05", "role": "customer", "billed": "8123.93", "settled": "5000.00", "due": "3123.93" },
+            { "partyId": "ven-crs", "role": "vendor", "billed": "1296.23", "settled": "1296.23", "due": "0.00" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a non-GST sale at a loss, the loss % rounded away from zero, the customer paid extra",
+      "trips": ["t6"],
+      "expect": {
+        "t6": {
+          "purchases": { "t6-p1": { "amount": "10400.00", "gstAmount": "520.00", "total": "10920.00", "cost": "10400.00", "inputCredit": "520.00" } },
+          "sales": {
+            "t6-s1": {
+              "amount": "10000.00",
+              "gstAmount": "0.00",
+              "transport": "0.00",
+              "transportGst": "0.00",
+              "taxable": "10000.00",
+              "gstTotal": "0.00",
+              "total": "10000.00"
+            }
+          },
+          "diesel": { "t6-d1": { "amount": "690.00", "shareLitres": 7.5, "shareAmount": "690.00", "sharedBy": 1 } },
+          "pl": {
+            "distanceKm": 90,
+            "dieselLitres": 7.5,
+            "mileageKmpl": 12,
+            "sales": "10000.00",
+            "materialCost": "10400.00",
+            "gross": "-400.00",
+            "diesel": "690.00",
+            "batta": "144.50",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "-1234.50",
+            "profitPct": -12.35,
+            "outputGst": "0.00",
+            "inputGst": "520.00",
+            "gstToPay": "-520.00",
+            "customerBilled": "10000.00",
+            "received": "12000.00",
+            "customerDue": "-2000.00",
+            "vendorBilled": "10920.00",
+            "paid": "0.00",
+            "vendorDue": "10920.00"
+          },
+          "dues": [
+            { "partyId": "cus-01", "role": "customer", "billed": "10000.00", "settled": "12000.00", "due": "-2000.00" },
+            { "partyId": "ven-qry", "role": "vendor", "billed": "10920.00", "settled": "0.00", "due": "10920.00" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a rejected bill counts nothing, and a fill shared by trips with no km yet is split equally",
+      "trips": ["t7a", "t7b"],
+      "expect": {
+        "t7a": {
+          "purchases": {},
+          "sales": {},
+          "diesel": {
+            "t7a-d1": { "amount": "100.01", "shareLitres": 0.501, "shareAmount": "50.01", "sharedBy": 2 },
+            "t7a-d2": { "amount": "4700.00", "shareLitres": 0, "shareAmount": "0.00", "sharedBy": 1 }
+          },
+          "pl": {
+            "distanceKm": null,
+            "dieselLitres": 0.501,
+            "mileageKmpl": null,
+            "sales": "0.00",
+            "materialCost": "0.00",
+            "gross": "0.00",
+            "diesel": "50.01",
+            "batta": "0.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "-50.01",
+            "profitPct": null,
+            "outputGst": "0.00",
+            "inputGst": "0.00",
+            "gstToPay": "0.00",
+            "customerBilled": "0.00",
+            "received": "0.00",
+            "customerDue": "0.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": []
+        },
+        "t7b": {
+          "purchases": {},
+          "sales": {},
+          "diesel": { "t7b-d1": { "amount": "100.01", "shareLitres": 0.5, "shareAmount": "50.00", "sharedBy": 2 } },
+          "pl": {
+            "distanceKm": null,
+            "dieselLitres": 0.5,
+            "mileageKmpl": null,
+            "sales": "0.00",
+            "materialCost": "0.00",
+            "gross": "0.00",
+            "diesel": "50.00",
+            "batta": "0.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "-50.00",
+            "profitPct": null,
+            "outputGst": "0.00",
+            "inputGst": "0.00",
+            "gstToPay": "0.00",
+            "customerBilled": "0.00",
+            "received": "0.00",
+            "customerDue": "0.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": []
+        }
+      }
+    },
+    {
+      "name": "the earlier trip number takes a leftover paisa, whatever the ids",
+      "trips": ["t8a", "t8b"],
+      "expect": {
+        "t8a": {
+          "purchases": {},
+          "sales": {},
+          "diesel": { "t8a-d1": { "amount": "1900.01", "shareLitres": 10, "shareAmount": "950.00", "sharedBy": 2 } },
+          "pl": {
+            "distanceKm": 30,
+            "dieselLitres": 10,
+            "mileageKmpl": 3,
+            "sales": "0.00",
+            "materialCost": "0.00",
+            "gross": "0.00",
+            "diesel": "950.00",
+            "batta": "0.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "-950.00",
+            "profitPct": null,
+            "outputGst": "0.00",
+            "inputGst": "0.00",
+            "gstToPay": "0.00",
+            "customerBilled": "0.00",
+            "received": "0.00",
+            "customerDue": "0.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": []
+        },
+        "t8b": {
+          "purchases": {},
+          "sales": {},
+          "diesel": { "t8b-d1": { "amount": "1900.01", "shareLitres": 10.001, "shareAmount": "950.01", "sharedBy": 2 } },
+          "pl": {
+            "distanceKm": 30,
+            "dieselLitres": 10.001,
+            "mileageKmpl": 3,
+            "sales": "0.00",
+            "materialCost": "0.00",
+            "gross": "0.00",
+            "diesel": "950.01",
+            "batta": "0.00",
+            "enRoute": "0.00",
+            "other": "0.00",
+            "net": "-950.01",
+            "profitPct": null,
+            "outputGst": "0.00",
+            "inputGst": "0.00",
+            "gstToPay": "0.00",
+            "customerBilled": "0.00",
+            "received": "0.00",
+            "customerDue": "0.00",
+            "vendorBilled": "0.00",
+            "paid": "0.00",
+            "vendorDue": "0.00"
+          },
+          "dues": []
+        }
+      }
+    }
+  ],
+  "reports": {
+    "trips": ["t1", "t2", "t3a", "t3b", "t3c", "t4", "t5", "t6", "t7a", "t7b"],
+    "expect": {
+      "total": {
+        "trips": 10,
+        "distanceKm": 536.5,
+        "dieselLitres": 148.706,
+        "mileageKmpl": 4.2,
+        "sales": "132795.81",
+        "materialCost": "62849.49",
+        "gross": "69946.32",
+        "diesel": "14001.49",
+        "batta": "2444.50",
+        "enRoute": "473.45",
+        "other": "150.00",
+        "net": "52876.88",
+        "profitPct": 39.82,
+        "outputGst": "6378.12",
+        "inputGst": "2550.48",
+        "gstToPay": "3827.64",
+        "customerBilled": "139173.93",
+        "received": "80365.00",
+        "customerDue": "58808.93",
+        "vendorBilled": "65399.97",
+        "paid": "23136.23",
+        "vendorDue": "42263.74"
+      },
+      "byVehicle": [
+        {
+          "vehicleId": "veh-003",
+          "trips": 3,
+          "distanceKm": 100,
+          "dieselLitres": 40.5,
+          "mileageKmpl": 2.47,
+          "sales": "59300.00",
+          "materialCost": "17100.00",
+          "gross": "42200.00",
+          "diesel": "3833.20",
+          "batta": "500.00",
+          "enRoute": "0.00",
+          "other": "0.00",
+          "net": "37866.80",
+          "profitPct": 63.86,
+          "outputGst": "2965.00",
+          "inputGst": "855.00",
+          "gstToPay": "2110.00",
+          "customerBilled": "62265.00",
+          "received": "17220.00",
+          "customerDue": "45045.00",
+          "vendorBilled": "17955.00",
+          "paid": "0.00",
+          "vendorDue": "17955.00"
+        },
+        {
+          "vehicleId": "veh-002",
+          "trips": 3,
+          "distanceKm": 140,
+          "dieselLitres": 42.201,
+          "mileageKmpl": 3.4,
+          "sales": "24900.00",
+          "materialCost": "14164.99",
+          "gross": "10735.01",
+          "diesel": "3964.57",
+          "batta": "800.00",
+          "enRoute": "0.00",
+          "other": "0.00",
+          "net": "5970.44",
+          "profitPct": 23.98,
+          "outputGst": "1245.00",
+          "inputGst": "116.25",
+          "gstToPay": "1128.75",
+          "customerBilled": "26145.00",
+          "received": "26145.00",
+          "customerDue": "0.00",
+          "vendorBilled": "14281.24",
+          "paid": "11840.00",
+          "vendorDue": "2441.24"
+        },
+        {
+          "vehicleId": "veh-001",
+          "trips": 2,
+          "distanceKm": 176,
+          "dieselLitres": 36,
+          "mileageKmpl": 4.89,
+          "sales": "40900.00",
+          "materialCost": "30350.00",
+          "gross": "10550.00",
+          "diesel": "3379.55",
+          "batta": "744.50",
+          "enRoute": "350.00",
+          "other": "150.00",
+          "net": "5925.95",
+          "profitPct": 14.49,
+          "outputGst": "1740.00",
+          "inputGst": "1517.50",
+          "gstToPay": "222.50",
+          "customerBilled": "42640.00",
+          "received": "32000.00",
+          "customerDue": "10640.00",
+          "vendorBilled": "31867.50",
+          "paid": "10000.00",
+          "vendorDue": "21867.50"
+        },
+        {
+          "vehicleId": "veh-005",
+          "trips": 1,
+          "distanceKm": 120.5,
+          "dieselLitres": 10.005,
+          "mileageKmpl": 12.04,
+          "sales": "7695.81",
+          "materialCost": "1234.50",
+          "gross": "6461.31",
+          "diesel": "944.17",
+          "batta": "0.00",
+          "enRoute": "123.45",
+          "other": "0.00",
+          "net": "5393.69",
+          "profitPct": 70.09,
+          "outputGst": "428.12",
+          "inputGst": "61.73",
+          "gstToPay": "366.39",
+          "customerBilled": "8123.93",
+          "received": "5000.00",
+          "customerDue": "3123.93",
+          "vendorBilled": "1296.23",
+          "paid": "1296.23",
+          "vendorDue": "0.00"
+        },
+        {
+          "vehicleId": "veh-004",
+          "trips": 1,
+          "distanceKm": 0,
+          "dieselLitres": 20,
+          "mileageKmpl": null,
+          "sales": "0.00",
+          "materialCost": "0.00",
+          "gross": "0.00",
+          "diesel": "1880.00",
+          "batta": "400.00",
+          "enRoute": "0.00",
+          "other": "0.00",
+          "net": "-2280.00",
+          "profitPct": null,
+          "outputGst": "0.00",
+          "inputGst": "0.00",
+          "gstToPay": "0.00",
+          "customerBilled": "0.00",
+          "received": "0.00",
+          "customerDue": "0.00",
+          "vendorBilled": "0.00",
+          "paid": "0.00",
+          "vendorDue": "0.00"
+        }
+      ],
+      "byMonth": [
+        {
+          "month": "2026-06",
+          "trips": 1,
+          "distanceKm": 90,
+          "dieselLitres": 7.5,
+          "mileageKmpl": 12,
+          "sales": "10000.00",
+          "materialCost": "10400.00",
+          "gross": "-400.00",
+          "diesel": "690.00",
+          "batta": "144.50",
+          "enRoute": "0.00",
+          "other": "0.00",
+          "net": "-1234.50",
+          "profitPct": -12.35,
+          "outputGst": "0.00",
+          "inputGst": "520.00",
+          "gstToPay": "-520.00",
+          "customerBilled": "10000.00",
+          "received": "12000.00",
+          "customerDue": "-2000.00",
+          "vendorBilled": "10920.00",
+          "paid": "0.00",
+          "vendorDue": "10920.00"
+        },
+        {
+          "month": "2026-07",
+          "trips": 1,
+          "distanceKm": 120.5,
+          "dieselLitres": 10.005,
+          "mileageKmpl": 12.04,
+          "sales": "7695.81",
+          "materialCost": "1234.50",
+          "gross": "6461.31",
+          "diesel": "944.17",
+          "batta": "0.00",
+          "enRoute": "123.45",
+          "other": "0.00",
+          "net": "5393.69",
+          "profitPct": 70.09,
+          "outputGst": "428.12",
+          "inputGst": "61.73",
+          "gstToPay": "366.39",
+          "customerBilled": "8123.93",
+          "received": "5000.00",
+          "customerDue": "3123.93",
+          "vendorBilled": "1296.23",
+          "paid": "1296.23",
+          "vendorDue": "0.00"
+        },
+        {
+          "month": "2026-08",
+          "trips": 8,
+          "distanceKm": 326,
+          "dieselLitres": 131.201,
+          "mileageKmpl": 2.96,
+          "sales": "115100.00",
+          "materialCost": "51214.99",
+          "gross": "63885.01",
+          "diesel": "12367.32",
+          "batta": "2300.00",
+          "enRoute": "350.00",
+          "other": "150.00",
+          "net": "48717.69",
+          "profitPct": 42.33,
+          "outputGst": "5950.00",
+          "inputGst": "1968.75",
+          "gstToPay": "3981.25",
+          "customerBilled": "121050.00",
+          "received": "63365.00",
+          "customerDue": "57685.00",
+          "vendorBilled": "53183.74",
+          "paid": "21840.00",
+          "vendorDue": "31343.74"
+        }
+      ],
+      "customers": [
+        { "partyId": "cus-03", "role": "customer", "trips": 2, "billed": "45045.00", "settled": "0.00", "due": "45045.00", "firstDate": "2026-08-06", "lastDate": "2026-08-06" },
+        { "partyId": "cus-01", "role": "customer", "trips": 2, "billed": "42640.00", "settled": "32000.00", "due": "10640.00", "firstDate": "2026-06-20", "lastDate": "2026-08-04" },
+        { "partyId": "cus-05", "role": "customer", "trips": 1, "billed": "8123.93", "settled": "5000.00", "due": "3123.93", "firstDate": "2026-07-15", "lastDate": "2026-07-15" },
+        { "partyId": "cus-02", "role": "customer", "trips": 1, "billed": "26145.00", "settled": "26145.00", "due": "0.00", "firstDate": "2026-08-05", "lastDate": "2026-08-05" },
+        { "partyId": "cus-04", "role": "customer", "trips": 1, "billed": "17220.00", "settled": "17220.00", "due": "0.00", "firstDate": "2026-08-06", "lastDate": "2026-08-06" }
+      ],
+      "vendors": [
+        { "partyId": "ven-qry", "role": "vendor", "trips": 3, "billed": "49822.50", "settled": "10000.00", "due": "39822.50", "firstDate": "2026-06-20", "lastDate": "2026-08-06" },
+        { "partyId": "ven-crs", "role": "vendor", "trips": 2, "billed": "3737.47", "settled": "1296.23", "due": "2441.24", "firstDate": "2026-07-15", "lastDate": "2026-08-05" },
+        { "partyId": "ven-loc", "role": "vendor", "trips": 1, "billed": "11840.00", "settled": "11840.00", "due": "0.00", "firstDate": "2026-08-05", "lastDate": "2026-08-05" }
+      ]
+    }
+  },
+  "doubleCounts": [
+    {
+      "name": "every way a fill could be counted twice",
+      "trip": {
+        "id": "x1",
+        "vehicleId": "veh-001",
+        "date": "2026-08-04",
+        "startKm": null,
+        "endKm": null,
+        "diesel": [
+          { "id": "a", "source": "expense_bill", "expenseBillId": "bill-1", "litres": 40, "amount": "3760.00", "billNumber": "HP-100" },
+          { "id": "b", "source": "expense_bill", "expenseBillId": "bill-1", "litres": 40, "amount": "3760.00", "billNumber": "HP-100" },
+          { "id": "c", "source": "fuel_entry", "fuelEntryId": "fuel-9", "litres": 10, "amount": "940.00", "billNumber": "BK/4471" },
+          { "id": "d", "source": "typed", "litres": 10, "rate": "94.00", "billNumber": "bk 4471" },
+          { "id": "e", "source": "typed", "litres": 10, "rate": "94.00", "billNumber": "IOC-2207" },
+          { "id": "f", "source": "typed", "litres": 10, "rate": "94.00", "billNumber": "HPCL 3001" },
+          { "id": "g", "source": "typed", "litres": 10, "rate": "94.00", "billNumber": "" },
+          { "id": "h", "source": "typed", "litres": 10, "rate": "94.00", "billNumber": "HP-500" }
+        ],
+        "purchases": [],
+        "sales": [],
+        "costs": [],
+        "payments": []
+      },
+      "context": {
+        "bills": [
+          { "id": "bill-1", "billNumber": "HP-100", "vehicleId": "veh-001" },
+          { "id": "bill-2207", "billNumber": "IOC 2207", "vehicleId": "veh-001" },
+          { "id": "bill-500", "billNumber": "HP500", "vehicleId": "veh-009" }
+        ],
+        "otherTrips": [
+          { "tripId": "x2", "tripNumber": "TRP/26-27/0042", "vehicleId": "veh-001", "billNumbers": ["HPCL-3001"] },
+          { "tripId": "x3", "tripNumber": "TRP/26-27/0043", "vehicleId": "veh-002", "billNumbers": ["HP-500"] }
+        ]
+      },
+      "expect": [
+        { "code": "diesel-linked-twice", "lineId": "b" },
+        { "code": "diesel-same-bill", "lineId": "d", "billNumber": "bk 4471" },
+        { "code": "diesel-bill-exists", "lineId": "e", "billNumber": "IOC-2207", "billId": "bill-2207" },
+        { "code": "diesel-bill-on-trip", "lineId": "f", "billNumber": "HPCL 3001", "tripNumber": "TRP/26-27/0042" }
+      ]
+    },
+    {
+      "name": "a typed line repeating a bill this trip links",
+      "trip": {
+        "id": "x4",
+        "vehicleId": "veh-001",
+        "date": "2026-08-04",
+        "startKm": null,
+        "endKm": null,
+        "diesel": [
+          { "id": "a", "source": "typed", "litres": 5, "rate": "94.00", "billNumber": "HP-100" },
+          { "id": "b", "source": "expense_bill", "expenseBillId": "bill-1", "litres": 40, "amount": "3760.00", "billNumber": "HP 100" }
+        ],
+        "purchases": [],
+        "sales": [],
+        "costs": [],
+        "payments": []
+      },
+      "context": { "bills": [{ "id": "bill-1", "billNumber": "HP-100", "vehicleId": "veh-001" }], "otherTrips": [] },
+      "expect": [{ "code": "diesel-same-bill", "lineId": "b", "billNumber": "HP 100" }]
+    },
+    {
+      "name": "nothing counted twice",
+      "trip": {
+        "id": "x5",
+        "vehicleId": "veh-003",
+        "date": "2026-08-06",
+        "startKm": 300000,
+        "endKm": 300040,
+        "diesel": [
+          { "id": "a", "source": "expense_bill", "expenseBillId": "bill-881", "litres": 30, "amount": "2833.21", "billNumber": "HP-881" },
+          { "id": "b", "source": "typed", "litres": 5, "rate": "94.00", "billNumber": "IOC 77" }
+        ],
+        "purchases": [],
+        "sales": [],
+        "costs": [],
+        "payments": []
+      },
+      "context": {
+        "bills": [{ "id": "bill-881", "billNumber": "HP-881", "vehicleId": "veh-003" }],
+        "otherTrips": [{ "tripId": "t3b", "tripNumber": "TRP/26-27/0002", "vehicleId": "veh-003", "billNumbers": ["HP-881", "BK/4471"] }]
+      },
+      "expect": []
+    }
+  ],
+  "allocate": [
+    { "total": "14205.01", "weights": [40, 35, 25], "places": 2, "expect": ["5682.01", "4971.75", "3551.25"] },
+    { "total": "2833.21", "weights": [40, 35, 25], "places": 2, "expect": ["1133.29", "991.62", "708.30"] },
+    { "total": "999.99", "weights": [35, 25], "places": 2, "expect": ["583.33", "416.66"] },
+    { "total": "10.5", "weights": [35, 25], "places": 3, "expect": ["6.125", "4.375"] },
+    { "total": "100.01", "weights": [0, 0], "places": 2, "expect": ["50.01", "50.00"] },
+    { "total": "0.10", "weights": [1, 1, 1], "places": 2, "expect": ["0.04", "0.03", "0.03"] },
+    { "total": "0.05", "weights": [1, 2], "places": 2, "expect": ["0.02", "0.03"] },
+    { "total": "1.00", "weights": [12.5, 12.5, 25], "places": 2, "expect": ["0.25", "0.25", "0.50"] },
+    { "total": "5.00", "weights": [-3, 0, 2], "places": 2, "expect": ["0.00", "0.00", "5.00"] }
+  ],
+  "decimal": {
+    "roundTo": [
+      { "value": "2.675", "places": 2, "expect": "2.68" },
+      { "value": "-2.675", "places": 2, "expect": "-2.68" },
+      { "value": "1.005", "places": 2, "expect": "1.01" },
+      { "value": "0.004999", "places": 2, "expect": "0.00" },
+      { "value": "61.725", "places": 2, "expect": "61.73" },
+      { "value": "-0.005", "places": 2, "expect": "-0.01" }
+    ],
+    "divTo": [
+      { "a": "-123450", "b": "10000", "places": 2, "expect": "-12.35" },
+      { "a": "2", "b": "3", "places": 2, "expect": "0.67" },
+      { "a": "1", "b": "-3", "places": 2, "expect": "-0.33" },
+      { "a": "86", "b": "28.5", "places": 2, "expect": "3.02" },
+      { "a": "-1", "b": "-8", "places": 2, "expect": "0.13" }
+    ],
+    "percentOf": [
+      { "value": "1234.50", "pct": "5", "expect": "61.73" },
+      { "value": "333.33", "pct": "18", "expect": "60.00" },
+      { "value": "2324.99", "pct": "5", "expect": "116.25" },
+      { "value": "7362.48", "pct": "5", "expect": "368.12" },
+      { "value": "1000.00", "pct": "2.5", "expect": "25.00" }
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, createRouter, Outlet, redirect } from '@tanstack/react-router';
 import { resolveHome } from '@linck/domain';
 import { AppShell } from './shell/AppShell.js';
+import { WORKSPACES } from './shell/nav-manifest.js';
 import { useApp } from './shell/store.js';
 import { ExecutiveDashboard } from './features/overview/ExecutiveDashboard.js';
 import { FleetCommandBoard } from './features/fleet/FleetCommandBoard.js';
@@ -42,14 +43,17 @@ const rootRoute = createRootRoute({
  * `/` resolves a persona home from the grants rather than sending everyone to
  * the same dashboard. A team admin who is also a plant head lands on the
  * highest-priority match and switches workspace in one click, instead of being
- * made to choose on every login.
+ * made to choose on every login. Someone no home rule fits — a member admin
+ * and nothing else — lands on the first page of their own menu, the same menu
+ * the rail shows them, never on a page that turns them away.
  */
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   beforeLoad: () => {
-    const { persona, signedIn } = useApp.getState();
-    throw redirect({ to: resolveHome(persona.grants, signedIn?.defaultRoute) });
+    const { persona, signedIn, siteScope, enabledModules } = useApp.getState();
+    const menu = WORKSPACES.filter((ws) => ws.module === null || enabledModules.includes(ws.module)).flatMap((ws) => ws.items);
+    throw redirect({ to: resolveHome(persona.grants, signedIn?.defaultRoute, menu, siteScope) });
   },
   component: () => null,
 });

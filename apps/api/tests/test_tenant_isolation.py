@@ -25,10 +25,14 @@ async def test_tenant_a_can_see_its_own_site(tenant_a: Tenant) -> None:
     """The control. Without this, every assertion below could pass on an empty table."""
     async with tenant_session(str(tenant_a.org_id)) as session:
         names = (
-            await session.execute(
-                text("SELECT name FROM core.sites WHERE id = :id"), {"id": str(tenant_a.site_id)}
+            (
+                await session.execute(
+                    text("SELECT name FROM core.sites WHERE id = :id"), {"id": str(tenant_a.site_id)}
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert names == [tenant_a.site_name]
 
 
@@ -41,8 +45,8 @@ async def test_select_cannot_reach_another_tenants_site(tenant_a: Tenant, tenant
         ).all()
         # Not just the targeted row — B must not see A's site by any route.
         visible_orgs = (
-            await session.execute(text("SELECT DISTINCT organization_id FROM core.sites"))
-        ).scalars().all()
+            (await session.execute(text("SELECT DISTINCT organization_id FROM core.sites"))).scalars().all()
+        )
 
     assert rows == []
     assert tenant_a.org_id not in visible_orgs

@@ -71,9 +71,10 @@ async def test_every_rls_protected_table_has_an_organization_id() -> None:
     filtered — and would silently be protected by a policy that never matches."""
     async with tenant_session(None) as session:
         rows = (
-            await session.execute(
-                text(
-                    """
+            (
+                await session.execute(
+                    text(
+                        """
                     SELECT c.relname
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -86,9 +87,12 @@ async def test_every_rls_protected_table_has_an_organization_id() -> None:
                               AND col.column_name = 'organization_id'
                       )
                     """
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     assert rows == [], f"RLS-protected tables with no organization_id: {rows}"
 
@@ -101,9 +105,10 @@ async def test_boot_time_posture_check_passes() -> None:
 async def test_no_money_or_quantity_is_stored_as_a_float() -> None:
     async with tenant_session(None) as session:
         offenders = (
-            await session.execute(
-                text(
-                    """
+            (
+                await session.execute(
+                    text(
+                        """
                     SELECT table_name || '.' || column_name || ' :: ' || data_type
                     FROM information_schema.columns
                     WHERE table_schema = 'core'
@@ -113,9 +118,12 @@ async def test_no_money_or_quantity_is_stored_as_a_float() -> None:
                       )
                     ORDER BY 1
                     """
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     assert offenders == [], (
         "binary floating point in a ledger — rupees and tonnes must be numeric: " + ", ".join(offenders)

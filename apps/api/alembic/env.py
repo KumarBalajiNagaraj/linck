@@ -3,12 +3,11 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import Connection, create_engine, pool, text
 
-from app.core.settings import get_settings
-from app.models.base import Base
-
 # Importing for the side effect of registering every model on Base.metadata.
 # Without this, autogenerate cheerfully proposes dropping the whole schema.
 import app.models.core  # noqa: F401
+from app.core.settings import get_settings
+from app.models.base import Base
 
 config = context.config
 if config.config_file_name is not None:

@@ -226,8 +226,7 @@ class Grant:
 async def load_grants(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Grant]:
     rows = (await db.execute(GRANTS_SQL, {"user_id": str(user_id)})).all()
     return {
-        key: Grant(org_wide=bool(org_wide), site_ids=list(site_ids or []))
-        for key, org_wide, site_ids in rows
+        key: Grant(org_wide=bool(org_wide), site_ids=list(site_ids or [])) for key, org_wide, site_ids in rows
     }
 
 

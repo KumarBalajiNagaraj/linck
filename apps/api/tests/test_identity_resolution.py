@@ -63,9 +63,7 @@ async def test_unknown_subject_resolves_to_nothing(linked_identity: object) -> N
     """Sign-in never bootstraps access. A Google account nobody registered is
     simply not a user, and the function says so by returning no row."""
     async with tenant_session(None) as session:
-        rows = (
-            await session.execute(RESOLVE_IDENTITY, {"p": "google", "s": "sub-nobody-ever-linked"})
-        ).all()
+        rows = (await session.execute(RESOLVE_IDENTITY, {"p": "google", "s": "sub-nobody-ever-linked"})).all()
     assert rows == []
 
 
@@ -91,9 +89,7 @@ async def test_pending_user_matches_email_case_insensitively(
     user_id = make_user(open_domain_tenant, "driver.selvam@example.com", "Selvam R", status="invited")
 
     async with tenant_session(None) as session:
-        rows = (
-            await session.execute(RESOLVE_PENDING, {"e": "Driver.Selvam@Example.COM", "hd": None})
-        ).all()
+        rows = (await session.execute(RESOLVE_PENDING, {"e": "Driver.Selvam@Example.COM", "hd": None})).all()
 
     assert len(rows) == 1
     assert rows[0][0] == user_id

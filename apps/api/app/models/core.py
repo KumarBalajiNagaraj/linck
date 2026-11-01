@@ -366,9 +366,7 @@ class RolePermission(Base):
     role_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.roles.id", ondelete="CASCADE"), nullable=False
     )
-    permission_key: Mapped[str] = mapped_column(
-        Text, ForeignKey(f"{SCHEMA}.permissions.key"), nullable=False
-    )
+    permission_key: Mapped[str] = mapped_column(Text, ForeignKey(f"{SCHEMA}.permissions.key"), nullable=False)
 
 
 class RoleAssignment(Base):

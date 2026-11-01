@@ -10,6 +10,7 @@ business schema without enabling AND forcing RLS on it fails the invariant lint.
 Revision ID: 0002_rls_audit_seed
 Revises: f749f78afd61
 """
+
 from collections.abc import Sequence
 
 from alembic import op

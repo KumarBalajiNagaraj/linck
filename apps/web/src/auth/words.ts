@@ -1,0 +1,68 @@
+import { words } from '../i18n/words.js';
+import type { SignInProblem } from './auth.js';
+
+/** The sign-in screen's words. Each problem is what happened, then what to do. */
+export const signInWords = words({
+  en: {
+    welcome: 'Welcome',
+    title: 'Sign in',
+    lead: 'Use the Google account your admin added.',
+    google: 'Sign in with Google',
+    toGoogle: 'Opening Google…',
+    opening: 'Opening Linck…',
+    retry: 'Try again',
+    dev: {
+      title: 'Developer sign-in',
+      hint: "Only on a developer's computer. No Google.",
+      email: 'Email',
+      button: 'Sign in',
+      working: 'Signing in…',
+    },
+    problem: {
+      not_registered: ['This account is not in Linck.', 'Ask your admin to add you.'],
+      account_stopped: ['Your account is stopped.', 'Ask your admin to start it again.'],
+      domain_not_allowed: ['This Google account is not allowed here.', 'Sign in with your company account.'],
+      email_unverified: ['Google has not checked this email.', 'Check it with Google, then try again.'],
+      registered_twice: ['This email is in two companies.', 'Ask your admin to remove one.'],
+      google_off: ['Google sign-in is not set up yet.', 'Ask your admin.'],
+      cancelled: ['Sign-in was cancelled.', 'Press the button to try again.'],
+      expired: ['That took too long.', 'Try again.'],
+      google_failed: ['Google sign-in did not work.', 'Try again.'],
+      signed_out: ['You were signed out.', 'Sign in again to go on.'],
+      unreachable: ['Linck did not answer.', 'Check the internet, then try again.'],
+      dev_off: ['Developer sign-in is off on this server.', 'Sign in with Google.'],
+      email_wrong: ['That is not a whole email.', 'Type it like name@gmail.com.'],
+    } satisfies Record<SignInProblem, [string, string]> as Record<SignInProblem, [string, string]>,
+  },
+  ta: {
+    welcome: 'வணக்கம்',
+    title: 'உள்நுழை',
+    lead: 'அட்மின் சேர்த்த Google கணக்கைப் பயன்படுத்துங்கள்.',
+    google: 'Google மூலம் உள்நுழை',
+    toGoogle: 'Google திறக்கிறது…',
+    opening: 'Linck திறக்கிறது…',
+    retry: 'மீண்டும் முயல்',
+    dev: {
+      title: 'டெவலப்பர் உள்நுழைவு',
+      hint: 'டெவலப்பர் கணினியில் மட்டும். Google தேவையில்லை.',
+      email: 'ஈமெயில்',
+      button: 'உள்நுழை',
+      working: 'உள்நுழைகிறது…',
+    },
+    problem: {
+      not_registered: ['இந்தக் கணக்கு Linck-இல் இல்லை.', 'உங்களைச் சேர்க்க அட்மினிடம் கேளுங்கள்.'],
+      account_stopped: ['உங்கள் கணக்கு நிறுத்தப்பட்டுள்ளது.', 'மீண்டும் தொடங்க அட்மினிடம் கேளுங்கள்.'],
+      domain_not_allowed: ['இந்த Google கணக்குக்கு இங்கே அனுமதி இல்லை.', 'நிறுவனக் கணக்கில் உள்நுழையுங்கள்.'],
+      email_unverified: ['இந்த ஈமெயிலை Google இன்னும் சரிபார்க்கவில்லை.', 'Google-இல் சரிபார்த்து, மீண்டும் முயலுங்கள்.'],
+      registered_twice: ['இந்த ஈமெயில் இரண்டு நிறுவனங்களில் உள்ளது.', 'ஒன்றை நீக்க அட்மினிடம் கேளுங்கள்.'],
+      google_off: ['Google உள்நுழைவு இன்னும் அமைக்கப்படவில்லை.', 'அட்மினிடம் கேளுங்கள்.'],
+      cancelled: ['உள்நுழைவு ரத்து செய்யப்பட்டது.', 'மீண்டும் முயல பட்டனை அழுத்துங்கள்.'],
+      expired: ['நேரம் அதிகமாகிவிட்டது.', 'மீண்டும் முயலுங்கள்.'],
+      google_failed: ['Google உள்நுழைவு வேலை செய்யவில்லை.', 'மீண்டும் முயலுங்கள்.'],
+      signed_out: ['நீங்கள் வெளியேற்றப்பட்டீர்கள்.', 'தொடர மீண்டும் உள்நுழையுங்கள்.'],
+      unreachable: ['Linck பதில் தரவில்லை.', 'இணையத்தைச் சரிபார்த்து, மீண்டும் முயலுங்கள்.'],
+      dev_off: ['இந்த சர்வரில் டெவலப்பர் உள்நுழைவு இல்லை.', 'Google மூலம் உள்நுழையுங்கள்.'],
+      email_wrong: ['ஈமெயில் முழுமையாக இல்லை.', 'name@gmail.com போல டைப் செய்யுங்கள்.'],
+    },
+  },
+});

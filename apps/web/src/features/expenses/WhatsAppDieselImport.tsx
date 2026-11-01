@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { formatDateTime, formatINR, parseTypedAmount, type ImportOutcome, type PlannedClaim } from '@linck/domain';
+import { formatDateTime, formatINR, parseTypedAmount, sitesFor, type ImportOutcome, type PlannedClaim } from '@linck/domain';
 import { DRIVERS, VEHICLES } from '@linck/mock';
 import type { StatusFamily } from '@linck/tokens';
 import {
@@ -23,19 +23,20 @@ import {
   StatusStamp,
   type Column,
 } from '@linck/ui';
+import { LIVE } from '../../auth/api.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
-import { useExpenses } from './expenseStore.js';
+import { useProblemWords } from './ApprovalChain.js';
+import { driverLabel, useBills, useImportClaims, useSiteName, useSites, vehicleLabel, vehicleRef } from './bills.js';
+import { BillRefused } from './expenseApi.js';
 import { expenseWords } from './words.js';
 import { ChatArchiveError, readChatArchive } from './whatsappArchive.js';
 import {
-  billFromClaim,
   demoSource,
   fetchInboxSource,
-  inboxIdsOf,
   InboxUnavailable,
-  markInboxImported,
+  liveRosters,
   planIntake,
   readIntake,
   sourceFromArchive,
@@ -53,6 +54,13 @@ import {
  * can be imported instead. Linck reads each slip; the fleet manager looks
  * down one list, settles what the slip could not, and adds the bills. From
  * there they are ordinary bills awaiting validation.
+ *
+ * LIVE (VITE_API_URL set), the bills already in Linck are the API's, and
+ * adding sends the slips to `POST /whatsapp/imports`, which takes each
+ * message once however many phones export it. There is no fleet list or
+ * driver roster on the API yet, so a slip's vehicle is the registration it
+ * gives (whatsappImport.ts `liveRosters`), typed in where it gives none, and
+ * the demo's sample fleet, drivers and slips are not offered at all.
  */
 
 type Row = PlannedClaim<IntakeClaim>;
@@ -74,6 +82,8 @@ const inView = (view: View, r: Row) =>
 /** What the fleet manager settled by hand, per claim. */
 interface Override {
   vehicleId?: string;
+  /** Live: the vehicle number as typed. */
+  vehicleText?: string;
   driverId?: string;
   amount?: string;
   litres?: string;
@@ -88,22 +98,35 @@ const FIELD_STYLE: React.CSSProperties = {
   borderRadius: 'var(--r-1)',
 };
 
-const driverName = (id: string | null) => DRIVERS.find((d) => d.id === id)?.name ?? null;
-const reg = (id: string | null) => VEHICLES.find((v) => v.id === id)?.displayReg ?? null;
+const driverName = (id: string | null) => driverLabel(id);
+const reg = (id: string | null) => vehicleLabel(id);
 
 export function WhatsAppDieselImport() {
-  const { persona } = useApp();
+  const { persona, siteScope } = useApp();
   const t = useWords(expenseWords);
   const w = t.whatsapp;
-  const bills = useExpenses((s) => s.bills);
-  const add = useExpenses((s) => s.add);
+  const say = useProblemWords();
+  const list = useBills();
+  const { bills } = list;
+  const importClaims = useImportClaims();
+  const sites = useSites();
+  const siteName = useSiteName();
   const [source, setSource] = useState<IntakeSource | null>(null);
   const [claims, setClaims] = useState<IntakeClaim[]>([]);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   /** Kept as what went wrong, so it is worded in whichever language is showing. */
   const [problem, setProblem] = useState<unknown>(null);
-  const [notice, setNotice] = useState<{ count: number; amount: number } | null>(null);
+  const [notice, setNotice] = useState<{ count: number; amount: number; before: number } | null>(null);
+  // Live, the bills are booked as the upload sheet books one: to the site in
+  // scope, else the person's own, else the first they may add bills at. The
+  // demo books each to its sample vehicle's site.
+  const uploadSites = sitesFor(
+    persona.grants,
+    'fleet.expense.upload',
+    sites.map((site) => site.id),
+  );
+  const bookedTo = siteScope ?? (uploadSites.includes(persona.defaultSiteId ?? '') ? persona.defaultSiteId : uploadSites[0]) ?? null;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [view, setView] = useViewParam(VIEWS, 'all');
@@ -114,7 +137,11 @@ export function WhatsAppDieselImport() {
     try {
       const src = await get();
       setProgress({ done: 0, total: 0 });
-      const read = await readIntake(src, { notDrivers: [persona.name], onProgress: (done, total) => setProgress({ done, total }) });
+      const read = await readIntake(src, {
+        notDrivers: [persona.name],
+        ...(LIVE ? { rosters: liveRosters(bills) } : {}),
+        onProgress: (done, total) => setProgress({ done, total }),
+      });
       setSource(src);
       setClaims(read);
       setOverrides({});
@@ -134,7 +161,7 @@ export function WhatsAppDieselImport() {
       const litres = o.litres === undefined ? c.litres : parseTypedAmount(o.litres, 3);
       return {
         ...c,
-        vehicleId: o.vehicleId ?? c.vehicleId,
+        vehicleId: o.vehicleText !== undefined ? vehicleRef(o.vehicleText) : (o.vehicleId ?? c.vehicleId),
         driverId: o.driverId ?? c.driverId,
         amount,
         litres,
@@ -151,9 +178,14 @@ export function WhatsAppDieselImport() {
 
   const commit = () => {
     if (!source) return;
-    for (const r of ready) add(billFromClaim(r.claim, source));
-    void markInboxImported(ready.flatMap((r) => inboxIdsOf(r.claim, source)));
-    setNotice({ count: ready.length, amount: readyAmount });
+    void importClaims.run({ rows: ready, source, siteId: bookedTo }).then((out) => {
+      if ('problem' in out) {
+        setProblem(new BillRefused(out.problem));
+        return;
+      }
+      setProblem(null);
+      setNotice({ count: out.count, amount: out.paise / 100, before: out.before });
+    });
     setConfirming(false);
   };
 
@@ -170,7 +202,9 @@ export function WhatsAppDieselImport() {
           ? problem.reason === 'too-big'
             ? w.archive.tooBig
             : w.archive.noChat
-          : w.couldNotRead;
+          : problem instanceof BillRefused
+            ? say(problem.problem)
+            : w.couldNotRead;
   const via = source ? (source.kind === 'inbox' ? w.businessNumber : source.kind === 'demo' ? `${source.via} ${w.demoSuffix}` : source.via) : '';
 
   const columns: Column<Row>[] = [
@@ -240,9 +274,12 @@ export function WhatsAppDieselImport() {
                 }}
               />
             </label>
-            <Button onClick={() => void load(async () => demoSource())} disabled={progress !== null}>
-              {w.demo}
-            </Button>
+            {/* Live, the demo's sample slips would become this company's bills. */}
+            {LIVE ? null : (
+              <Button onClick={() => void load(async () => demoSource())} disabled={progress !== null}>
+                {w.demo}
+              </Button>
+            )}
           </>
         }
       />
@@ -260,9 +297,15 @@ export function WhatsAppDieselImport() {
             {problemText}
           </p>
         ) : null}
+        {importClaims.busy ? (
+          <p className="text-[14px]" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>
+            {t.live.saving}
+          </p>
+        ) : null}
         {notice ? (
           <p className="text-[14px]" style={{ color: 'var(--status-ready)' }} aria-live="polite">
             {w.added(notice.count, formatINR(notice.amount))}
+            {notice.before > 0 ? ` ${w.addedBefore(notice.before)}` : ''}
           </p>
         ) : null}
       </div>
@@ -316,14 +359,15 @@ export function WhatsAppDieselImport() {
                 {w.readySub}
               </p>
             </div>
-            <Button variant="primary" disabled={ready.length === 0} onClick={() => setConfirming(true)}>
-              {w.addN(ready.length)}
+            {/* Live, not before the bills already in Linck are read: they are what a repeat is checked against. */}
+            <Button variant="primary" disabled={ready.length === 0 || importClaims.busy || list.state !== 'ready'} onClick={() => setConfirming(true)}>
+              {importClaims.busy ? t.live.saving : w.addN(ready.length)}
             </Button>
           </div>
         </>
       ) : !progress ? (
         <div className="px-6 pt-6">
-          <EmptyState fact={w.nothingYet} because={w.nothingYetHow} />
+          <EmptyState fact={w.nothingYet} because={LIVE ? w.nothingYetHowLive : w.nothingYetHow} />
         </div>
       ) : null}
       <div className="h-10" />
@@ -337,6 +381,7 @@ export function WhatsAppDieselImport() {
         consequence={
           <>
             <span className="block">{w.confirmBody(ready.length, readyLitres, formatINR(readyAmount))}</span>
+            {LIVE && bookedTo ? <span className="mt-3 block">{w.savedTo(siteName(bookedTo))}</span> : null}
             <span className="mt-3 block" style={{ color: 'var(--text-tertiary)' }}>
               {w.confirmRest}
             </span>
@@ -452,36 +497,53 @@ function ClaimDetail({
       {row.outcome === 'add' || row.outcome === 'needs_details' ? (
         <SheetSection caption={w.fix}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Labelled label={t.detail.fields.vehicle!}>
-              <select
-                value={override.vehicleId ?? c.vehicleId ?? ''}
-                onChange={(e) => onOverride({ vehicleId: e.target.value })}
-                className={FIELD_CLASS}
-                style={FIELD_STYLE}
-              >
-                <option value="">—</option>
-                {VEHICLES.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.displayReg}
-                  </option>
-                ))}
-              </select>
-            </Labelled>
-            <Labelled label={w.driver}>
-              <select
-                value={override.driverId ?? c.driverId ?? ''}
-                onChange={(e) => onOverride({ driverId: e.target.value })}
-                className={FIELD_CLASS}
-                style={FIELD_STYLE}
-              >
-                <option value="">{w.notKnown}</option>
-                {DRIVERS.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </Labelled>
+            {LIVE ? (
+              // No fleet list on the API yet: the vehicle number is typed, and no driver is picked.
+              <Labelled label={t.detail.fields.vehicle!}>
+                <input
+                  value={override.vehicleText ?? (c.vehicleId ? (vehicleLabel(c.vehicleId) ?? '') : (c.vehicleText ?? ''))}
+                  onChange={(e) => onOverride({ vehicleText: e.target.value })}
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={`${FIELD_CLASS} font-id`}
+                  style={FIELD_STYLE}
+                />
+              </Labelled>
+            ) : (
+              <>
+                <Labelled label={t.detail.fields.vehicle!}>
+                  <select
+                    value={override.vehicleId ?? c.vehicleId ?? ''}
+                    onChange={(e) => onOverride({ vehicleId: e.target.value })}
+                    className={FIELD_CLASS}
+                    style={FIELD_STYLE}
+                  >
+                    <option value="">—</option>
+                    {VEHICLES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.displayReg}
+                      </option>
+                    ))}
+                  </select>
+                </Labelled>
+                <Labelled label={w.driver}>
+                  <select
+                    value={override.driverId ?? c.driverId ?? ''}
+                    onChange={(e) => onOverride({ driverId: e.target.value })}
+                    className={FIELD_CLASS}
+                    style={FIELD_STYLE}
+                  >
+                    <option value="">{w.notKnown}</option>
+                    {DRIVERS.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </Labelled>
+              </>
+            )}
             <Labelled label={t.detail.fields.litres!}>
               <input
                 inputMode="decimal"

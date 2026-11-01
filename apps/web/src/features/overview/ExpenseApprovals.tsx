@@ -14,7 +14,7 @@ import {
   type ExpenseLine,
   type ExpenseStage,
 } from '@linck/domain';
-import { expensesForSite, NOW, SITES, VEHICLES, type ExpenseBill } from '@linck/mock';
+import { expensesForSite, type ExpenseBill } from '@linck/mock';
 import {
   AgeingBar,
   AsOfStamp,
@@ -44,7 +44,8 @@ import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { BatchBar, BillHistory, ChainActions } from '../expenses/ApprovalChain.js';
-import { useExpenses } from '../expenses/expenseStore.js';
+import { now, useBills, useSiteName, vehicleLabel } from '../expenses/bills.js';
+import { BillsNotHere } from '../expenses/ExpenseRegister.js';
 import { expenseWords } from '../expenses/words.js';
 
 /**
@@ -57,9 +58,9 @@ import { expenseWords } from '../expenses/words.js';
  * goes, by type, site, vehicle or desk, and every second signature anyone
  * has made.
  *
- * It reads the same live bill store as the registers, so a bill approved
- * here is approved there, and the other way round. In plain words, English
- * or Tamil (LIN-23).
+ * It reads the same bills as the registers (expenses/bills.ts: the demo's
+ * store, or live the API), so a bill approved here is approved there, and
+ * the other way round. In plain words, English or Tamil (LIN-23).
  */
 
 const GROUPS = ['type', 'site', 'vehicle', 'desk'] as const;
@@ -81,12 +82,15 @@ const keyOf: Record<Group, (b: ExpenseBill) => string | null> = {
 const BILLS_ROUTE: string = '/finance/expenses';
 
 /** Whole days a bill has waited at its current step. */
-const daysWaited = (b: ExpenseBill) => Math.floor((NOW.getTime() - Date.parse(enteredStatusAt(b))) / 86_400_000);
+const daysWaited = (b: ExpenseBill, at: Date) => Math.floor((at.getTime() - Date.parse(enteredStatusAt(b))) / 86_400_000);
 
 export function ExpenseApprovals() {
   const { siteScope, density } = useApp();
   const navigate = useNavigate();
-  const bills = useExpenses((s) => s.bills);
+  const list = useBills();
+  const { bills } = list;
+  const siteName = useSiteName();
+  const today = now();
   const [group, setGroup] = useViewParam(GROUPS, 'type');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const t = useWords(expenseWords);
@@ -102,7 +106,7 @@ export function ExpenseApprovals() {
     () => scoped.filter((b) => b.status === 'validated').sort((x, y) => Date.parse(enteredStatusAt(x)) - Date.parse(enteredStatusAt(y))),
     [scoped],
   );
-  const ages = useMemo(() => ageing(scoped, 'validated', NOW), [scoped]);
+  const ages = useMemo(() => ageing(scoped, 'validated', now()), [scoped]);
   const exceptions = useMemo(() => exceptionsIn(scoped), [scoped]);
   const oldest = waiting[0];
   const overAWeek = ages.find((b) => b.label === 'over-7')!;
@@ -111,8 +115,8 @@ export function ExpenseApprovals() {
 
   const labelOf: Record<Group, (key: string) => string> = {
     type: (k) => status.expenseKind[k as ExpenseBill['kind']] ?? k,
-    site: (k) => SITES.find((s) => s.id === k)?.name ?? k,
-    vehicle: (k) => VEHICLES.find((v) => v.id === k)?.displayReg ?? k,
+    site: (k) => siteName(k),
+    vehicle: (k) => vehicleLabel(k) ?? k,
     desk: (k) => (k === 'fleet' || k === 'stores' ? t.deskName(k) : k),
   };
 
@@ -166,15 +170,15 @@ export function ExpenseApprovals() {
     },
     { key: 'kind', header: a.columns.type, width: 90, render: (b) => status.expenseKind[b.kind] },
     { key: 'vendor', header: a.columns.shop, render: (b) => <Stacked primary={b.vendor || '–'} secondary={b.description || undefined} /> },
-    { key: 'site', header: a.columns.site, width: 170, render: (b) => SITES.find((s) => s.id === b.siteId)?.name ?? b.siteId },
+    { key: 'site', header: a.columns.site, width: 170, render: (b) => siteName(b.siteId) },
     { key: 'amount', header: a.columns.amount, unit: '₹', type: 'money', width: 120, render: (b) => <MoneyCell value={b.amount} /> },
     {
       key: 'waited',
       header: a.columns.waiting,
       width: 120,
       render: (b) => {
-        const days = daysWaited(b);
-        return ageBucket(enteredStatusAt(b), NOW) === 'over-7' ? <StatusStamp status="critical" label={a.ageCap(days)} /> : a.ageCap(days);
+        const days = daysWaited(b, today);
+        return ageBucket(enteredStatusAt(b), today) === 'over-7' ? <StatusStamp status="critical" label={a.ageCap(days)} /> : a.ageCap(days);
       },
     },
     {
@@ -192,7 +196,7 @@ export function ExpenseApprovals() {
         title={a.title}
         meta={
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <AsOfStamp asOf="14:42" source="expense_bills" freshness="live" />
+            <AsOfStamp asOf={list.asOf} source="expense_bills" freshness="live" />
             <span className="text-[14px]" style={{ color: 'var(--text-secondary)' }}>
               {a.meta(total.bills, rupees(total.totalPaise))}
               {total.litres > 0 ? ` · ${a.diesel(total.litres.toLocaleString('en-IN'))}` : ''}
@@ -210,7 +214,7 @@ export function ExpenseApprovals() {
           value={compact(stage('director').paise)}
           title={rupees(stage('director').paise)}
           delta={{
-            text: stage('director').count === 0 ? a.tiles.nothing : a.tiles.waiting(stage('director').count, oldest ? a.age(daysWaited(oldest)) : '–'),
+            text: stage('director').count === 0 ? a.tiles.nothing : a.tiles.waiting(stage('director').count, oldest ? a.age(daysWaited(oldest, today)) : '–'),
             tone: overAWeek.count > 0 ? 'critical' : stage('director').count > 0 ? 'attention' : 'neutral',
           }}
           asOfInHeader
@@ -249,8 +253,8 @@ export function ExpenseApprovals() {
             rowKey={(b) => b.id}
             selectedKey={selectedId ?? undefined}
             onRowClick={(b) => setSelectedId(b.id)}
-            rail={(b) => ({ status: ageBucket(enteredStatusAt(b), NOW) === 'over-7' ? 'critical' : 'attention', provenance: b.provenance })}
-            empty={<EmptyState fact={a.nothingForYou} />}
+            rail={(b) => ({ status: ageBucket(enteredStatusAt(b), today) === 'over-7' ? 'critical' : 'attention', provenance: b.provenance })}
+            empty={list.state !== 'ready' ? <BillsNotHere list={list} /> : <EmptyState fact={a.nothingForYou} />}
           />
         </Section>
         <Section caption={a.howLong} title={a.waitingTime}>
@@ -278,7 +282,13 @@ export function ExpenseApprovals() {
           </span>
         }
       >
-        <DataTable density={density} columns={lineColumns} rows={lines} rowKey={(l) => l.key} empty={<EmptyState fact={a.noBills} />} />
+        <DataTable
+          density={density}
+          columns={lineColumns}
+          rows={lines}
+          rowKey={(l) => l.key}
+          empty={list.state !== 'ready' ? <BillsNotHere list={list} /> : <EmptyState fact={a.noBills} />}
+        />
         <p className="mt-2 px-6 text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
           {a.footnote(rupees(total.totalPaise), total.bills - total.rejected.count)}
           {group === 'vehicle' ? ` ${a.noVehicleNote}` : ''}
@@ -325,10 +335,8 @@ export function ExpenseApprovals() {
                   <MoneyCell value={selected.amount} />
                 </Detail>
                 <Detail label={t.detail.fields.billDate!}>{formatDate(selected.billDate)}</Detail>
-                <Detail label={a.columns.site}>{SITES.find((s) => s.id === selected.siteId)?.name ?? selected.siteId}</Detail>
-                {selected.vehicleId ? (
-                  <Detail label={t.detail.fields.vehicle!}>{VEHICLES.find((v) => v.id === selected.vehicleId)?.displayReg ?? '–'}</Detail>
-                ) : null}
+                <Detail label={a.columns.site}>{siteName(selected.siteId)}</Detail>
+                {selected.vehicleId ? <Detail label={t.detail.fields.vehicle!}>{vehicleLabel(selected.vehicleId) ?? '–'}</Detail> : null}
                 {selected.litres !== null ? (
                   <Detail label={t.detail.fields.litres!}>
                     <QuantityCell value={selected.litres} decimals={1} uom="L" />

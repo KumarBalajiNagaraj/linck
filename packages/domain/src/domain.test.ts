@@ -139,6 +139,35 @@ describe('permissions', () => {
     expect(resolveHome({ 'fleet.board.read': { orgWide: true, siteIds: [] } })).toBe('/fleet/board');
   });
 
+  it('lands someone no rule fits on the first page of their menu they may open', () => {
+    // A member admin and nothing else: no rule matches, and /overview would turn them away.
+    const admin: Grants = {
+      'admin.member.manage': { orgWide: true, siteIds: [] },
+      'compliance.document.read': { orgWide: true, siteIds: [] },
+    };
+    const menu = [
+      { permission: 'executive.dashboard.read', route: '/overview' },
+      { permission: 'fleet.board.read', route: '/fleet/board' },
+      { permission: 'compliance.document.read', route: '/compliance/documents' },
+      { permission: 'compliance.ewb.read', route: '/compliance/ewb' },
+    ];
+    expect(resolveHome(admin, null, menu)).toBe('/compliance/documents');
+    // A pinned route and the rules still come first.
+    expect(resolveHome(admin, '/compliance/ewb', menu)).toBe('/compliance/ewb');
+    expect(resolveHome({ ...admin, 'fleet.board.read': { orgWide: true, siteIds: [] } }, null, menu)).toBe('/fleet/board');
+  });
+
+  it('checks the menu at the site the person lands in, as the menu does', () => {
+    const scoped: Grants = { 'compliance.document.read': { orgWide: false, siteIds: ['site-krp'] } };
+    const menu = [{ permission: 'compliance.document.read', route: '/compliance/documents' }];
+    expect(resolveHome(scoped, null, menu, 'site-krp')).toBe('/compliance/documents');
+    expect(resolveHome(scoped, null, menu, 'site-tvl')).toBe('/overview');
+  });
+
+  it('keeps /overview for someone who may open nothing at all', () => {
+    expect(resolveHome({}, null, [{ permission: 'fleet.board.read', route: '/fleet/board' }])).toBe('/overview');
+  });
+
   it('lands a sales coordinator on the sales board even though they can read the fleet board', () => {
     const sales: Grants = {
       'fleet.board.read': { orgWide: false, siteIds: ['site-krp'] },

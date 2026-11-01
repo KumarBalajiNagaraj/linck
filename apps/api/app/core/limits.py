@@ -12,12 +12,13 @@ Either way the answer is a 413 in the shape every refusal has,
 closed, so the rest of the body is never read at all.
 
 Every route takes the general cap, `max_body_bytes` (1 MB unless
-LINCK_MAX_BODY_BYTES says otherwise), but three whose bodies are not a screen's
+LINCK_MAX_BODY_BYTES says otherwise), but four whose bodies are not a screen's
 small JSON:
 
-- The bill upload: a scan of up to `file_max_bytes`, with room for the
-  multipart framing. UploadSizeLimit (app/core/storage.py) holds that path to
-  the same figure; it is named here as well so that no route is ever uncapped.
+- The two uploads, an expense bill's scan and a trip sheet's paper: up to
+  `file_max_bytes` each, with room for the multipart framing. UploadSizeLimit
+  (app/core/storage.py) holds those paths to the same figure; they are named
+  here as well so that no route is ever uncapped.
 - A WhatsApp chat import: up to 500 claims, each with the driver's message
   and the slip's reading. A full one measures about 0.9 MB in English and more
   in Tamil, so it gets 4 MB rather than sitting just under the general cap.
@@ -52,6 +53,7 @@ WHATSAPP_IMPORT_MAX_BYTES = 4 * 1024 * 1024
 #: The routes whose bodies are not small JSON, and the cap each takes instead.
 OWN_CAPS: Mapping[str, Callable[[Settings], int]] = {
     "/expenses/attachments": lambda settings: settings.file_max_bytes + MULTIPART_MARGIN,
+    "/vehicle-pl/attachments": lambda settings: settings.file_max_bytes + MULTIPART_MARGIN,
     "/webhooks/whatsapp": lambda settings: WHATSAPP_WEBHOOK_MAX_BYTES,
     "/whatsapp/imports": lambda settings: WHATSAPP_IMPORT_MAX_BYTES,
 }

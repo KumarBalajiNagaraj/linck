@@ -1,16 +1,19 @@
 """Reference data three or more modules would otherwise each invent.
 
-Only the party master exists so far, and only the columns the customer screens
-use plus the ones docs/schema-core-tables.md makes load-bearing (roles, GSTIN,
-credit control). PAN, MSME, withholding and the merge tooling arrive with the
-vendor side.
+The party master, with the columns the customer screens use plus the ones
+docs/schema-core-tables.md makes load-bearing (roles, GSTIN, credit control);
+vendors are parties too, with the `vendor` role (LIN-22). PAN, MSME,
+withholding and the merge tooling arrive with payables.
+
+The item master holds what nothing else does: a material's HSN code, its GST
+rate and the unit it is traded in, so no screen or rule hard-codes either.
 """
 
 import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Index, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -66,6 +69,12 @@ class Party(Base):
         ),
         CheckConstraint("payment_terms_days >= 0", name="payment_terms_not_negative"),
         CheckConstraint("status in ('active','inactive')", name="status_known"),
+        # A customer is served from one of our sites; a firm that only sells
+        # to us (a quarry, a crusher) is not served from anywhere.
+        CheckConstraint(
+            "NOT ('customer' = ANY (party_roles)) OR served_from_site_id IS NOT NULL",
+            name="customer_has_site",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -83,13 +92,100 @@ class Party(Base):
     # needs them, and are never rows in core.sites.
     default_delivery_site: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     # The plant that usually serves them. A fact about the customer, not a
-    # filter: the customer master is read org-wide.
-    served_from_site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # filter: the customer master is read org-wide. Null for a vendor that is
+    # not also a customer.
+    served_from_site_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     credit_limit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default=text("0"))
     # Warn by default (docs/DATABASE.md): a hard block at order time ends with
     # every limit set to 999999999 within a fortnight.
     credit_enforcement: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'warn'"))
     payment_terms_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()
+
+
+#: HSN codes are 4 to 8 digits; a unit is what the trade writes on the bill
+#: (unit, tonne, cft, load...), typed once into the material master.
+HSN_SHAPE = "^[0-9]{4,8}$"
+UNIT_SHAPE = "char_length(unit) BETWEEN 1 AND 20"
+
+
+class Item(Base):
+    """A material bought and sold: the workbook's Material DB (name, HSN, unit, default GST%).
+
+    The design's one item master (docs/schema-core-tables.md), with only what
+    the vehicle P&L reads so far. `code` is the product code the screens and
+    customer orders already use (MSAND, AGG20), when there is one, so those
+    can point here once they are migrated. A trip line keeps the HSN, unit and
+    GST rate it was billed at, so changing them here never rewrites an old bill.
+    """
+
+    __tablename__ = "items"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        UniqueConstraint("organization_id", "code"),
+        CheckConstraint("code IS NULL OR code ~ '^[A-Z0-9_-]{1,32}$'", name="code_shape"),
+        CheckConstraint("char_length(name) BETWEEN 1 AND 120", name="name_length"),
+        CheckConstraint(f"hsn_code IS NULL OR hsn_code ~ '{HSN_SHAPE}'", name="hsn_shape"),
+        CheckConstraint("gst_rate_pct >= 0 AND gst_rate_pct <= 100", name="gst_rate_range"),
+        CheckConstraint(UNIT_SHAPE, name="unit_shape"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    code: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    hsn_code: Mapped[str | None] = mapped_column(Text)
+    #: The GST% a new line of this material starts at; the line may say otherwise.
+    gst_rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("0"))
+    unit: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'unit'"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()
+
+
+class PartyLocation(Base):
+    """Where a vendor sells from (a quarry, a crusher yard) or a customer takes delivery (LIN-22).
+
+    The workbook's purchase and delivery locations: picked from here on a
+    trip line, or typed there and added here. A name, not an address.
+    """
+
+    __tablename__ = "party_locations"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        UniqueConstraint("organization_id", "party_id", "name"),
+        tenant_fk("party_id", "master.parties"),
+        CheckConstraint("char_length(name) BETWEEN 1 AND 120", name="name_length"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    party_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = created_at()
+
+
+class GstRate(Base):
+    """A GST% a trip line may be billed at: the tenant's own list, never written in the code (LIN-22).
+
+    Switched off rather than deleted, so a line billed at it still reads.
+    """
+
+    __tablename__ = "gst_rates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        UniqueConstraint("organization_id", "rate_pct"),
+        CheckConstraint("rate_pct >= 0 AND rate_pct <= 100", name="rate_range"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()

@@ -6,3 +6,4 @@ export * from './series.js';
 export * from './sales-history.js';
 export * from './whatsapp.js';
 export { NOW } from './seed.js';
+export * from './vehicle-pl.js';

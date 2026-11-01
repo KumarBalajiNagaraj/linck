@@ -43,9 +43,9 @@ APP_PASSWORD = os.environ.get("LINCK_TEST_APP_PASSWORD", "linck_app")
 # nothing behind that the next run cannot identify and sweep.
 SLUG_PREFIX = "zz-test-"
 
-# The schemas migrations 0011 and 0020 created, and the tables the app role may
-# only INSERT into and read, like core.audit_logs.
-GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance", "ai")
+# The schemas migrations 0011, 0020 and 0030 created, and the tables the app
+# role may only INSERT into and read, like core.audit_logs.
+GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance", "ai", "logistics", "procurement")
 APPEND_ONLY_TABLES = ("finance.payments", "finance.expense_bill_events")
 
 
@@ -97,9 +97,9 @@ def _provision_app_role() -> None:
         # the migration, which targets PUBLIC rather than a named role.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE ON core.audit_logs FROM {}").format(role))
 
-        # The business schemas migrations 0011 and 0020 created grant linck_app
-        # what core does, from the migration itself. Only where the role did not
-        # exist when the migration ran (so it skipped the grants) are they
+        # The business schemas migrations 0011, 0020 and 0030 created grant
+        # linck_app what core does, from the migration itself. Only where the role
+        # did not exist when the migration ran (so it skipped the grants) are they
         # restated here, append-only tables included; otherwise the suite tests
         # the migration's own grants rather than this file's.
         cur.execute(
@@ -143,6 +143,18 @@ class Tenant:
 # children: most of these tables carry the audit trigger, so deleting them
 # writes fresh audit rows, and clearing the log any earlier would leave them.
 _TEARDOWN_ORDER = [
+    "finance.trip_payments",
+    "sales.trip_closures",
+    "sales.trip_sales",
+    "procurement.trip_purchase_files",
+    "procurement.trip_purchases",
+    "logistics.enroute_expenses",
+    "logistics.diesel_lines",
+    "logistics.trips",
+    "logistics.trip_sheets",
+    "master.gst_rates",
+    "master.party_locations",
+    "master.items",
     "ai.industry_digests",
     "finance.expense_bill_events",
     "finance.expense_bill_fields",
@@ -168,9 +180,10 @@ _TEARDOWN_ORDER = [
     "core.users",
 ]
 
-# Those trigger-written rows are stamped from app.current_org_id, which is unset
-# on this privileged connection, so they land with a NULL organization_id and can
-# only be found through the row image the trigger captured.
+# Those trigger-written rows carry their tenant's id although this privileged
+# connection sets no app.current_org_id: since migration 0005 the trigger takes
+# organization_id from the row it audits. The row-image match is for audit rows
+# stamped NULL, as writes with no tenant context were before 0005.
 _DELETE_AUDIT = """
     DELETE FROM core.audit_logs
     WHERE organization_id = ANY(%(ids)s)

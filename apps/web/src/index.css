@@ -123,3 +123,78 @@
     background-image: var(--hatch-pattern);
   }
 }
+
+/* Vehicle P&L print view (LIN-22): "PDF / Print" lays plain tables over the
+   page and prints only those. Colours are the theme's tokens. */
+.pl-print {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: auto;
+  background: var(--surface);
+  color: var(--text-primary);
+  padding: 16px;
+}
+.pl-print-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.pl-print-sheet {
+  padding: 16px 0;
+}
+.pl-print-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.pl-print table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.pl-print th,
+.pl-print td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  white-space: nowrap;
+}
+.pl-print th {
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.pl-print .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pl-print tfoot td {
+  font-weight: 600;
+  border-top: 1px solid var(--border-strong);
+}
+@media print {
+  body.pl-printing > *:not(.pl-print) {
+    display: none !important;
+  }
+  body.pl-printing .pl-print {
+    position: static;
+    overflow: visible;
+    padding: 0;
+  }
+  .pl-print-bar {
+    display: none;
+  }
+  .pl-print-scroll {
+    overflow: visible;
+  }
+  .pl-print-sheet {
+    break-after: page;
+  }
+  .pl-print table {
+    font-size: 9pt;
+  }
+}

@@ -1,0 +1,141 @@
+import { useMemo, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
+import { can, formatDate } from '@linck/domain';
+import { NOW, VEHICLES, type PlSheetRow, type PlTripReportRow } from '@linck/mock';
+import { Button, Chip, DataTable, EmptyState, IdCell, MoneyCell, PageHeader, QuantityCell, Stacked, type Column } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
+import { useApp } from '../../shell/store.js';
+import { useViewParam } from '../../shell/useViewParam.js';
+import { downloadXlsx, PrintView, type ReportSheet } from './exporters.js';
+import { FilterBar, NO_FILTER, PlTiles, type FilterState } from './PlParts.js';
+import { listSheets, NEW_PATH, READ_KEYS, reportUnits, sheetPath, sheetsTotal, tripReport, usePl, usePlBook, WRITE, type SheetFilter } from './plStore.js';
+import { sheetsSheet, tripsSheet } from './reportSheets.js';
+import { plWords } from './words.js';
+
+const VIEWS = ['sheets', 'trips'] as const;
+
+/**
+ * Fleet → Vehicle P&L (LIN-22): every trip sheet the person may read, with its
+ * profit, or every trip with its own — the workbook's two levels — searched,
+ * filtered by dates, vehicle and customer, and exported or printed.
+ */
+export function SheetList() {
+  const w = useWords(plWords);
+  const { persona } = useApp();
+  const navigate = useNavigate();
+  const book = usePlBook();
+  const parties = usePl((s) => s.parties);
+  const [view, setView] = useViewParam(VIEWS, 'sheets');
+  const [filter, setFilter] = useState<FilterState>(NO_FILTER);
+  const [printing, setPrinting] = useState<ReportSheet[] | null>(null);
+  const f: SheetFilter = { from: filter.from || null, to: filter.to || null, q: filter.q, vehicleId: filter.vehicleId || null, customerId: filter.customerId || null };
+
+  const rows = useMemo(() => listSheets(book, persona.grants, READ_KEYS, f), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
+  const trips = useMemo(() => tripReport(book, reportUnits(book, persona.grants, READ_KEYS, f)), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
+  const total = view === 'sheets' ? sheetsTotal(rows) : trips.total;
+  const writable = VEHICLES.some((v) => can(persona.grants, WRITE, { siteId: v.siteId }));
+
+  const vehicles = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const s of book.sheets) seen.set(s.vehicleId, s.registrationNumber);
+    return [...seen].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [book.sheets]);
+  const customers = useMemo(
+    () =>
+      parties
+        .filter((p) => p.roles.includes('customer'))
+        .map((p) => ({ id: p.id, label: p.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [parties],
+  );
+
+  const subtitle = filter.from || filter.to ? w.periodLine(filter.from ? formatDate(filter.from) : '…', filter.to ? formatDate(filter.to) : '…') : w.allDates;
+  const sheetsForExport = (): ReportSheet[] => [view === 'sheets' ? sheetsSheet(w, rows, sheetsTotal(rows), subtitle) : tripsSheet(w, trips, subtitle)];
+  const dates = (r: PlSheetRow) => (r.endDate && r.endDate !== r.startDate ? `${formatDate(r.startDate)} – ${formatDate(r.endDate)}` : formatDate(r.startDate));
+
+  const sheetColumns: Column<PlSheetRow>[] = [
+    { key: 'sheet', header: w.col.sheet, type: 'id', sticky: true, render: (r) => <Stacked primary={<IdCell>{r.sheetNumber}</IdCell>} secondary={r.endDate ? dates(r) : `${dates(r)} · ${w.open}`} /> },
+    { key: 'vehicle', header: w.col.vehicle, render: (r) => <Stacked primary={r.registrationNumber} secondary={r.driverName} /> },
+    { key: 'trips', header: w.col.trips, type: 'num', render: (r) => r.tripNumbers.length },
+    { key: 'customers', header: w.col.customer, render: (r) => (r.customers.length ? r.customers.slice(0, 2).join(', ') + (r.customers.length > 2 ? ` +${r.customers.length - 2}` : '') : w.noTripYet) },
+    { key: 'km', header: w.col.km, type: 'num', render: (r) => <QuantityCell value={r.pl.distanceKm} decimals={0} /> },
+    { key: 'sales', header: w.col.sales, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.sales} /> },
+    { key: 'purchase', header: w.col.purchase, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.materialCost} /> },
+    { key: 'road', header: w.col.enRoute, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.totalEnRoute} /> },
+    { key: 'profit', header: w.col.profit, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.net} /> },
+    { key: 'pct', header: w.col.pct, type: 'num', render: (r) => (r.pl.profitPct === null ? '—' : r.pl.profitPct.toFixed(2)) },
+  ];
+  const tripColumns: Column<PlTripReportRow>[] = [
+    {
+      key: 'trip',
+      header: w.col.trip,
+      type: 'id',
+      sticky: true,
+      render: (r) => <Stacked primary={<IdCell>{r.tripNumber ?? (r.kind === 'payment' ? w.sheetPayment : w.noTripYet)}</IdCell>} secondary={`${formatDate(r.date)} · ${r.sheetNumber}`} />,
+    },
+    { key: 'vehicle', header: w.col.vehicle, render: (r) => <Stacked primary={r.registrationNumber} secondary={r.driverName} /> },
+    { key: 'customers', header: w.col.customer, render: (r) => <Stacked primary={r.customers.join(', ') || '—'} secondary={r.materials.join(', ')} /> },
+    { key: 'km', header: w.col.km, type: 'num', render: (r) => <QuantityCell value={r.pl.distanceKm} decimals={0} /> },
+    { key: 'sales', header: w.col.sales, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.sales} /> },
+    { key: 'purchase', header: w.col.purchase, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.materialCost} /> },
+    { key: 'road', header: w.col.enRoute, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.totalEnRoute} /> },
+    { key: 'profit', header: w.col.profit, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.pl.net} /> },
+    { key: 'pct', header: w.col.pct, type: 'num', render: (r) => (r.pl.profitPct === null ? '—' : r.pl.profitPct.toFixed(2)) },
+  ];
+
+  const empty =
+    book.sheets.length === 0 ? (
+      <EmptyState fact={w.noSheets} />
+    ) : (
+      <EmptyState fact={w.noneMatch} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />
+    );
+
+  return (
+    <div className="pl-screen">
+      <PageHeader
+        eyebrow={w.eyebrow}
+        title={w.title}
+        actions={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button onClick={() => downloadXlsx(`vehicle-pl-${view}-${formatDate(NOW).replace(/\//g, '-')}`, sheetsForExport())}>{w.excel}</Button>
+            <Button onClick={() => setPrinting(sheetsForExport())}>{w.print}</Button>
+            {writable && (
+              <Button variant="primary" onClick={() => void navigate({ to: NEW_PATH })}>
+                {w.addSheet}
+              </Button>
+            )}
+          </div>
+        }
+      />
+      <div className="flex gap-1.5 px-4 pt-3 md:px-6">
+        {VIEWS.map((v) => (
+          <Chip key={v} active={view === v} onClick={() => setView(v)} count={v === 'sheets' ? rows.length : trips.rows.filter((r) => r.kind === 'trip').length}>
+            {w.views[v]}
+          </Chip>
+        ))}
+      </div>
+      <FilterBar value={filter} onChange={setFilter} vehicles={vehicles} customers={customers} />
+      <PlTiles total={total} asOf={formatDate(NOW)} />
+      {view === 'sheets' ? (
+        <DataTable
+          columns={sheetColumns}
+          rows={rows}
+          rowKey={(r) => r.id}
+          rail={(r) => (r.pl.net.startsWith('-') ? { status: 'critical' } : undefined)}
+          onRowClick={(r) => void navigate({ to: sheetPath(r.id) })}
+          empty={empty}
+        />
+      ) : (
+        <DataTable
+          columns={tripColumns}
+          rows={trips.rows}
+          rowKey={(r) => `${r.sheetId}:${r.tripId ?? r.kind}`}
+          rail={(r) => (r.pl.net.startsWith('-') ? { status: 'critical' } : undefined)}
+          onRowClick={(r) => void navigate({ to: sheetPath(r.sheetId) })}
+          empty={empty}
+        />
+      )}
+      {printing && <PrintView sheets={printing} printedOn={formatDate(NOW)} onClose={() => setPrinting(null)} />}
+    </div>
+  );
+}

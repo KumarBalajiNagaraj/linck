@@ -1,4 +1,4 @@
-import type { BillEvent, BillNotice, PaymentRecord } from '@linck/domain';
+import type { BillEvent, BillNotice, PaymentMode, PaymentRecord, PlTotals, TripPl } from '@linck/domain';
 import type { Provenance, StatusFamily } from '@linck/tokens';
 
 /**
@@ -535,4 +535,416 @@ export interface BillSource {
   /** What the driver wrote, often nothing: most send only the photo. */
   message: string;
   attachments: string[];
+}
+
+/* ------------------------------------------------------------ vehicle P&L */
+
+/*
+ * LIN-22, field for field the JSON of /vehicle-pl (apps/api/app/schemas/
+ * vehicle_pl.py): money a two-place string, km, litres, quantities and GST
+ * rates numbers, dates YYYY-MM-DD. A trip sheet is one vehicle and driver from
+ * a start date to an end date; its trips are the loads. Every figure the rules
+ * derive is worked out by packages/domain/src/vehicle-pl.ts, so a P&L block IS
+ * the domain's TripPl and a total its PlTotals.
+ */
+
+export type PlDieselSource = 'typed' | 'expense_bill' | 'fuel_entry';
+export type PlEnRouteKind = 'toll' | 'police' | 'maintenance';
+export type PlMaintenanceKind = 'tyre_rotation' | 'wheel_alignment' | 'greasing' | 'engine_oil' | 'coolant' | 'misc';
+export type PlPartyRole = 'customer' | 'vendor';
+export type PlDueStatus = 'pending' | 'paid' | 'closed' | 'partial' | 'completed';
+
+export interface PlAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeKb: number;
+  url: string;
+}
+
+/* ----- what the page sends (SheetIn) */
+
+export interface PlDieselInput {
+  id?: string | null;
+  source: PlDieselSource;
+  litres?: number | null;
+  rate?: string | null;
+  amount?: string | null;
+  vendorId?: string | null;
+  vendor?: string;
+  billNumber?: string;
+  expenseBillId?: string | null;
+  fuelEntryId?: string | null;
+  filledAt?: string | null;
+  attachmentId?: string | null;
+}
+
+export interface PlEnRouteInput {
+  id?: string | null;
+  kind: PlEnRouteKind;
+  maintenanceKind?: PlMaintenanceKind | null;
+  description?: string;
+  date?: string | null;
+  location?: string;
+  reference?: string;
+  amount: string;
+  attachmentId?: string | null;
+}
+
+export interface PlPurchaseInput {
+  id?: string | null;
+  vendorId: string;
+  location?: string;
+  materialId: string;
+  hsnCode?: string | null;
+  unit?: string | null;
+  quantity: number;
+  rate: string;
+  gstBilled: boolean;
+  gstRatePct?: number | null;
+  vendorGstin?: string | null;
+  invoiceNumber?: string;
+  invoiceDate?: string | null;
+  attachmentIds?: string[];
+}
+
+export interface PlSaleInput {
+  id?: string | null;
+  customerId: string;
+  location?: string;
+  purchaseOrderId?: string | null;
+  poRef?: string;
+  materialId: string;
+  hsnCode?: string | null;
+  unit?: string | null;
+  quantity: number;
+  rate: string;
+  transport?: string | null;
+  gstBilled: boolean;
+  gstRatePct?: number | null;
+  partyGstin?: string | null;
+  challanNumber?: string;
+  invoiceNumber?: string;
+  poAttachmentId?: string | null;
+  dcAttachmentId?: string | null;
+}
+
+export interface PlPaymentInput {
+  id?: string | null;
+  direction: 'in' | 'out';
+  partyId: string;
+  paidOn: string;
+  mode: PaymentMode;
+  reference?: string | null;
+  amount: string;
+  note?: string;
+}
+
+export interface PlTripInput {
+  id?: string | null;
+  date: string;
+  startKm?: number | null;
+  endKm?: number | null;
+  batta?: string | null;
+  notes?: string;
+  diesel?: PlDieselInput[];
+  enRoute?: PlEnRouteInput[];
+  purchases: PlPurchaseInput[];
+  sales: PlSaleInput[];
+  payments?: PlPaymentInput[];
+}
+
+export interface PlSheetInput {
+  siteId: string;
+  vehicleId: string;
+  registrationNumber: string;
+  vehicleModel?: string;
+  driverId?: string | null;
+  driverName?: string;
+  driverPhone?: string;
+  startDate: string;
+  endDate?: string | null;
+  startKm?: number | null;
+  endKm?: number | null;
+  batta?: string | null;
+  notes?: string;
+  diesel?: PlDieselInput[];
+  enRoute?: PlEnRouteInput[];
+  payments?: PlPaymentInput[];
+  trips: PlTripInput[];
+}
+
+/* ----- what comes back (SheetOut and friends) */
+
+export interface PlDieselOut {
+  id: string;
+  source: PlDieselSource;
+  litres: number | null;
+  rate: string | null;
+  amount: string;
+  counted: boolean;
+  vendorId: string | null;
+  vendor: string;
+  billNumber: string;
+  billDate: string | null;
+  billStatus: string | null;
+  filledAt: string | null;
+  expenseBillId: string | null;
+  fuelEntryId: string | null;
+  attachment: PlAttachment | null;
+}
+
+export interface PlEnRouteOut {
+  id: string;
+  kind: PlEnRouteKind;
+  maintenanceKind: PlMaintenanceKind | null;
+  description: string;
+  date: string | null;
+  location: string;
+  reference: string;
+  amount: string;
+  attachment: PlAttachment | null;
+}
+
+export interface PlPurchaseOut {
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  location: string;
+  vendorGstin: string | null;
+  materialId: string;
+  materialName: string;
+  hsnCode: string | null;
+  unit: string;
+  quantity: number;
+  rate: string;
+  gstBilled: boolean;
+  gstRatePct: number;
+  amount: string;
+  gstAmount: string;
+  total: string;
+  invoiceNumber: string;
+  invoiceDate: string | null;
+  attachments: PlAttachment[];
+}
+
+export interface PlSaleOut {
+  id: string;
+  customerId: string;
+  customerName: string;
+  location: string;
+  partyGstin: string | null;
+  purchaseOrderId: string | null;
+  poRef: string;
+  materialId: string;
+  materialName: string;
+  hsnCode: string | null;
+  unit: string;
+  quantity: number;
+  rate: string;
+  transport: string;
+  gstBilled: boolean;
+  gstRatePct: number;
+  amount: string;
+  taxable: string;
+  gstAmount: string;
+  total: string;
+  challanNumber: string;
+  invoiceNumber: string;
+  poAttachment: PlAttachment | null;
+  dcAttachment: PlAttachment | null;
+}
+
+export interface PlPaymentOut {
+  id: string;
+  direction: 'in' | 'out';
+  partyId: string;
+  partyName: string;
+  paidOn: string;
+  mode: PaymentMode;
+  reference: string | null;
+  amount: string;
+  note: string;
+}
+
+export interface PlLevelCosts {
+  distanceKm: number | null;
+  dieselLitres: number;
+  diesel: string;
+  batta: string;
+  enRoute: string;
+}
+
+export interface PlPartyDue {
+  partyId: string;
+  partyName: string;
+  role: PlPartyRole;
+  billed: string;
+  settled: string;
+  due: string;
+  status: PlDueStatus;
+  closedBy: string | null;
+  closedAt: string | null;
+}
+
+export interface PlTripOut {
+  id: string;
+  tripNumber: string;
+  date: string;
+  startKm: number | null;
+  endKm: number | null;
+  batta: string | null;
+  notes: string;
+  diesel: PlDieselOut[];
+  enRoute: PlEnRouteOut[];
+  purchases: PlPurchaseOut[];
+  sales: PlSaleOut[];
+  payments: PlPaymentOut[];
+  pl: TripPl;
+  own: PlLevelCosts;
+  share: PlLevelCosts | null;
+  dues: PlPartyDue[];
+  customers: string[];
+  vendors: string[];
+  materials: string[];
+}
+
+export interface PlSheetRow {
+  id: string;
+  sheetNumber: string;
+  siteId: string;
+  vehicleId: string;
+  registrationNumber: string;
+  vehicleModel: string;
+  driverId: string | null;
+  driverName: string;
+  driverPhone: string;
+  startDate: string;
+  endDate: string | null;
+  startKm: number | null;
+  endKm: number | null;
+  tripNumbers: string[];
+  customers: string[];
+  vendors: string[];
+  materials: string[];
+  basis: 'km' | 'even' | null;
+  pl: TripPl;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlSheetDetail extends PlSheetRow {
+  batta: string | null;
+  notes: string;
+  diesel: PlDieselOut[];
+  enRoute: PlEnRouteOut[];
+  payments: PlPaymentOut[];
+  own: PlLevelCosts;
+  dues: PlPartyDue[];
+  unsettled: PlPartyDue[];
+  trips: PlTripOut[];
+}
+
+export interface PlTripReportRow {
+  kind: 'trip' | 'sheet' | 'payment';
+  sheetId: string;
+  sheetNumber: string;
+  tripId: string | null;
+  tripNumber: string | null;
+  date: string;
+  vehicleId: string;
+  registrationNumber: string;
+  driverName: string;
+  customers: string[];
+  vendors: string[];
+  materials: string[];
+  pl: TripPl;
+}
+
+export interface PlVehicleRow extends PlTotals {
+  vehicleId: string;
+  registrationNumber: string;
+  vehicleModel: string;
+}
+
+export interface PlMonthRow extends PlTotals {
+  month: string;
+}
+
+export interface PlOutstandingRow {
+  partyId: string;
+  name: string;
+  gstin: string | null;
+  phone: string;
+  role: PlPartyRole;
+  trips: number;
+  billed: string;
+  settled: string;
+  due: string;
+  status: PlDueStatus;
+  firstDate: string;
+  lastDate: string;
+}
+
+export interface PlReport<Row, Total = PlTotals> {
+  rows: Row[];
+  total: Total;
+}
+
+export interface PlOutstandingTotal {
+  parties: number;
+  billed: string;
+  settled: string;
+  due: string;
+}
+
+export interface PlLocation {
+  id: string;
+  name: string;
+}
+
+export interface PlParty {
+  id: string;
+  name: string;
+  gstin: string | null;
+  phone: string;
+  contactName: string;
+  roles: PlPartyRole[];
+  locations: PlLocation[];
+}
+
+export interface PlMaterial {
+  id: string;
+  code: string | null;
+  name: string;
+  hsnCode: string | null;
+  gstRatePct: number;
+  unit: string;
+  active: boolean;
+}
+
+export interface PlGstRate {
+  id: string;
+  ratePct: number;
+  active: boolean;
+}
+
+export interface PlMasters {
+  customers: PlParty[];
+  vendors: PlParty[];
+  materials: PlMaterial[];
+  gstRates: PlGstRate[];
+}
+
+export interface PlDieselBillOption {
+  id: string;
+  billNumber: string;
+  billDate: string;
+  vendor: string;
+  vehicleId: string | null;
+  litres: number | null;
+  amount: string;
+  status: string;
+  linkedSheet: { sheetId: string; sheetNumber: string } | null;
 }

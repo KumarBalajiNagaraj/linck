@@ -22,7 +22,10 @@ import type { Persona } from '../../auth/personas.js';
  * all three screens in one session. Live, the screens read the API instead,
  * through a TanStack Query cache over `/expenses`, and these actions have
  * their twins there as requests: bills.ts picks which, once, for the mode.
- * Screens go through bills.ts, never straight to this store.
+ * The expense screens go through bills.ts, never straight to this store. A
+ * screen still wholly on sample data (the vehicle P&L, LIN-22) reads it
+ * directly: live, its diesel bills are the demo's like everything else on
+ * it, under the "Sample data" banner.
  *
  * Moves along the approval chain go only through `act` and `actMany`, which
  * apply the domain's rules: the right key at the bill's site, a reason where

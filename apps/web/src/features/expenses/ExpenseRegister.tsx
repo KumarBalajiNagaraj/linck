@@ -2,9 +2,7 @@ import { useMemo, useState } from 'react';
 import { availableActions, businessDate, can, formatDate, formatINRCompact, parseTypedAmount } from '@linck/domain';
 import {
   DRIVERS,
-  EXPENSE_KIND_LABEL,
   EXPENSE_STATUS_FAMILY,
-  EXPENSE_STATUS_LABEL,
   expensesForSite,
   NOW,
   VEHICLES,
@@ -33,11 +31,15 @@ import {
   StatusStamp,
   type Column,
 } from '@linck/ui';
+import { useLang, type Lang } from '../../i18n/lang.js';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords, wordsNow } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { BatchBar, BillHistory, ChainActions, STEP_ACTION } from './ApprovalChain.js';
 import { actorFor, useExpenses } from './expenseStore.js';
 import { UploadBillSheet } from './UploadBillSheet.js';
+import { expenseWords } from './words.js';
 
 /**
  * The expenses database — diesel bills, repair bills, tyres, spares, tolls.
@@ -54,9 +56,9 @@ const STATUS_ORDER: ExpenseBill['status'][] = ['submitted', 'validated', 'approv
 const VIEWS = ['all', ...STATUS_ORDER, 'corrected'] as const;
 
 /** Each desk's upload key. Finance sees both desks and uploads to neither. */
-const DESK_COPY: Record<ExpenseBill['desk'], { eyebrow: string; upload: string }> = {
-  fleet: { eyebrow: 'Fleet', upload: 'fleet.expense.upload' },
-  stores: { eyebrow: 'Stores', upload: 'stores.expense.upload' },
+const UPLOAD_KEY: Record<ExpenseBill['desk'], string> = {
+  fleet: 'fleet.expense.upload',
+  stores: 'stores.expense.upload',
 };
 
 export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) {
@@ -65,8 +67,11 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
   const [view, setView] = useViewParam(VIEWS, 'all');
   const [uploading, setUploading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const lang = useLang((s) => s.lang);
+  const t = useWords(expenseWords);
+  const status = useWords(statusWords);
 
-  const mayUpload = desk !== null && can(persona.grants, DESK_COPY[desk].upload, { siteId: siteScope });
+  const mayUpload = desk !== null && can(persona.grants, UPLOAD_KEY[desk], { siteId: siteScope });
   const actor = actorFor(persona);
   // A bill asks for action only from whoever may take its next step; to
   // everyone else it is in flight, with the ball in another court.
@@ -76,7 +81,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
   };
   const family = (e: ExpenseBill): StatusFamily =>
     isMine(e) ? 'attention' : e.status === 'submitted' ? 'pending' : EXPENSE_STATUS_FAMILY[e.status];
-  const columns = useMemo(() => columnsFor(desk, family), [desk, persona]);
+  const columns = useMemo(() => columnsFor(desk, family, lang), [desk, persona, lang]);
 
   const all = useMemo(
     () => [...expensesForSite(siteScope, desk, bills)].sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt)),
@@ -91,36 +96,36 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
   return (
     <>
       <PageHeader
-        eyebrow={desk ? DESK_COPY[desk].eyebrow : 'Finance'}
-        title={desk ? 'Expenses' : 'Expense bills'}
+        eyebrow={desk ? t.desk[desk] : t.desk.finance}
+        title={desk ? t.register.title : t.register.financeTitle}
         actions={
           mayUpload ? (
             <Button variant="primary" onClick={() => setUploading(true)}>
-              Upload bill
+              {t.register.addBill}
             </Button>
           ) : undefined
         }
         meta={
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <AsOfStamp asOf="14:42" source="expense_bills" freshness="live" />
-            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              {awaiting.length} bills worth {formatINRCompact(awaitingValue)} wait on you
+            <span className="text-[14px]" style={{ color: awaiting.length > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+              {t.register.waitingForYou(awaiting.length, formatINRCompact(awaitingValue))}
             </span>
           </span>
         }
       />
       <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
-          All bills
+          {t.register.all}
         </Chip>
         {STATUS_ORDER.map((s) => (
           <Chip key={s} active={view === s} onClick={() => setView(s)} count={all.filter((e) => e.status === s).length}>
-            {EXPENSE_STATUS_LABEL[s]}
+            {status.expense[s]}
           </Chip>
         ))}
         <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-strong)' }} />
         <Chip active={view === 'corrected'} onClick={() => setView('corrected')} count={all.filter((e) => e.provenance === 'overridden').length}>
-          Capture corrected by hand
+          {t.register.corrected}
         </Chip>
       </div>
       <BatchBar key={`${view}-${persona.key}`} bills={rows} status={STATUS_ORDER.includes(view as ExpenseBill['status']) ? (view as ExpenseBill['status']) : null} />
@@ -136,13 +141,9 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
           rail={(e) => ({ status: family(e), provenance: e.provenance })}
           empty={
             all.length === 0 ? (
-              <EmptyState fact="No expense bills at this site." because="Nothing has been submitted here yet." />
+              <EmptyState fact={t.register.noBills} />
             ) : (
-              <EmptyState
-                fact="No bills match this view."
-                because="Nothing at this site is at that step of the approval chain."
-                action={{ label: 'Show all bills', onClick: () => setView('all') }}
-              />
+              <EmptyState fact={t.register.noneInList} action={{ label: t.register.showAll, onClick: () => setView('all') }} />
             )
           }
         />
@@ -157,9 +158,9 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
         width="form"
         // The vendor reads as a title; the bill number is an identifier, set in
         // the mono face where 0 and O cannot be confused against the paper.
-        title={selected ? `${EXPENSE_KIND_LABEL[selected.kind]} · ${selected.vendor}` : ''}
+        title={selected ? `${status.expenseKind[selected.kind]} · ${selected.vendor}` : ''}
         identifier={selected?.billNumber}
-        {...(selected ? { status: { family: family(selected), label: EXPENSE_STATUS_LABEL[selected.status] } } : {})}
+        {...(selected ? { status: { family: family(selected), label: status.expense[selected.status] } } : {})}
       >
         {selected ? <BillDetail key={selected.id} bill={selected} mayCorrect={selected.status === 'submitted' && (mayUpload || isMine(selected))} /> : null}
       </SideSheet>
@@ -177,9 +178,12 @@ type EditableKey = 'billNumber' | 'billDate' | 'vendor' | 'litres' | 'amount';
 function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boolean }) {
   const { persona } = useApp();
   const update = useExpenses((s) => s.update);
+  const t = useWords(expenseWords);
+  const d = t.detail;
+  const status = useWords(statusWords);
   const [editing, setEditing] = useState(false);
   const [unviewable, setUnviewable] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<keyof typeof d.errors | null>(null);
   const [draft, setDraft] = useState<Record<EditableKey, string>>(() => ({
     billNumber: bill.billNumber,
     // The IST calendar date the bill carries, not the UTC date of IST midnight.
@@ -195,21 +199,21 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
     const amount = parseTypedAmount(draft.amount);
     const litres = draft.litres.trim() === '' ? null : parseTypedAmount(draft.litres, 3);
     const today = businessDate(NOW);
-    const why =
+    const why: keyof typeof d.errors | null =
       amount === null || amount <= 0
-        ? 'Type the amount as printed, such as 12,500.00.'
+        ? 'amount'
         : litres !== null && litres <= 0
-          ? 'Type the litres as printed, such as 120.45.'
+          ? 'litres'
           : draft.litres.trim() !== '' && litres === null
-            ? 'Type the litres as printed, such as 120.45.'
+            ? 'litres'
             : bill.kind === 'diesel' && litres === null
-              ? 'A diesel bill needs its litres, as printed.'
+              ? 'dieselLitres'
               : !/^\d{4}-\d{2}-\d{2}$/.test(draft.billDate)
-                ? 'Pick the date printed on the bill.'
+                ? 'date'
                 : draft.billDate > today
-                  ? 'A bill cannot be dated after today.'
+                  ? 'futureDate'
                   : !draft.billNumber.trim() || !draft.vendor.trim()
-                    ? 'The bill number and vendor cannot be blank.'
+                    ? 'blank'
                     : null;
     setProblem(why);
     if (why || amount === null) return;
@@ -246,57 +250,57 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
   return (
     <>
       <ChainActions bill={bill} />
-      <SheetSection caption="The scan">
+      <SheetSection caption={d.photo}>
         {bill.attachment ? (
           bill.attachment.mimeType === 'application/pdf' || unviewable ? (
-            <a href={bill.attachment.url} target="_blank" rel="noreferrer" className="text-[13px]" style={{ color: 'var(--brand)' }}>
-              Open {bill.attachment.fileName} ({bill.attachment.sizeKb} KB)
+            <a href={bill.attachment.url} target="_blank" rel="noreferrer" className="text-[14px]" style={{ color: 'var(--brand)' }}>
+              {d.openFile(bill.attachment.fileName, bill.attachment.sizeKb)}
             </a>
           ) : (
             <img
               src={bill.attachment.url}
-              alt={`Scan of bill ${bill.billNumber}`}
+              alt={d.photoAlt(bill.billNumber)}
               className="max-h-[420px] w-full object-contain"
               onError={() => setUnviewable(true)}
             />
           )
         ) : (
-          <Note>No scan on file for this bill. It was keyed before uploads existed, or came in through WhatsApp.</Note>
+          <Note>{d.noPhoto}</Note>
         )}
       </SheetSection>
       {bill.capture ? (
-        <SheetSection caption="Captured from the scan">
-          <table className="w-full border-collapse text-[12px]">
+        <SheetSection caption={d.readFromPhoto}>
+          <table className="w-full border-collapse text-[13px]">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-strong)', color: 'var(--text-tertiary)' }}>
-                <th className="py-1 pr-3 text-left font-medium">Field</th>
-                <th className="py-1 pr-3 text-left font-medium">Scan read</th>
-                <th className="py-1 pr-3 text-left font-medium">Ledger holds</th>
+                <th className="py-1 pr-3 text-left font-medium">{d.field}</th>
+                <th className="py-1 pr-3 text-left font-medium">{d.photoSays}</th>
+                <th className="py-1 pr-3 text-left font-medium">{d.saved}</th>
               </tr>
             </thead>
             <tbody>
               {bill.capture.fields.map((f) => (
                 <tr key={f.key} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                   <td className="py-1.5 pr-3" style={{ color: 'var(--text-secondary)' }}>
-                    {f.label}
+                    {d.fields[f.key] ?? f.label}
                   </td>
                   <td className="py-1.5 pr-3">
                     {f.captured === null ? (
-                      <span style={{ color: 'var(--text-tertiary)' }}>not read</span>
+                      <span style={{ color: 'var(--text-tertiary)' }}>{d.notRead}</span>
                     ) : (
                       <span className="flex items-center gap-2">
                         {f.confidence ? <ConfidenceMeter level={f.confidence} /> : null}
-                        <span className="font-id">{f.captured}</span>
+                        <span className="font-id">{f.key === 'kind' ? (status.expenseKind[f.captured as ExpenseBill['kind']] ?? f.captured) : f.captured}</span>
                       </span>
                     )}
                   </td>
                   <td className="py-1.5 pr-3">
                     <span className="font-id" style={{ color: f.overridden ? 'var(--status-attention)' : 'var(--text-primary)' }}>
-                      {f.value || '–'}
+                      {(f.key === 'kind' ? status.expenseKind[f.value as ExpenseBill['kind']] : f.value) || '–'}
                     </span>
                     {f.overridden ? (
-                      <span className="block text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                        corrected by {f.overriddenBy}
+                      <span className="block text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+                        {d.correctedBy(f.overriddenBy ?? '')}
                       </span>
                     ) : null}
                   </td>
@@ -304,47 +308,47 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-            Read by {bill.capture.engine}
+          <p className="mt-2 text-[12px]" style={{ color: 'var(--text-tertiary)' }} title={bill.capture.engine}>
+            {d.readBy}
           </p>
         </SheetSection>
       ) : null}
       {editing ? (
-        <SheetSection caption="Correct this bill">
+        <SheetSection caption={d.correctTitle}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {(
               [
-                ['billNumber', 'Bill number', 'text'],
-                ['billDate', 'Bill date', 'date'],
-                ['vendor', 'Vendor', 'text'],
-                ...(bill.kind === 'diesel' ? [['litres', 'Litres', 'text']] : []),
-                ['amount', 'Amount ₹', 'text'],
+                ['billNumber', d.fields.billNumber!, 'text'],
+                ['billDate', d.fields.billDate!, 'date'],
+                ['vendor', d.fields.vendor!, 'text'],
+                ...(bill.kind === 'diesel' ? [['litres', d.fields.litres!, 'text']] : []),
+                ['amount', d.fields.amountRupees!, 'text'],
               ] as [EditableKey, string, string][]
             ).map(([key, label, type]) => (
               <label key={key} className="flex flex-col gap-1">
-                <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                   {label}
                 </span>
                 <input
                   type={type}
                   {...(type === 'date' ? { max: businessDate(NOW) } : {})}
                   value={draft[key]}
-                  onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                  className="h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[13px]"
+                  onChange={(e) => setDraft((was) => ({ ...was, [key]: e.target.value }))}
+                  className="h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[38px] [@media(hover:hover)]:text-[14px]"
                   style={{ background: 'var(--surface)', color: 'var(--text-primary)', boxShadow: 'inset 0 0 0 1px var(--border-strong)', borderRadius: 'var(--r-1)' }}
                 />
               </label>
             ))}
           </div>
           {problem ? (
-            <p className="relative mt-2 pl-3 text-[12px]" style={{ color: 'var(--status-critical)' }}>
+            <p className="relative mt-2 pl-3 text-[14px]" style={{ color: 'var(--status-critical)' }}>
               <Rail status="critical" />
-              {problem}
+              {d.errors[problem]}
             </p>
           ) : null}
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={saveCorrection}>
-              Save correction
+              {d.save}
             </Button>
             <Button
               onClick={() => {
@@ -352,33 +356,33 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
                 setProblem(null);
               }}
             >
-              Cancel
+              {d.cancel}
             </Button>
           </div>
         </SheetSection>
       ) : mayCorrect ? (
         <div className="pb-2">
-          <Button onClick={() => setEditing(true)}>Correct captured values</Button>
+          <Button onClick={() => setEditing(true)}>{d.correct}</Button>
         </div>
       ) : null}
-      <SheetSection caption="Bill">
+      <SheetSection caption={d.bill}>
         <DetailGrid>
-          <Detail label="Bill number">
+          <Detail label={d.fields.billNumber!}>
             <IdCell>{bill.billNumber}</IdCell>
           </Detail>
-          <Detail label="Bill date">{formatDate(bill.billDate)}</Detail>
-          <Detail label="Vendor">{bill.vendor}</Detail>
-          <Detail label="What for">{bill.description}</Detail>
-          {bill.desk === 'fleet' ? <Detail label="Vehicle">{VEHICLES.find((v) => v.id === bill.vehicleId)?.displayReg ?? '–'}</Detail> : null}
+          <Detail label={d.fields.billDate!}>{formatDate(bill.billDate)}</Detail>
+          <Detail label={d.fields.vendor!}>{bill.vendor}</Detail>
+          <Detail label={d.fields.whatFor!}>{bill.description || status.expenseKind[bill.kind]}</Detail>
+          {bill.desk === 'fleet' ? <Detail label={d.fields.vehicle!}>{VEHICLES.find((v) => v.id === bill.vehicleId)?.displayReg ?? '–'}</Detail> : null}
           {bill.litres !== null ? (
-            <Detail label="Litres">
+            <Detail label={d.fields.litres!}>
               <QuantityCell value={bill.litres} decimals={1} uom="L" />
             </Detail>
           ) : null}
-          <Detail label="Amount">
+          <Detail label={d.fields.amount!}>
             <MoneyCell value={bill.amount} />
           </Detail>
-          <Detail label="Submitted by">{bill.submittedBy}</Detail>
+          <Detail label={d.fields.addedBy!}>{bill.submittedBy}</Detail>
         </DetailGrid>
       </SheetSection>
       <BillHistory bill={bill} />
@@ -391,54 +395,56 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
  * and is never counted in litres, so its register does not carry those
  * columns — a column of dashes on every row is noise, not information.
  */
-function columnsFor(desk: ExpenseBill['desk'] | null, family: (e: ExpenseBill) => StatusFamily): Column<ExpenseBill>[] {
+function columnsFor(desk: ExpenseBill['desk'] | null, family: (e: ExpenseBill) => StatusFamily, lang: Lang): Column<ExpenseBill>[] {
+  const c = wordsNow(expenseWords, lang).register.columns;
+  const status = wordsNow(statusWords, lang);
   const all: (Column<ExpenseBill> & { fleetOnly?: true })[] = [
     {
       key: 'bill',
-      header: 'Bill',
+      header: c.bill,
       type: 'id',
       sticky: true,
       width: 160,
-      group: 'Bill',
+      group: c.groupBill,
       // IST calendar date. A bill dated 06-08 is stored as IST midnight, which
       // is 18:30 on 05-08 in UTC — slicing the ISO string shows the wrong day.
       render: (e) => <Stacked primary={<IdCell>{e.billNumber}</IdCell>} secondary={formatDate(e.billDate)} />,
     },
     {
       key: 'status',
-      header: 'Status',
+      header: c.status,
       type: 'status',
       width: 200,
-      group: 'Bill',
-      render: (e) => <StatusStamp status={family(e)} label={EXPENSE_STATUS_LABEL[e.status]} />,
+      group: c.groupBill,
+      render: (e) => <StatusStamp status={family(e)} label={status.expense[e.status]} />,
     },
     {
       key: 'kind',
-      header: 'Type',
+      header: c.type,
       width: 90,
-      group: 'Bill',
-      render: (e) => EXPENSE_KIND_LABEL[e.kind],
+      group: c.groupBill,
+      render: (e) => status.expenseKind[e.kind],
     },
-    { key: 'vendor', header: 'Vendor', group: 'Bill', render: (e) => <Stacked primary={e.vendor} secondary={e.description} /> },
+    { key: 'vendor', header: c.shop, group: c.groupBill, render: (e) => <Stacked primary={e.vendor} secondary={e.description || undefined} /> },
     {
       key: 'scan',
-      header: 'Scan',
-      width: 70,
-      group: 'Bill',
+      header: c.photo,
+      width: 80,
+      group: c.groupBill,
       // A word, not a mark: the square glyphs belong to status.
       render: (e) =>
         e.attachment ? (
           <span title={e.attachment.fileName} className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-            {e.attachment.mimeType === 'application/pdf' ? 'PDF' : 'Photo'}
+            {e.attachment.mimeType === 'application/pdf' ? c.pdf : c.photo}
           </span>
         ) : null,
     },
     {
       key: 'vehicle',
-      header: 'Vehicle',
+      header: c.vehicle,
       type: 'id',
       width: 140,
-      group: 'Against',
+      group: c.groupFor,
       fleetOnly: true,
       render: (e) => {
         const reg = VEHICLES.find((v) => v.id === e.vehicleId)?.displayReg;
@@ -447,31 +453,31 @@ function columnsFor(desk: ExpenseBill['desk'] | null, family: (e: ExpenseBill) =
     },
     {
       key: 'driver',
-      header: 'Driver',
-      group: 'Against',
+      header: c.driver,
+      group: c.groupFor,
       fleetOnly: true,
       render: (e) => DRIVERS.find((d) => d.id === e.driverId)?.name ?? null,
     },
     {
       key: 'litres',
-      header: 'Litres',
+      header: c.litres,
       unit: 'L',
       type: 'num',
       width: 90,
-      group: 'Amount',
+      group: c.groupAmount,
       fleetOnly: true,
       render: (e) => (e.litres === null ? null : <QuantityCell value={e.litres} decimals={1} />),
     },
     {
       key: 'amount',
-      header: 'Amount',
+      header: c.amount,
       unit: '₹',
       type: 'money',
       width: 120,
-      group: 'Amount',
+      group: c.groupAmount,
       render: (e) => <MoneyCell value={e.amount} />,
     },
-    { key: 'by', header: 'Submitted by', group: 'Amount', render: (e) => e.submittedBy },
+    { key: 'by', header: c.addedBy, group: c.groupAmount, render: (e) => e.submittedBy },
   ];
   return all.filter((c) => desk !== 'stores' || !c.fleetOnly).map(({ fleetOnly: _fleetOnly, ...c }) => c);
 }

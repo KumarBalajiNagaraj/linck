@@ -8,6 +8,7 @@ import { VehicleStatus } from './features/fleet/VehicleStatus.js';
 import { DriverList } from './features/fleet/DriverList.js';
 import { BreakdownRegister } from './features/fleet/BreakdownRegister.js';
 import { ExpenseApprovals } from './features/overview/ExpenseApprovals.js';
+import { SalesTrends } from './features/overview/SalesTrends.js';
 import { ExpenseRegister } from './features/expenses/ExpenseRegister.js';
 import { WhatsAppDieselImport } from './features/expenses/WhatsAppDieselImport.js';
 import { DieselSummary } from './features/expenses/DieselSummary.js';
@@ -74,6 +75,7 @@ function hasScope(grant: { orgWide: boolean; siteIds: string[] } | undefined, si
 const routeTree = rootRoute.addChildren([
   indexRoute,
   route('/overview', () => <ExecutiveDashboard />, 'executive.dashboard.read'),
+  route('/overview/sales', () => <SalesTrends />, 'executive.dashboard.read'),
   route('/overview/expenses', () => <ExpenseApprovals />, 'finance.expense.approve'),
   route('/fleet/board', () => <FleetCommandBoard />, 'fleet.board.read'),
   route('/fleet/vehicles', () => <VehicleStatus />, 'fleet.vehicle.read'),

@@ -51,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import tenant_session
 from app.core.security import (
+    ACTIVE_ORGANIZATION_STATUS,
     FLOW_COOKIE,
     REFRESH_COOKIE,
     SESSION_COOKIE,
@@ -90,7 +91,8 @@ log = logging.getLogger("linck.auth")
 #                        checked before any lookup, so it is the same answer for
 #                        every account on that domain, registered or not.
 #   ACCOUNT_STOPPED      said only to whoever signs in as an identity already
-#                        pinned to the stopped person, i.e. that person.
+#                        pinned to the stopped person, i.e. that person. The
+#                        same when it is their whole company that was stopped.
 #   REGISTERED_TWICE     the same email is pre-registered in two tenants, which
 #                        core.resolve_pending_user refuses to choose between
 #                        (migration 0003). Said only to the address's holder.
@@ -249,6 +251,19 @@ async def resolve_pre_registered_user(
     # whoever reaches this line holds the identity pinned to a stood-down
     # account, so the account's own holder is the one being told.
     if row["status"] not in ("invited", "active"):
+        raise SignInRefused(ACCOUNT_STOPPED)
+
+    # resolve_pending_user also only finds people in a company that is switched
+    # on; resolve_identity does not look at the company at all. So it is read
+    # here, inside that company, where RLS shows exactly its own row.
+    async with tenant_session(row["organization_id"]) as db:
+        organization_status = (
+            await db.execute(
+                text("select status from core.organizations where id = :org"),
+                {"org": str(row["organization_id"])},
+            )
+        ).scalar_one_or_none()
+    if organization_status != ACTIVE_ORGANIZATION_STATUS:
         raise SignInRefused(ACCOUNT_STOPPED)
 
     return ResolvedUser(
@@ -560,6 +575,7 @@ async def refresh(request: Request) -> JSONResponse:
         detail = {
             "replay": "This session was signed out for security. Please sign in again.",
             "expired": "This session has expired. Please sign in again.",
+            "stopped": "Account is not active",
         }.get(result.failure or "", "Not signed in")
         return _signed_out(detail)
 

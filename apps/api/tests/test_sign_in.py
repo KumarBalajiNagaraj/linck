@@ -237,6 +237,103 @@ async def test_a_stopped_account_cannot_use_its_session(  # type: ignore[no-unty
 
 
 # ---------------------------------------------------------------------------
+# A stopped company stops everyone in it, whatever their own status says
+# ---------------------------------------------------------------------------
+
+
+def _set_company_status(admin: psycopg.Connection, company: Tenant, value: str) -> None:
+    with admin.cursor() as cur:
+        cur.execute("UPDATE core.organizations SET status = %s WHERE id = %s", (value, company.org_id))
+
+
+def _sessions_of(admin: psycopg.Connection, user_id: uuid.UUID) -> int:
+    with admin.cursor() as cur:
+        cur.execute("SELECT count(*) FROM core.sessions WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        assert row is not None
+        return int(row[0])
+
+
+async def test_a_stopped_company_cannot_use_its_sessions(  # type: ignore[no-untyped-def]
+    api, make_tenant: Callable[..., Tenant], make_person: Callable[..., Person], admin: psycopg.Connection
+) -> None:
+    """The person is still active; their company is not. Starting the company
+    again revokes nothing, so the same browser carries on."""
+    company = make_tenant("stopped-company")
+    person = make_person(company, "Active In A Stopped Company", ["fleet.board.read"])
+    assert (await api(person).get("/me/session")).status_code == 200
+
+    _set_company_status(admin, company, "suspended")
+    assert (await api(person).get("/me/session")).status_code == 403
+    # Not only "suspended": anything but "active" fails closed.
+    _set_company_status(admin, company, "closing-down")
+    assert (await api(person).get("/me/session")).status_code == 403
+
+    _set_company_status(admin, company, "active")
+    assert (await api(person).get("/me/session")).status_code == 200
+
+
+async def test_a_stopped_company_gets_no_new_session(  # type: ignore[no-untyped-def]
+    api, make_tenant: Callable[..., Tenant], make_user: Callable[..., uuid.UUID], admin: psycopg.Connection
+) -> None:
+    """Renewal is where an hour-long session would otherwise go on for a month."""
+    company = make_tenant("stopped-renewal")
+    email = _email("renewal-in-stopped-company")
+    user_id = make_user(company, email, "Renewing In A Stopped Company", status="invited")
+    client = api()
+    assert (await client.post("/auth/dev-login", json={"email": email})).status_code == 200
+    refresh_cookie = client.cookies.get(security.REFRESH_COOKIE)
+    assert refresh_cookie
+
+    _set_company_status(admin, company, "suspended")
+    minted = _sessions_of(admin, user_id)
+    assert (await client.post("/auth/refresh")).status_code == 401
+    assert _sessions_of(admin, user_id) == minted, "a stopped company was handed a new session"
+
+    # Nothing was revoked: started again, the same refresh cookie renews.
+    _set_company_status(admin, company, "active")
+    again = api()
+    again.cookies.set(security.REFRESH_COOKIE, refresh_cookie)
+    assert (await again.post("/auth/refresh")).status_code == 200
+    assert (await again.get("/me/session")).status_code == 200
+
+
+async def test_a_stopped_person_gets_no_new_session_either(  # type: ignore[no-untyped-def]
+    api, tenant: Tenant, make_user: Callable[..., uuid.UUID], admin: psycopg.Connection
+) -> None:
+    email = _email("renewal-stopped-person")
+    user_id = make_user(tenant, email, "Renewing Stopped Person", status="invited")
+    client = api()
+    assert (await client.post("/auth/dev-login", json={"email": email})).status_code == 200
+
+    with admin.cursor() as cur:
+        cur.execute("UPDATE core.users SET status = 'suspended' WHERE id = %s", (user_id,))
+    minted = _sessions_of(admin, user_id)
+    assert (await client.post("/auth/refresh")).status_code == 401
+    assert _sessions_of(admin, user_id) == minted, "a stopped person was handed a new session"
+
+
+async def test_a_returning_person_in_a_stopped_company_is_told_so(  # type: ignore[no-untyped-def]
+    api, make_tenant: Callable[..., Tenant], make_user: Callable[..., uuid.UUID], admin: psycopg.Connection
+) -> None:
+    """The same two answers as for one stopped person: whoever holds the
+    identity pinned to the person is told; anyone else learns nothing."""
+    company = make_tenant("stopped-sign-in")
+    returning = _email("returning-to-stopped-company")
+    make_user(company, returning, "Returning To A Stopped Company", status="invited")
+    assert (await api().post("/auth/dev-login", json={"email": returning})).status_code == 200
+    never = _email("never-signed-in-stopped-company")
+    make_user(company, never, "Never Signed In, Stopped Company", status="invited")
+
+    _set_company_status(admin, company, "suspended")
+    assert _refused(await api().post("/auth/dev-login", json={"email": returning})) == "account_stopped"
+    assert _refused(await api().post("/auth/dev-login", json={"email": never})) == "not_registered"
+
+    _set_company_status(admin, company, "active")
+    assert (await api().post("/auth/dev-login", json={"email": returning})).status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # GET /me/session is shaped exactly like SessionPayload
 # ---------------------------------------------------------------------------
 

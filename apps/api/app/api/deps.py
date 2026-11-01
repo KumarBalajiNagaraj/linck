@@ -32,15 +32,12 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import tenant_session
+from app.core.security import is_stopped
 from app.core.settings import Settings, get_settings
+from app.models.core import Organization, User
 from app.models.core import Session as SessionRow
-from app.models.core import User
 
 COOKIE_SALT = "linck.session.cookie"
-
-# A person whose account was stood down keeps a valid cookie until it expires,
-# so status is re-checked on every request rather than only at sign-in.
-BLOCKED_USER_STATUSES = frozenset({"suspended", "disabled", "archived", "removed"})
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +147,9 @@ async def current_session(request: Request) -> AsyncIterator[CurrentSession]:
     async with tenant_session(organization_id) as db:
         row = (
             await db.execute(
-                select(SessionRow, User)
+                select(SessionRow, User, Organization.status)
                 .join(User, User.id == SessionRow.user_id)
+                .join(Organization, Organization.id == SessionRow.organization_id)
                 .where(SessionRow.id == session_id, SessionRow.organization_id == organization_id)
             )
         ).first()
@@ -160,12 +158,15 @@ async def current_session(request: Request) -> AsyncIterator[CurrentSession]:
 
         session_row: SessionRow = row[0]
         user: User = row[1]
+        organization_status: str = row[2]
 
         if session_row.revoked_at is not None:
             raise _unauthorized("Session revoked")
         if session_row.expires_at <= datetime.now(UTC):
             raise _unauthorized("Session expired")
-        if user.status in BLOCKED_USER_STATUSES:
+        # The person, or their whole company, stood down since signing in. See
+        # "Who is stopped" in app/core/security.py.
+        if is_stopped(user_status=user.status, organization_status=organization_status):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active")
 
         # Attribute anything this request writes to the person, not to the app

@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import type { Density, Provenance, StatusFamily } from '@linck/tokens';
 import { DENSITY_ROW_PX } from '@linck/tokens';
 import { cn } from '../lib/cn.js';
+import { useUiWords } from '../lib/words.js';
 import { useIsPhone } from '../lib/useBreakpoint.js';
 import { Rail } from './Rail.js';
 
@@ -416,8 +417,9 @@ function RowCard<T>({
  * are different facts that must never look the same.
  */
 export function Dash() {
+  const words = useUiWords();
   return (
-    <span aria-label="No value" style={{ color: 'var(--text-tertiary)' }}>
+    <span aria-label={words.noValue} style={{ color: 'var(--text-tertiary)' }}>
       –
     </span>
   );

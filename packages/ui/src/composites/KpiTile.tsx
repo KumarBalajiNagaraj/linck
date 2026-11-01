@@ -1,4 +1,5 @@
 import { cn } from '../lib/cn.js';
+import { useUiWords } from '../lib/words.js';
 
 /**
  * KPI TILE — no card, no border box, no shadow.
@@ -89,6 +90,7 @@ export function AsOfStamp({
   freshness?: 'live' | 'materialised' | 'stale' | undefined;
   className?: string | undefined;
 }) {
+  const words = useUiWords();
   // All three branches set the same properties — a tile that goes stale
   // re-renders this same dot, and a branch that omitted one would leave the
   // previous freshness painted underneath.
@@ -109,22 +111,18 @@ export function AsOfStamp({
 
   return (
     <span
-      className={cn('font-id mt-1 inline-flex items-center gap-1.5 text-[11px] uppercase', className)}
+      className={cn('mt-1 inline-flex items-center gap-1.5 text-[11px]', className)}
       style={{ color: 'var(--text-tertiary)' }}
-      title={
-        freshness === 'live'
-          ? 'Computed live from the ledger'
-          : freshness === 'materialised'
-            ? 'From a materialised view'
-            : 'Stale beyond its refresh window'
-      }
+      // The time is what a person needs; where the figure comes from is for
+      // whoever has to trace it, so it is a hover away, not printed in caps.
+      title={`${freshness === 'live' ? words.freshness.live : freshness === 'materialised' ? words.freshness.materialised : words.freshness.stale} · ${words.freshness.source(source)}`}
     >
       {/* `shrink-0`, because this is a flex item with an intrinsic 4px width.
           Where the stamp wrapped — a narrow phone header — the dot was the only
           thing that could give, and it was squashed to a 2px tick that read as
           a rendering artefact rather than a freshness signal. */}
       <span aria-hidden="true" className="block h-1 w-1 shrink-0 rounded-full" style={dot} />
-      As of {asOf} IST · {source}
+      {words.updatedAt(asOf)}
     </span>
   );
 }

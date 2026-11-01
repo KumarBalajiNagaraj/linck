@@ -513,12 +513,12 @@ export const INDENTS: Indent[] = [
 /* ----------------------------------------------------------------- alerts */
 
 export const ALERTS: Alert[] = [
-  { id: 'alr-1', kind: 'breakdown', status: 'critical', title: '4 vehicles under breakdown', detail: 'TN 29 AB 1015 down 11h — gearbox oil leak. Longest standing.', at: hoursFromNow(-11), route: '/fleet/vehicles' },
-  { id: 'alr-2', kind: 'expiry', status: 'critical', title: '5 documents already expired', detail: 'Includes 2 fitness certificates, which stop the vehicle at the gate.', at: hoursFromNow(-30), route: '/compliance/documents' },
-  { id: 'alr-3', kind: 'expiry', status: 'attention', title: '11 documents expire within 30 days', detail: 'Insurance on 4 tippers, national permit on 2.', at: hoursFromNow(-30), route: '/compliance/documents' },
-  { id: 'alr-4', kind: 'receivable', status: 'attention', title: '₹18.4 L reported but not verified', detail: '4 receipts await a second pair of eyes. Invoices stay open until then.', at: hoursFromNow(-5), route: '/finance/receipts/verification' },
-  { id: 'alr-5', kind: 'anomaly', status: 'attention', title: 'Mileage dropped 18% on TN 12 CQ 1085', detail: 'Three consecutive full-tank fills below 2.6 km/l against a 3.6 benchmark.', at: hoursFromNow(-8), route: '/fleet/vehicles' },
-  { id: 'alr-6', kind: 'approval', status: 'pending', title: '2 breakdown indents await approval', detail: 'Conveyor belt for KRP crusher — plant is down.', at: hoursFromNow(-9), route: '/stores/indents' },
+  { id: 'alr-1', kind: 'breakdown', status: 'critical', title: '4 vehicles under breakdown', detail: 'TN 29 AB 1015 down 11h — gearbox oil leak. Longest standing.', at: hoursFromNow(-11), route: '/fleet/vehicles', ta: { title: '4 வண்டிகள் பழுதில் உள்ளன', detail: 'TN 29 AB 1015 — 11 மணி நேரமாக நிற்கிறது. கியர்பாக்ஸ் ஆயில் கசிவு.' } },
+  { id: 'alr-2', kind: 'expiry', status: 'critical', title: '5 documents already expired', detail: 'Includes 2 fitness certificates, which stop the vehicle at the gate.', at: hoursFromNow(-30), route: '/compliance/documents', ta: { title: '5 ஆவணங்கள் காலாவதி ஆகிவிட்டன', detail: '2 FC சான்றிதழ்களும் இதில் உள்ளன. FC இல்லாமல் வண்டி கேட்டைத் தாண்டாது.' } },
+  { id: 'alr-3', kind: 'expiry', status: 'attention', title: '11 documents expire within 30 days', detail: 'Insurance on 4 tippers, national permit on 2.', at: hoursFromNow(-30), route: '/compliance/documents', ta: { title: '11 ஆவணங்கள் 30 நாளில் காலாவதி', detail: '4 டிப்பர்களின் இன்சூரன்ஸ், 2 வண்டிகளின் நேஷனல் பர்மிட்.' } },
+  { id: 'alr-4', kind: 'receivable', status: 'attention', title: '₹18.4 L reported but not verified', detail: '4 receipts await a second pair of eyes. Invoices stay open until then.', at: hoursFromNow(-5), route: '/finance/receipts/verification', ta: { title: '₹18.4 L வந்ததாகச் சொன்னது, சரிபார்க்கவில்லை', detail: '4 பணப் பதிவுகள் இரண்டாவது நபருக்காகக் காத்திருக்கின்றன. அதுவரை இன்வாய்ஸ் மூடாது.' } },
+  { id: 'alr-5', kind: 'anomaly', status: 'attention', title: 'Mileage dropped 18% on TN 12 CQ 1085', detail: 'Three consecutive full-tank fills below 2.6 km/l against a 3.6 benchmark.', at: hoursFromNow(-8), route: '/fleet/vehicles', ta: { title: 'TN 12 CQ 1085 மைலேஜ் 18% குறைந்தது', detail: 'தொடர்ந்து 3 ஃபுல் டேங்க் நிரப்பலில் 2.6 கி.மீ./லி.க்குக் கீழ். வழக்கம் 3.6.' } },
+  { id: 'alr-6', kind: 'approval', status: 'pending', title: '2 breakdown indents await approval', detail: 'Conveyor belt for KRP crusher — plant is down.', at: hoursFromNow(-9), route: '/stores/indents', ta: { title: '2 பழுது பொருள் கோரிக்கைகள் அனுமதிக்காகக் காத்திருக்கின்றன', detail: 'KRP கிரஷருக்கு கன்வேயர் பெல்ட் — பிளான்ட் நிற்கிறது.' } },
 ];
 
 /* ------------------------------------------------------------ e-way bills */

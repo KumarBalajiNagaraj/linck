@@ -3,17 +3,25 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import { can } from '@linck/domain';
 import { DENSITIES, type Density } from '@linck/tokens';
 import { ALERTS, documentExposure, expensesForSite, fleetCounts, INDENTS, EXTRACTION_JOBS, pendingVerification, SITES } from '@linck/mock';
-import { Button, StatusStamp, useIsPhone } from '@linck/ui';
+import { Button, StatusStamp, UiWordsProvider } from '@linck/ui';
 import { PERSONAS } from '../auth/personas.js';
+import { LanguageSwitch } from '../i18n/LanguageSwitch.js';
+import { useLang } from '../i18n/lang.js';
+import { uiWords } from '../i18n/uiWords.js';
+import { useWords } from '../i18n/words.js';
 import { CommandPalette } from './CommandPalette.js';
-import { MODULES, WORKSPACES, type ModuleKey } from './nav-manifest.js';
+import { MODULES, navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
+import { shellWords } from './words.js';
 import { useExpenses } from '../features/expenses/expenseStore.js';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { persona, siteScope, enabledModules, density, theme, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
     useApp();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const t = useWords(shellWords);
+  const ui = useWords(uiWords);
+  const lang = useLang((s) => s.lang);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [whoOpen, setWhoOpen] = useState(false);
   // The palette is mounted at all times, closed, because ⌘K has to work from
@@ -48,6 +56,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const criticalAlerts = ALERTS.filter((a) => a.status === 'critical').length;
 
   return (
+    <UiWordsProvider value={ui}>
     <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'var(--surface-base)' }}>
       {/* ── Topbar: exactly four things beyond the mark ───────────────── */}
       {/* `gap-2` on a phone, not `gap-4`. Six controls with 16px between them
@@ -96,7 +105,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             minWidth: 200,
           }}
         >
-          <span>Search or jump to</span>
+          <span>{t.search}</span>
           <span className="font-id ml-auto text-[11px]">⌘K</span>
         </button>
 
@@ -108,7 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           type="button"
           onClick={() => setPaletteOpen(true)}
           aria-haspopup="dialog"
-          aria-label="Search or jump to"
+          aria-label={t.search}
           className="flex h-11 w-11 shrink-0 items-center justify-center text-[15px] lg:hidden"
           style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
         >
@@ -120,7 +129,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onClick={() => setAlertsOpen((v) => !v)}
           className="relative flex h-11 shrink-0 items-center gap-1 px-1.5 text-[13px] md:h-8 md:gap-1.5 md:px-2"
           style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
-          title="Alerts"
+          title={t.alerts}
         >
           <span aria-hidden="true">◔</span>
           {/*
@@ -138,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span
               className="num tabular-nums text-[12px] font-medium"
               style={{ color: 'var(--status-critical)' }}
-              title={`${criticalAlerts} need acting on now`}
+              title={t.urgentAlerts(criticalAlerts)}
             >
               <span aria-hidden="true" className="mr-0.5 text-[9px]">
                 ▲
@@ -158,23 +167,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onClick={toggleTheme}
           className="hidden shrink-0 text-[13px] md:block md:h-8 md:w-auto md:px-2"
           style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
-          title={theme === 'light' ? 'Switch to dark' : 'Switch to light'}
+          title={theme === 'light' ? t.darkScreen : t.lightScreen}
         >
           {theme === 'light' ? '◐' : '◑'}
         </button>
+
+        {/* Always in the bar, phone included: a Tamil reader must be able to
+            find it on a screen they cannot read yet. */}
+        <LanguageSwitch />
 
         {/* Two <select>s and a two-line name do not fit beside a scope chip on
             a 390px screen. On a phone they move into a sheet behind one glyph. */}
         <div className="hidden items-center gap-4 md:flex">
           <TenantShapeSwitcher enabledModules={enabledModules} onChange={setEnabledModules} />
-          <PersonaSwitcher currentKey={persona.key} onChange={setPersona} name={persona.name} role={persona.roleLabel} />
+          <PersonaSwitcher currentKey={persona.key} onChange={setPersona} name={persona.name} role={t.roles[persona.key] ?? persona.roleLabel} />
         </div>
 
         <button
           type="button"
           onClick={() => setWhoOpen(true)}
           aria-haspopup="dialog"
-          aria-label="Signed in as"
+          aria-label={t.menu}
           className="flex h-11 w-11 shrink-0 items-center justify-center text-[15px] md:hidden"
           style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
         >
@@ -187,7 +200,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div aria-hidden="true" onClick={() => setWhoOpen(false)} className="fixed inset-0 z-40 md:hidden" style={{ background: 'var(--surface-overlay)' }} />
           <div
             role="dialog"
-            aria-label="Session"
+            aria-label={t.menu}
             className="fixed inset-x-0 bottom-0 z-50 px-5 pb-5 pt-4 md:hidden"
             style={{
               background: 'var(--surface-raised)',
@@ -203,13 +216,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {persona.name}
             </p>
             <p className="mb-4 text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
-              {persona.roleLabel}
+              {t.roles[persona.key] ?? persona.roleLabel}
             </p>
 
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1">
                 <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  Signed in as
+                  {t.signedInAs}
                 </span>
                 <select
                   value={persona.key}
@@ -224,7 +237,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   {PERSONAS.map((p) => (
                     <option key={p.key} value={p.key}>
-                      {p.roleLabel}
+                      {t.roles[p.key] ?? p.roleLabel}
                     </option>
                   ))}
                 </select>
@@ -232,7 +245,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
               <label className="flex flex-col gap-1">
                 <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  Row density
+                  {t.rowSize}
                 </span>
                 <select
                   value={density}
@@ -247,7 +260,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   {DENSITIES.map((d) => (
                     <option key={d} value={d}>
-                      {d}
+                      {t.density[d]}
                     </option>
                   ))}
                 </select>
@@ -265,18 +278,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   boxShadow: 'inset 0 0 0 1px var(--border-strong)',
                 }}
               >
-                <span>Appearance</span>
+                <span>{t.screen}</span>
                 <span style={{ color: 'var(--text-secondary)' }}>
                   <span aria-hidden="true" className="mr-1.5">
                     {theme === 'light' ? '◐' : '◑'}
                   </span>
-                  {theme === 'light' ? 'Light' : 'Dark'}
+                  {theme === 'light' ? t.light : t.dark}
                 </span>
               </button>
             </div>
 
             <Button className="mt-5 w-full" onClick={() => setWhoOpen(false)}>
-              Close
+              {t.close}
             </Button>
           </div>
         </>
@@ -305,13 +318,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   background: isActive ? 'var(--surface-selected)' : 'transparent',
                   color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
                 }}
-                title={ws.label}
+                title={navLabel(ws, lang)}
               >
                 {isActive ? (
                   <span aria-hidden="true" className="absolute left-0 top-1 bottom-1 w-[2px]" style={{ background: 'var(--brand)' }} />
                 ) : null}
                 <span aria-hidden="true">{ws.glyph}</span>
-                <span className="sr-only">{ws.label}</span>
+                <span className="sr-only">{navLabel(ws, lang)}</span>
               </Link>
             );
           })}
@@ -324,7 +337,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             style={{ background: 'var(--surface-base)', borderRight: '1px solid var(--border-strong)' }}
           >
             <p className="px-4 pb-2 font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              {active.label}
+              {navLabel(active, lang)}
             </p>
             {active.items.map((item) => {
               const isActive = pathname === item.route;
@@ -342,7 +355,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   {isActive ? (
                     <span aria-hidden="true" className="absolute right-0 top-0 bottom-0 w-[2px]" style={{ background: 'var(--brand)' }} />
                   ) : null}
-                  <span className="truncate">{item.label}</span>
+                  <span className="truncate">{navLabel(item, lang)}</span>
                   {badge && badge.count > 0 ? (
                     <span
                       className="num ml-auto tabular-nums text-[11px]"
@@ -382,7 +395,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       boxShadow: `inset 0 0 0 1px ${isActive ? 'var(--brand)' : 'var(--border-default)'}`,
                     }}
                   >
-                    {item.label}
+                    {navLabel(item, lang)}
                     {badge && badge.count > 0 ? (
                       <span
                         className="num tabular-nums text-[11px]"
@@ -410,6 +423,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
+    </UiWordsProvider>
   );
 }
 
@@ -425,10 +439,12 @@ function BottomTabs({
   activeKey,
   badges,
 }: {
-  workspaces: { key: string; label: string; glyph: string; items: { route: string; badge?: string | undefined }[] }[];
+  workspaces: { key: string; label: string; ta: string; glyph: string; items: { route: string; badge?: string | undefined }[] }[];
   activeKey: string | undefined;
   badges: Record<string, { count: number; tone: 'critical' | 'neutral' }>;
 }) {
+  const t = useWords(shellWords);
+  const lang = useLang((s) => s.lang);
   const [moreOpen, setMoreOpen] = useState(false);
   const primary = workspaces.length > 5 ? workspaces.slice(0, 4) : workspaces.slice(0, 5);
   const overflow = workspaces.length > 5 ? workspaces.slice(4) : [];
@@ -476,7 +492,7 @@ function BottomTabs({
                   </span>
                 ) : null}
               </span>
-              <span className="text-[10px] leading-none">{ws.label}</span>
+              <span className="text-[11px] leading-none">{navLabel(ws, lang)}</span>
             </Link>
           );
         })}
@@ -490,7 +506,7 @@ function BottomTabs({
             <span aria-hidden="true" className="text-[16px] leading-none">
               ⋯
             </span>
-            <span className="text-[10px] leading-none">More</span>
+            <span className="text-[11px] leading-none">{t.more}</span>
           </button>
         ) : null}
       </nav>
@@ -500,7 +516,7 @@ function BottomTabs({
           <div aria-hidden="true" onClick={() => setMoreOpen(false)} className="fixed inset-0 z-40 md:hidden" style={{ background: 'var(--surface-overlay)' }} />
           <div
             role="dialog"
-            aria-label="More workspaces"
+            aria-label={t.moreMenus}
             className="fixed inset-x-0 bottom-0 z-50 md:hidden"
             style={{
               background: 'var(--surface-raised)',
@@ -526,7 +542,7 @@ function BottomTabs({
                   <span aria-hidden="true" style={{ color: 'var(--text-tertiary)' }}>
                     {ws.glyph}
                   </span>
-                  {ws.label}
+                  {navLabel(ws, lang)}
                 </Link>
               );
             })}
@@ -536,7 +552,7 @@ function BottomTabs({
               className="w-full px-5 text-[15px]"
               style={{ minHeight: 52, color: 'var(--text-tertiary)' }}
             >
-              Close
+              {t.close}
             </button>
           </div>
         </>
@@ -575,18 +591,16 @@ function ScopeSwitcher({
 }) {
   const sites = SITES.filter((s) => allowedSiteIds.includes(s.id));
   const current = siteScope ? sites.find((s) => s.id === siteScope) : null;
-  const phone = useIsPhone();
-  // `SITE · ` is 7 characters of prefix on a bar that has ~145px to spend. The
-  // visually-hidden label already names this control, so on a phone the prefix
-  // is dropped and the whole plant code is shown instead of a truncated one —
-  // "KRP-CRUS…" and "KRP-WORK…" are the two a workshop clerk must not confuse.
-  const prefix = phone ? '' : 'SITE · ';
+  const t = useWords(shellWords);
+  // The plant code alone. A "SITE ·" prefix was 7 characters of a bar that
+  // has ~145px to spend on a phone, and the hidden label already names the
+  // control — "KRP-CRUS…" and "KRP-WORK…" are the two a workshop clerk must
+  // not confuse, so the code gets the room.
 
   // A user with a single site sees a static breadcrumb, not a dropdown.
   if (sites.length === 1 && !canSeeAllSites) {
     return (
       <span className="font-id shrink-0 whitespace-nowrap text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-        {prefix}
         {sites[0]!.code}
       </span>
     );
@@ -598,7 +612,7 @@ function ScopeSwitcher({
   // thrown away the one field this control exists to show.
   return (
     <label className="flex min-w-0 items-center gap-2 md:min-w-max">
-      <span className="sr-only">Site scope</span>
+      <span className="sr-only">{t.site}</span>
       {/* Capped on a phone. Left to size itself the native select took 190px of
           a 375px topbar — half the bar for one chip — and shoved the alerts,
           theme and session controls past the right edge, where the shell's
@@ -614,10 +628,9 @@ function ScopeSwitcher({
           boxShadow: 'inset 0 0 0 1px var(--border-strong)',
         }}
       >
-        {canSeeAllSites ? <option value="__all">ALL SITES</option> : null}
+        {canSeeAllSites ? <option value="__all">{t.allSites}</option> : null}
         {sites.map((s) => (
           <option key={s.id} value={s.id}>
-            {prefix}
             {s.code}
           </option>
         ))}
@@ -632,19 +645,20 @@ function ScopeSwitcher({
 }
 
 function DensityToggle({ density, onChange }: { density: Density; onChange: (d: Density) => void }) {
+  const t = useWords(shellWords);
   return (
     <label className="hidden items-center xl:flex">
-      <span className="sr-only">Row density</span>
+      <span className="sr-only">{t.rowSize}</span>
       <select
         value={density}
         onChange={(e) => onChange(e.target.value as Density)}
         className="h-8 px-2 text-[12px]"
         style={{ background: 'transparent', color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
-        title="Row density — persisted per user per table in the real product"
+        title={t.rowSize}
       >
         {DENSITIES.map((d) => (
           <option key={d} value={d}>
-            {d}
+            {t.density[d]}
           </option>
         ))}
       </select>
@@ -678,9 +692,10 @@ function shapeKeyFor(enabledModules: string[]): string {
  * rail is the fastest proof that no screen assumes a crusher exists.
  */
 function TenantShapeSwitcher({ enabledModules, onChange }: { enabledModules: string[]; onChange: (modules: string[]) => void }) {
+  const t = useWords(shellWords);
   return (
     <label className="hidden items-center xl:flex">
-      <span className="sr-only">Tenant shape</span>
+      <span className="sr-only">{t.demoShape}</span>
       <select
         value={shapeKeyFor(enabledModules)}
         onChange={(e) => onChange([...(TENANT_SHAPES.find((s) => s.key === e.target.value)?.modules ?? MODULES)])}
@@ -691,11 +706,11 @@ function TenantShapeSwitcher({ enabledModules, onChange }: { enabledModules: str
           borderRadius: 'var(--r-1)',
           boxShadow: 'inset 0 0 0 1px var(--border-strong)',
         }}
-        title="Demo: switch which verticals this tenant has bought"
+        title={t.demoShape}
       >
         {TENANT_SHAPES.map((s) => (
           <option key={s.key} value={s.key}>
-            {s.label}
+            {t.shapes[s.key as keyof typeof t.shapes] ?? s.label}
           </option>
         ))}
       </select>
@@ -720,9 +735,10 @@ function PersonaSwitcher({
   name: string;
   role: string;
 }) {
+  const t = useWords(shellWords);
   return (
     <label className="flex items-center gap-2">
-      <span className="sr-only">Signed in as</span>
+      <span className="sr-only">{t.signedInAs}</span>
       <span className="hidden flex-col items-end leading-tight sm:flex">
         <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
           {name}
@@ -741,11 +757,11 @@ function PersonaSwitcher({
           borderRadius: 'var(--r-1)',
           boxShadow: 'inset 0 0 0 1px var(--border-strong)',
         }}
-        title="Demo: switch persona to see permission-filtered navigation"
+        title={t.demoPerson}
       >
         {PERSONAS.map((p) => (
           <option key={p.key} value={p.key}>
-            {p.roleLabel}
+            {t.roles[p.key] ?? p.roleLabel}
           </option>
         ))}
       </select>
@@ -754,6 +770,8 @@ function PersonaSwitcher({
 }
 
 function AlertDrawer({ onClose }: { onClose: () => void }) {
+  const t = useWords(shellWords);
+  const lang = useLang((s) => s.lang);
   return (
     <aside
       className="absolute right-0 top-[52px] bottom-0 z-30 w-full max-w-[380px] overflow-y-auto"
@@ -763,22 +781,22 @@ function AlertDrawer({ onClose }: { onClose: () => void }) {
         className="sticky top-0 flex h-12 items-center justify-between px-4"
         style={{ background: 'var(--surface-raised)', borderBottom: '1px solid var(--border-subtle)' }}
       >
-        <h2 className="font-serif text-[18px]">Alerts</h2>
-        <button type="button" onClick={onClose} className="text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
-          Close
+        <h2 className="font-serif text-[18px]">{t.alerts}</h2>
+        <button type="button" onClick={onClose} className="h-10 px-2 text-[14px]" style={{ color: 'var(--text-secondary)' }}>
+          {t.close}
         </button>
       </header>
       <ul>
         {ALERTS.map((alert) => (
           <li key={alert.id} className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="flex items-start justify-between gap-2">
-              <p className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                {alert.title}
+              <p className="text-[14px]" style={{ color: 'var(--text-primary)' }}>
+                {lang === 'ta' && alert.ta ? alert.ta.title : alert.title}
               </p>
-              <StatusStamp status={alert.status} label={alert.kind} />
+              <StatusStamp status={alert.status} label={t.alertKind[alert.kind] ?? alert.kind} />
             </div>
-            <p className="mt-1 font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              {alert.detail}
+            <p className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              {lang === 'ta' && alert.ta ? alert.ta.detail : alert.detail}
             </p>
           </li>
         ))}

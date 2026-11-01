@@ -1,7 +1,9 @@
 import { Link } from '@tanstack/react-router';
 import { can } from '@linck/domain';
+import { useWords } from '../i18n/words.js';
 import { WORKSPACES } from './nav-manifest.js';
 import { useApp } from './store.js';
+import { shellWords } from './words.js';
 
 /**
  * The two building blocks of a role's command board: a row of cards counting
@@ -44,11 +46,7 @@ export interface UrgentAction extends BoardDestination {
 }
 
 /** Priority is not a status, so it is a word and a glyph rather than a stamp. */
-const PRIORITY = {
-  highest: { glyph: '▲', word: 'Highest' },
-  high: { glyph: '◐', word: 'High' },
-  medium: { glyph: '◇', word: 'Medium' },
-} as const;
+const PRIORITY_GLYPH = { highest: '▲', high: '◐', medium: '◇' } as const;
 
 const ACCENT_COLOR = {
   critical: 'var(--status-critical)',
@@ -84,6 +82,7 @@ export function useCanOpen(): (to: string) => boolean {
  */
 export function UrgentActionsRow({ caption, actions }: { caption: string; actions: UrgentAction[] }) {
   const canOpen = useCanOpen();
+  const t = useWords(shellWords).board;
   const shown = actions.filter((a) => canOpen(a.to));
   if (shown.length === 0) return null;
 
@@ -96,7 +95,7 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
         {shown.map((a) => {
           const live = a.count > 0;
           const tone = live ? ACCENT_COLOR[a.accent] : 'var(--text-tertiary)';
-          const p = PRIORITY[a.priority];
+          const glyph = PRIORITY_GLYPH[a.priority];
           return (
             <Link
               key={a.label}
@@ -112,10 +111,10 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
             >
               <span className="flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.04em]">
                 <span style={{ color: tone }}>
-                  <span aria-hidden="true">{p.glyph}</span> {p.word}
+                  <span aria-hidden="true">{glyph}</span> {t.priority[a.priority]}
                 </span>
                 <span className="normal-case tracking-normal opacity-0 transition-opacity group-hover:opacity-100" style={{ color: 'var(--brand)' }}>
-                  Open list →
+                  {t.openList}
                 </span>
               </span>
               <span className="flex items-baseline gap-2">
@@ -130,7 +129,7 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
                 </span>
               </span>
               <span className="text-[12px]" style={{ color: live ? tone : 'var(--text-secondary)' }}>
-                {live ? a.definition : `None right now — ${a.definition.charAt(0).toLowerCase()}${a.definition.slice(1)}`}
+                {live ? a.definition : t.noneNow(a.definition)}
               </span>
             </Link>
           );
@@ -164,7 +163,7 @@ export function DestinationRow({ caption, destinations }: { caption: string; des
             key={d.label}
             to={d.to}
             search={d.view ? { view: d.view } : {}}
-            className="inline-flex h-9 items-center gap-1.5 px-3 text-[12px] [@media(hover:hover)]:h-7 [@media(hover:hover)]:px-2.5"
+            className="inline-flex h-10 items-center gap-1.5 px-3 text-[13px] [@media(hover:hover)]:h-8 [@media(hover:hover)]:px-3"
             style={{
               borderRadius: 'var(--r-1)',
               color: 'var(--text-secondary)',

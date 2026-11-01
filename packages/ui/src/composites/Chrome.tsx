@@ -92,13 +92,13 @@ export function Button({
       type="button"
       {...props}
       className={cn(
-        // 44px on a touch device, 34px on a desk. The desktop height is a
-        // deliberate density choice and the touch height is a floor below which
-        // a control is genuinely hard to hit — so the rule is keyed to whether
-        // the pointer can hover, not to screen width. A weighbridge terminal is
-        // a wide screen that still needs the big target.
-        'inline-flex h-11 items-center justify-center gap-1.5 px-3 text-[14px] font-medium',
-        '[@media(hover:hover)]:h-[34px] [@media(hover:hover)]:justify-start',
+        // 44px on a touch device, 38px on a desk. The touch height is a floor
+        // below which a control is genuinely hard to hit, and the desk height
+        // is sized for people who do not use a mouse all day — so the rule is
+        // keyed to whether the pointer can hover, not to screen width. A
+        // weighbridge terminal is a wide screen that still needs the big target.
+        'inline-flex h-11 items-center justify-center gap-1.5 px-3.5 text-[14px] font-medium',
+        '[@media(hover:hover)]:h-[38px] [@media(hover:hover)]:justify-start',
         'disabled:opacity-45',
         className,
       )}
@@ -123,7 +123,7 @@ export function Chip({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-9 items-center gap-1.5 px-3 text-[12px] [@media(hover:hover)]:h-7 [@media(hover:hover)]:px-2.5"
+      className="inline-flex h-10 items-center gap-1.5 px-3 text-[13px] [@media(hover:hover)]:h-8 [@media(hover:hover)]:px-3"
       style={{
         borderRadius: 'var(--r-1)',
         background: active ? 'var(--brand-tint)' : 'transparent',

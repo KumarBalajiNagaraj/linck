@@ -6,6 +6,11 @@
 @import '@fontsource-variable/newsreader';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
+/* Tamil (LIN-23). Inter, Newsreader and Plex have no Tamil letters, so each
+   stack falls through to these for Tamil text only — the files are split by
+   script and a Tamil file is fetched only when Tamil is on the screen. */
+@import '@fontsource-variable/noto-sans-tamil';
+@import '@fontsource-variable/noto-serif-tamil';
 
 @import '@linck/tokens/tokens.css';
 
@@ -35,9 +40,9 @@
   --color-brand-strong: var(--brand-strong);
   --color-brand-tint: var(--brand-tint);
 
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-serif: 'Newsreader Variable', ui-serif, Georgia, serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-sans: 'Inter Variable', 'Noto Sans Tamil Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Newsreader Variable', 'Noto Serif Tamil Variable', ui-serif, Georgia, serif;
+  --font-mono: 'IBM Plex Mono', 'Noto Sans Tamil Variable', ui-monospace, monospace;
 
   --radius-none: var(--r-0);
   --radius-sm: var(--r-1);
@@ -61,7 +66,7 @@
     margin: 0;
     background: var(--surface-base);
     color: var(--text-primary);
-    font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+    font-family: 'Inter Variable', 'Noto Sans Tamil Variable', ui-sans-serif, system-ui, sans-serif;
     font-size: 14px;
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
@@ -107,7 +112,12 @@
 
 @layer utilities {
   .font-serif {
-    font-family: 'Newsreader Variable', ui-serif, Georgia, serif;
+    font-family: 'Newsreader Variable', 'Noto Serif Tamil Variable', ui-serif, Georgia, serif;
+  }
+  /* Tamil letters have no italic, and a slanted Tamil line is harder to read,
+     not more elegant. Captions set in italic stand upright in Tamil. */
+  :lang(ta) .italic {
+    font-style: normal;
   }
   .hatch {
     background-image: var(--hatch-pattern);

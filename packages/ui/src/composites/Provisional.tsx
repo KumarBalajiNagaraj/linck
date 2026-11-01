@@ -1,4 +1,5 @@
 import { cn } from '../lib/cn.js';
+import { useUiWords } from '../lib/words.js';
 
 /**
  * DASHED-AND-HATCHED MEANS NOT-YET-TRUE — signature move #2.
@@ -34,6 +35,7 @@ export interface ProvisionalProps {
 }
 
 export function Provisional({ children, confirmed, overridden, originalValue, className }: ProvisionalProps) {
+  const words = useUiWords();
   return (
     <span
       className={cn('relative inline-flex items-center gap-1.5 px-1 transition-[background,border-color]', className)}
@@ -45,10 +47,10 @@ export function Provisional({ children, confirmed, overridden, originalValue, cl
       }}
       title={
         overridden && originalValue
-          ? `Linck read ${originalValue} — corrected by hand`
+          ? words.provisional.corrected(originalValue)
           : confirmed
-            ? 'Read by Linck, confirmed by a person'
-            : 'Read by Linck — not yet confirmed'
+            ? words.provisional.confirmed
+            : words.provisional.unconfirmed
       }
     >
       {children}
@@ -84,10 +86,11 @@ function ExtractionMark({ overridden, hidden }: { overridden?: boolean | undefin
  * auto-focuses first — tab order follows uncertainty, not layout.
  */
 export function ConfidenceMeter({ level, className }: { level: 1 | 2 | 3; className?: string | undefined }) {
+  const words = useUiWords();
   return (
     <span
       className={cn('inline-flex items-center gap-[2px]', className)}
-      title={`Extraction confidence ${level} of 3`}
+      title={words.confidence(level)}
       aria-label={`Extraction confidence ${level} of 3`}
     >
       {([1, 2, 3] as const).map((seg) => (
@@ -123,7 +126,8 @@ export interface SuggestionStripProps {
   applyLabel?: string | undefined;
 }
 
-export function SuggestionStrip({ children, onApply, onDismiss, applyLabel = 'Apply' }: SuggestionStripProps) {
+export function SuggestionStrip({ children, onApply, onDismiss, applyLabel }: SuggestionStripProps) {
+  const words = useUiWords();
   return (
     // Wraps on a phone, where the sentence and two actions cannot share a row:
     // at 375px the buttons held their width and compressed the sentence — which
@@ -145,7 +149,7 @@ export function SuggestionStrip({ children, onApply, onDismiss, applyLabel = 'Ap
           className="h-11 px-2 text-[12px] font-medium [@media(hover:hover)]:h-6"
           style={{ color: 'var(--brand)', borderRadius: 'var(--r-1)' }}
         >
-          {applyLabel}
+          {applyLabel ?? words.apply}
         </button>
       ) : null}
       {onDismiss ? (
@@ -155,7 +159,7 @@ export function SuggestionStrip({ children, onApply, onDismiss, applyLabel = 'Ap
           className="h-11 px-2 text-[12px] [@media(hover:hover)]:h-6"
           style={{ color: 'var(--text-tertiary)', borderRadius: 'var(--r-1)' }}
         >
-          Dismiss
+          {words.dismiss}
         </button>
       ) : null}
     </div>

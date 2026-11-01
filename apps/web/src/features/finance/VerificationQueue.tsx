@@ -3,7 +3,6 @@ import { businessDate, formatDate, formatDateTime, formatINR, formatINRCompact }
 import {
   INVOICES,
   INVOICE_STATUS_FAMILY,
-  INVOICE_STATUS_LABEL,
   NOW,
   pendingVerification,
   RECEIPTS,
@@ -37,60 +36,86 @@ import {
   TileRow,
   type Column,
 } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
+import { verifyWords, type MatchReason } from './words.js';
 
 /**
- * PAYMENT VERIFICATION QUEUE.
+ * CHECK PAYMENTS (payment verification queue).
  *
  * This screen exists to enforce one rule: money reported is not money
  * confirmed, and an invoice does not close until a second person has seen the
  * bank line. Every row here is money the ledger refuses to count as collected.
+ * Linck ranks the likely invoice and states its reason, but it is neither of
+ * the two people: one person adds a payment, a different person checks it.
  *
  * Two decisions worth defending:
  *
- *   1. The four-eyes block is PRINTED, never hidden. Whoever recorded a receipt
- *      cannot verify it — but the button stays visible, disabled, with the
+ *   1. The two-person block is PRINTED, never hidden. Whoever added a payment
+ *      cannot check it — but the button stays visible, disabled, with the
  *      reason beside it. Hide the reason and a three-person accounts office
  *      with one person on leave concludes the software is broken, and the fix
  *      they invent is a shared login. That is a worse outcome than a blocked
  *      button, so the block explains itself.
  *
- *   2. The ageing counter is the real control. A blocked button stops a bad
- *      verification; it does not get a good one done. So the oldest item's age
- *      sits in the tile row, every row carries its days-in-queue, and the queue
- *      is drawn as an ageing bar — the shape of the backlog is the thing the
- *      accounts head is accountable for, not the shape of the rulebook.
+ *   2. The age counter is the real control. A blocked button stops a bad
+ *      check; it does not get a good one done. So the oldest item's age sits in
+ *      the tile row, every row carries its days waiting, and the queue is drawn
+ *      as an ageing bar — the shape of the backlog is the thing the accounts
+ *      head is accountable for, not the shape of the rulebook.
  *
  * The two charts answer the two questions this desk actually gets asked. How
- * old is the backlog (ageing), and how much of it is cash (method mix) — cash
+ * old is the backlog (age), and how much of it is cash (how it was paid) — cash
  * carries no UTR to check against a bank line, so its share is the share of the
- * queue that can only ever be verified by a custody trail.
+ * queue that can only ever be checked by a custody trail: who took it, who
+ * counted it, and which day's deposit slip it went into. The screen says only
+ * the last part, because that is the one a clerk can act on.
  *
- * Verification happens from the side sheet, not from the row. Confirming money
- * off a seven-column table row is confirming a summary; the sheet puts the
- * stated match reason, the customer's other open invoices and the four-eyes
- * rule in front of the person signing, which is what "a second pair of eyes"
- * was supposed to mean.
+ * Checking happens from the side sheet, not from the row. Confirming money off
+ * an eight-column table row is confirming a summary; the sheet puts the stated
+ * match reason and the customer's other unpaid invoices in front of the person
+ * signing — an amount that fits an older invoice better than the suggested one
+ * is the commonest way money lands against the wrong bill.
+ *
+ * WORDS (LIN-23). Every word is in ./words.ts, in English and Tamil, short and
+ * plain: "check", never "verify"; "payment", never "receipt"; "added by", never
+ * "recorded by". The match reason comes from the engine as an English sentence,
+ * so the three reasons it gives are mapped to words here; one it has never
+ * given before is shown as sent rather than hidden.
  *
  * NOTE ON SITE SCOPE: receipts are org-level, not site-level — a bank account
  * belongs to the company, not to the Karapakkam crusher — so `siteScope` is
  * deliberately not read here. Scoping this list by plant would hide money.
  */
 
-const METHOD_LABEL: Record<Receipt['method'], string> = {
-  cash: 'Cash',
-  neft: 'NEFT',
-  rtgs: 'RTGS',
-  imps: 'IMPS',
-  upi: 'UPI',
-  cheque: 'Cheque',
-};
-
-/** The one match reason strong enough to batch. Anything softer is verified one at a time. */
+/** The one match reason strong enough to batch. Anything softer is checked one at a time. */
 const EXACT_UTR_REASON = 'UTR exact, amount exact, date +1d';
 
-/** Past this, an unverified receipt stops being a queue and starts being a control failure. */
+/** The engine's reasons, as it states them today, keyed to the screen's words. */
+const REASON_KEY: Readonly<Record<string, MatchReason>> = {
+  [EXACT_UTR_REASON]: 'utrExact',
+  'Amount exact, customer match, no UTR on bank line': 'amountAndCustomer',
+  'Oldest open invoice for this customer, amount within ₹500': 'oldestOpen',
+};
+
+/** A reason in the reader's language. One the screen has no words for is shown as sent. */
+function reasonWords(reason: string | null, words: Readonly<Record<MatchReason, string>>): string | null {
+  if (reason === null) return null;
+  const key = REASON_KEY[reason];
+  return key === undefined ? reason : words[key];
+}
+
+/** Past this, an unchecked payment stops being a queue and starts being a control failure. */
 const STALE_DAYS = 7;
+
+/**
+ * The time the figures are from, printed under them. Where they come from is a
+ * hover away, in plain words (`t.source`). For whoever has to trace them: the
+ * queue and the tiles read `v_receipt_verification`, the waiting-longest tile
+ * reads `v_receipt_ageing`.
+ */
+const AS_OF = '14:42';
 
 function ageDays(iso: string): number {
   return Math.max(0, Math.floor((NOW.getTime() - Date.parse(iso)) / 86_400_000));
@@ -125,7 +150,7 @@ interface AllocationEffect {
 }
 
 /**
- * What confirming these receipts would actually do to the ledger.
+ * What confirming these payments would actually do to the ledger.
  *
  * Stated per invoice rather than as one total, because "closes two invoices and
  * part-pays a third" is the sentence the person signing needs, and a single
@@ -160,13 +185,13 @@ function allocationEffect(receipts: Receipt[]): AllocationEffect[] {
  */
 function NarrowLegend({ items }: { items: { label: string; value: string; tone: string }[] }) {
   return (
-    <dl className="mt-2 flex flex-col gap-1 md:hidden">
+    <dl className="mt-2 flex flex-col gap-1.5 md:hidden">
       {items.map((item) => (
-        <div key={item.label} className="flex items-baseline justify-between gap-3 text-[12px]">
+        <div key={item.label} className="flex items-baseline justify-between gap-3 text-[13px]">
           <dt className="flex min-w-0 items-baseline gap-2" style={{ color: 'var(--text-secondary)' }}>
             <span
               aria-hidden="true"
-              className="block h-2 w-2 shrink-0 translate-y-[1px]"
+              className="block h-2.5 w-2.5 shrink-0 translate-y-[1px]"
               style={{ background: item.tone }}
             />
             <span className="truncate">{item.label}</span>
@@ -188,11 +213,12 @@ interface VerifiedRow {
 
 export function VerificationQueue() {
   const { persona, density } = useApp();
+  const t = useWords(verifyWords);
   const [verifiedNow, setVerifiedNow] = useState<Record<string, true>>({});
   const [filter, setFilter] = useState<'all' | 'utr' | 'cash' | 'blocked' | 'stale'>('all');
   const [stripDismissed, setStripDismissed] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  /** Ids awaiting confirmation — one for a sheet verify, many for the batch. */
+  /** Ids awaiting confirmation — one for a sheet check, many for the batch. */
   const [confirming, setConfirming] = useState<string[] | null>(null);
 
   const pending = pendingVerification();
@@ -214,7 +240,7 @@ export function VerificationQueue() {
     }
   }, [queue, filter, persona.name]);
 
-  // Verified today = what this session confirmed, plus what someone else already
+  // Checked today = what this session confirmed, plus what someone else already
   // confirmed on today's IST business date. Both are equally real.
   const verifiedToday: VerifiedRow[] = [
     ...pending
@@ -224,6 +250,7 @@ export function VerificationQueue() {
       (r) => r.verifiedBy !== null && r.verifiedAt !== null && businessDate(r.verifiedAt) === businessDate(NOW),
     ).map((r) => ({ receipt: r, verifier: r.verifiedBy ?? '', inSession: false })),
   ];
+  const checkedByYou = verifiedToday.filter((v) => v.inSession).length;
 
   const exactUtr = queue.filter((r) => r.suggestionReason === EXACT_UTR_REASON);
   const eligibleForBatch = exactUtr.filter((r) => !blockedFor(r));
@@ -241,13 +268,13 @@ export function VerificationQueue() {
 
   /* --------------------------------------------------------------- charts */
 
-  // Ageing is measured in money, not row count. Nine tiny cash receipts and one
+  // Age is measured in money, not row count. Nine tiny cash payments and one
   // ₹7 L RTGS are not the same backlog, and a count would draw them the same.
   const ageingBuckets = [
-    { label: 'Today', value: sum(queue.filter((r) => ageDays(r.date) === 0)) },
-    { label: '1–3 days', value: sum(queue.filter((r) => ageDays(r.date) >= 1 && ageDays(r.date) <= 3)) },
-    { label: '4–7 days', value: sum(queue.filter((r) => ageDays(r.date) >= 4 && ageDays(r.date) <= STALE_DAYS)) },
-    { label: `Over ${STALE_DAYS} days`, value: sum(queue.filter((r) => ageDays(r.date) > STALE_DAYS)) },
+    { label: t.age.today, value: sum(queue.filter((r) => ageDays(r.date) === 0)) },
+    { label: t.age.oneToThree, value: sum(queue.filter((r) => ageDays(r.date) >= 1 && ageDays(r.date) <= 3)) },
+    { label: t.age.fourToSeven, value: sum(queue.filter((r) => ageDays(r.date) >= 4 && ageDays(r.date) <= STALE_DAYS)) },
+    { label: t.age.over(STALE_DAYS), value: sum(queue.filter((r) => ageDays(r.date) > STALE_DAYS)) },
   ];
 
   const queueTotal = sum(queue);
@@ -264,11 +291,11 @@ export function VerificationQueue() {
 
   const methodSegments = [
     ...bankedTotals.map((m, i) => ({
-      label: METHOD_LABEL[m.method],
+      label: t.method[m.method],
       value: m.value,
       tone: `var(--chart-${Math.min(5, i + 1)})`,
     })),
-    ...(cashTotal > 0 ? [{ label: 'Cash', value: cashTotal, tone: 'var(--status-attention)' }] : []),
+    ...(cashTotal > 0 ? [{ label: t.method.cash, value: cashTotal, tone: 'var(--status-attention)' }] : []),
   ];
 
   /* ---------------------------------------------------------- the selection */
@@ -286,43 +313,36 @@ export function VerificationQueue() {
   const confirmTotal = sum(confirmTargets);
   const closesCount = confirmEffects.filter((e) => e.remaining <= 0.5).length;
 
+  // No column groups: five supra-headers over eight columns were five more
+  // things to read and told nobody where to look.
   const queueColumns: Column<Receipt>[] = [
     {
       key: 'date',
-      header: 'Received',
-      group: 'Receipt',
+      header: t.col.date,
       width: 150,
       sticky: true,
-      render: (r) => (
-        <Stacked
-          primary={formatDate(r.date)}
-          secondary={ageDays(r.date) === 0 ? 'today' : `${ageDays(r.date)}d in queue`}
-        />
-      ),
+      render: (r) => <Stacked primary={formatDate(r.date)} secondary={t.ago(ageDays(r.date))} />,
     },
     {
       key: 'reference',
-      header: 'Reference',
+      header: t.col.reference,
       type: 'id',
-      group: 'Receipt',
       width: 160,
-      // Cash has no UTR. The dash is the honest answer; the footnote below the
-      // table says what actually verifies a cash receipt instead.
+      // Cash has no UTR. The dash is the honest answer; the cash line under the
+      // chart says what checks a cash payment instead.
       render: (r) => <IdCell>{r.reference}</IdCell>,
     },
-    { key: 'method', header: 'Method', group: 'Receipt', width: 96, render: (r) => METHOD_LABEL[r.method] },
+    { key: 'method', header: t.col.how, width: 104, render: (r) => t.method[r.method] },
     {
       key: 'customer',
-      header: 'Customer',
-      group: 'Party',
+      header: t.col.customer,
       render: (r) => <Stacked primary={r.customerName} />,
     },
     {
       key: 'amount',
-      header: 'Amount',
+      header: t.col.amount,
       unit: '₹',
       type: 'money',
-      group: 'Amount',
       width: 140,
       // Reported, not confirmed. The hatch is the ledger's position on it.
       render: (r) => (
@@ -333,38 +353,36 @@ export function VerificationQueue() {
     },
     {
       key: 'match',
-      header: 'Linck suggests',
-      group: 'Match',
-      width: 300,
+      header: t.col.likelyInvoice,
+      width: 170,
+      // Just the number. Why Linck chose it is read where the decision is
+      // made, in the sheet; the strongest reason has its own chip ("UTR
+      // matches"). Printed in every row, the reasons were most of the words
+      // on this screen and, in Tamil, pushed the status off its edge.
       render: (r) => {
         const number = invoiceNumber(r.suggestedInvoiceId);
-        if (number === null) return null;
-        return (
-          <Stacked
-            primary={<IdCell>{number}</IdCell>}
-            secondary={<span style={{ color: 'var(--text-tertiary)' }}>{r.suggestionReason}</span>}
-          />
-        );
+        return number === null ? null : <IdCell>{number}</IdCell>;
       },
     },
-    { key: 'recordedBy', header: 'Recorded by', group: 'Control', width: 130, render: (r) => r.recordedBy },
+    { key: 'recordedBy', header: t.col.addedBy, width: 130, render: (r) => r.recordedBy },
     {
       key: 'standing',
-      header: 'Second pair of eyes',
-      group: 'Control',
-      width: 260,
+      header: t.col.status,
+      width: 150,
       // The row states the standing; the signing happens in the sheet, where
-      // the match reason and the customer's other open invoices are visible.
+      // the match reason and the customer's other unpaid invoices are visible.
+      // The days waiting are already under the date, so the stamp does not
+      // repeat them.
+      //
+      // A payment this person added says so in the stamp itself — the reason
+      // it is blocked is the label, so it can never be separated from the
+      // mark. What follows from it (someone else must check) is the page's
+      // rule, and is repeated beside the disabled button in the sheet.
       render: (r) =>
         blockedFor(r) ? (
-          // Wraps rather than squeezes: in the phone card this pair has ~300px,
-          // and the reason must stay printed beside the stamp, not truncated.
-          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            <StatusStamp status="dormant" label="Blocked" />
-            <span style={{ color: 'var(--text-tertiary)' }}>You recorded this one — it needs someone else.</span>
-          </span>
+          <StatusStamp status="dormant" label={t.stamp.youAdded} />
         ) : (
-          <StatusStamp status="pending" label="Awaiting" severity={`${ageDays(r.date)}d`} provisional />
+          <StatusStamp status="pending" label={t.stamp.waiting} provisional />
         ),
     },
   ];
@@ -372,27 +390,24 @@ export function VerificationQueue() {
   const verifiedColumns: Column<VerifiedRow>[] = [
     {
       key: 'date',
-      header: 'Received',
-      group: 'Receipt',
+      header: t.col.date,
       width: 150,
       sticky: true,
       render: (v) => formatDate(v.receipt.date),
     },
     {
       key: 'reference',
-      header: 'Reference',
+      header: t.col.reference,
       type: 'id',
-      group: 'Receipt',
       width: 160,
       render: (v) => <IdCell>{v.receipt.reference}</IdCell>,
     },
-    { key: 'customer', header: 'Customer', group: 'Party', render: (v) => v.receipt.customerName },
+    { key: 'customer', header: t.col.customer, render: (v) => v.receipt.customerName },
     {
       key: 'amount',
-      header: 'Amount',
+      header: t.col.amount,
       unit: '₹',
       type: 'money',
-      group: 'Amount',
       width: 140,
       // Confirmed: the hatch dissolves, the rule goes solid. That is the whole event.
       render: (v) => (
@@ -403,21 +418,19 @@ export function VerificationQueue() {
     },
     {
       key: 'invoice',
-      header: 'Applied to',
-      group: 'Match',
+      header: t.col.invoice,
       width: 180,
       render: (v) => <IdCell>{invoiceNumber(v.receipt.suggestedInvoiceId)}</IdCell>,
     },
-    { key: 'recordedBy', header: 'Recorded by', group: 'Control', width: 130, render: (v) => v.receipt.recordedBy },
+    { key: 'recordedBy', header: t.col.addedBy, width: 130, render: (v) => v.receipt.recordedBy },
     {
       key: 'verifier',
-      header: 'Verified by',
-      group: 'Control',
+      header: t.col.checkedBy,
       width: 200,
       render: (v) => (
         <span className="flex items-center gap-2">
           <span>{v.verifier}</span>
-          {v.inSession ? <StatusStamp status="ready" label="Just now" /> : null}
+          {v.inSession ? <StatusStamp status="ready" label={t.stamp.justNow} /> : null}
         </span>
       ),
     },
@@ -425,69 +438,55 @@ export function VerificationQueue() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Finance · Receipts"
-        title="Payment verification"
-        meta={
-          <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <AsOfStamp asOf="14:42" source="v_receipt_verification" freshness="materialised" />
-            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              Signed in as {persona.name} · {persona.roleLabel}
-            </span>
-          </span>
-        }
-      />
+      {/* Who is signed in is in the top bar; the page does not repeat it. */}
+      <PageHeader eyebrow={t.eyebrow} title={t.title} meta={<AsOfStamp asOf={AS_OF} source={t.source} freshness="materialised" />} />
 
-      {/* Stated once, plainly, where it cannot be missed: the ranking engine is
-          not one of the two people. It proposes and shows its reason; the two
-          signatures on a receipt are both human. */}
-      <p className="font-serif px-6 pt-4 text-[14px] italic" style={{ color: 'var(--text-secondary)' }}>
-        An invoice does not close on a report of payment. Linck ranks the likely match and states the reason it used —
-        it counts as neither of the two people. One person records, a different person confirms.
+      {/* The rule, once, in the words of the person it applies to. */}
+      <p className="font-serif px-6 pt-4 text-[15px] italic" style={{ color: 'var(--text-secondary)' }}>
+        {t.rule}
       </p>
 
       {/* Stacked on a phone with a hairline BETWEEN tiles rather than a stray
           right edge, and pulled back to the page's px-6 measure so the tile
-          numbers line up with the prose above them. */}
+          numbers line up with the line above them. */}
       <TileRow className="mt-4 grid-cols-1 [&>*]:border-[var(--border-subtle)] max-md:[&>*]:border-b max-md:[&>*]:px-6 max-md:[&>*:last-child]:border-b-0 md:grid-cols-3 md:[&>*]:border-r">
         <KpiTile
-          eyebrow="Awaiting verification"
+          eyebrow={t.tiles.waiting}
           value={formatINRCompact(queueTotal)}
-          delta={{ text: `${queue.length} receipts · counted as collected nowhere`, tone: 'attention' }}
-          asOf="14:42"
-          source="v_receipt_verification"
+          // None of this counts as collected anywhere until it is checked.
+          delta={{ text: t.payments(queue.length), tone: 'attention' }}
+          asOf={AS_OF}
+          source={t.source}
           freshness="materialised"
         />
         <KpiTile
-          eyebrow="Verified today"
+          eyebrow={t.tiles.checkedToday}
           value={formatINRCompact(sum(verifiedToday.map((v) => v.receipt)))}
           delta={{
-            text: `${verifiedToday.length} receipts · ${verifiedToday.filter((v) => v.inSession).length} at this desk`,
+            text: checkedByYou > 0 ? t.paymentsByYou(verifiedToday.length, checkedByYou) : t.payments(verifiedToday.length),
           }}
-          asOf="14:42"
-          source="v_receipt_verification"
+          asOf={AS_OF}
+          source={t.source}
         />
-        {/* The ageing counter, not the blocked button, is the actual control.
+        {/* The age counter, not the blocked button, is the actual control.
             A queue nobody clears is the failure mode this rule invites. */}
         <KpiTile
-          eyebrow="Oldest in the queue"
-          value={oldest === null ? '–' : `${ageDays(oldest.date)} days`}
+          eyebrow={t.tiles.oldest}
+          value={oldest === null ? '–' : t.days(ageDays(oldest.date))}
           delta={{
-            text: oldest === null ? 'Nothing waiting' : `${oldest.customerName} · ${METHOD_LABEL[oldest.method]}`,
+            text: oldest === null ? t.tiles.noneWaiting : `${oldest.customerName} · ${t.method[oldest.method]}`,
             tone: oldest !== null && ageDays(oldest.date) > STALE_DAYS ? 'critical' : 'neutral',
           }}
-          asOf="14:42"
-          source="v_receipt_ageing"
+          asOf={AS_OF}
+          source={t.source}
           freshness="materialised"
         />
       </TileRow>
 
       <div className="grid grid-cols-1 gap-x-8 px-6 pt-2 xl:grid-cols-2">
-        <Section caption="How long the money has been waiting" title="The queue by age">
+        <Section title={t.age.title}>
           <AgeingBar
-            summary={`${formatINRCompact(queueTotal)} awaiting a second signature across ${queue.length} receipts, of which ${formatINRCompact(
-              ageingBuckets[3]?.value ?? 0,
-            )} has waited more than ${STALE_DAYS} days.`}
+            summary={t.age.summary(formatINRCompact(queueTotal), formatINRCompact(ageingBuckets[3]?.value ?? 0), STALE_DAYS)}
             buckets={ageingBuckets}
             format={(v) => formatINRCompact(v)}
           />
@@ -498,75 +497,63 @@ export function VerificationQueue() {
               tone: `var(--chart-${Math.min(5, i + 1)})`,
             }))}
           />
-          <ChartCaption>
-            Darker is older. The right-hand end is the only part that matters at a review — money sitting there is not
-            waiting on a rule, it is waiting on a person, and the customer has long since assumed it is settled.
-          </ChartCaption>
+          {/* Nothing here is red: an age bucket is a fact about time. The
+              right-hand end is money waiting on a person, not on a rule. */}
+          <ChartCaption>{t.age.darker}</ChartCaption>
         </Section>
 
-        <Section caption="What the queue is made of" title="Receipts by method">
-          <ProportionBar
-            summary={`Cash is ${cashSharePct}% of the ${formatINRCompact(queueTotal)} waiting — ${formatINRCompact(
-              cashTotal,
-            )} with no bank line to check it against.`}
-            segments={methodSegments}
-          />
+        <Section title={t.how.title}>
+          <ProportionBar summary={t.how.summary(cashSharePct, formatINRCompact(queueTotal))} segments={methodSegments} />
           <NarrowLegend
             items={methodSegments.map((s) => ({ label: s.label, value: formatINRCompact(s.value), tone: s.tone }))}
           />
-          <ChartCaption>
-            Every banked method leaves a UTR or a cheque number a second person can match. Cash leaves nothing, so its
-            share is the share of this queue that can only ever be verified by a custody trail — which is why it is the
-            one segment spending colour.
-          </ChartCaption>
+          {/* Every banked method leaves a UTR or a cheque number a second
+              person can match. Cash leaves nothing — which is why it is the one
+              segment spending colour, and why this line is about cash. */}
+          <ChartCaption>{t.how.cashNote}</ChartCaption>
         </Section>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={filter === 'all'} onClick={() => setFilter('all')} count={queue.length}>
-          Everything waiting
+          {t.chips.all}
         </Chip>
         <Chip active={filter === 'utr'} onClick={() => setFilter('utr')} count={exactUtr.length}>
-          Exact UTR match
+          {t.chips.utr}
         </Chip>
         <Chip active={filter === 'cash'} onClick={() => setFilter('cash')} count={queue.filter((r) => r.method === 'cash').length}>
-          Cash
+          {t.chips.cash}
         </Chip>
         {/* The chip the ageing bar argues for: the oldest bucket, one click away. */}
         <Chip active={filter === 'stale'} onClick={() => setFilter('stale')} count={staleCount}>
-          Waiting over {STALE_DAYS} days
+          {t.chips.over(STALE_DAYS)}
         </Chip>
-        <Chip
-          active={filter === 'blocked'}
-          onClick={() => setFilter('blocked')}
-          count={queue.filter(blockedFor).length}
-        >
-          Blocked for you
+        {/* Named for why they are blocked: you added them. */}
+        <Chip active={filter === 'blocked'} onClick={() => setFilter('blocked')} count={queue.filter(blockedFor).length}>
+          {t.chips.mine}
         </Chip>
       </div>
 
       {exactUtr.length > 0 && !stripDismissed ? (
         <div className="px-6 pt-4">
+          {/* Exact UTR, exact amount and a next-day value date — the only
+              match strong enough to check as a batch. */}
           <SuggestionStrip
-            applyLabel={eligibleForBatch.length > 0 ? `Verify these ${eligibleForBatch.length}` : 'Nothing to apply'}
-            onApply={
-              eligibleForBatch.length > 0 ? () => setConfirming(eligibleForBatch.map((r) => r.id)) : undefined
-            }
+            applyLabel={eligibleForBatch.length > 0 ? t.strip.checkAll(eligibleForBatch.length) : t.strip.nothing}
+            onApply={eligibleForBatch.length > 0 ? () => setConfirming(eligibleForBatch.map((r) => r.id)) : undefined}
             onDismiss={() => setStripDismissed(true)}
           >
-            {exactUtr.length} receipts match a bank line on exact UTR, exact amount and a next-day value date.{' '}
-            {blockedInBatch > 0
-              ? `${blockedInBatch} of them you recorded yourself and will stay in the queue for someone else.`
-              : 'Apply verification to all of them?'}
+            {t.strip.match(exactUtr.length)} {blockedInBatch > 0 ? t.strip.yours(blockedInBatch) : null}
           </SuggestionStrip>
         </div>
       ) : null}
 
-      <Section
-        caption="Money reported, not yet confirmed"
-        title="Awaiting a second pair of eyes"
-        actions={<AsOfStamp asOf="14:42" source="v_receipt_verification" freshness="materialised" />}
-      >
+      <Section title={t.queue.title}>
+        {rows.length > 0 ? (
+          <p className="px-6 pb-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+            {t.queue.hint}
+          </p>
+        ) : null}
         <DataTable
           density={density}
           columns={queueColumns}
@@ -576,31 +563,17 @@ export function VerificationQueue() {
           onRowClick={(r) => setSelectedId(r.id)}
           rail={(r) => ({ status: ageDays(r.date) > STALE_DAYS ? 'critical' : 'pending', provenance: r.provenance })}
           empty={
+            // Filtered-empty and genuinely-empty are different: the first
+            // offers the way back to everything, because the money is still there.
             <EmptyState
-              fact={filter === 'all' ? 'Nothing is waiting on a second signature.' : 'No receipt in this view.'}
-              because={
-                filter === 'all'
-                  ? 'Every reported receipt has been cross-verified. Invoices can close.'
-                  : 'The filter is narrower than the queue — the money is still there.'
-              }
-              {...(filter === 'all'
-                ? {}
-                : { action: { label: 'Show everything waiting', onClick: () => setFilter('all') } })}
+              fact={filter === 'all' ? t.queue.allChecked : t.queue.noneHere}
+              {...(filter === 'all' ? {} : { action: { label: t.queue.showAll, onClick: () => setFilter('all') } })}
             />
           }
         />
-        <p className="font-serif px-6 pt-3 text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-          Cash receipts carry no UTR, so the reference reads as a dash rather than a blank. What verifies cash is the
-          custody trail instead — who took it, who counted it, and which day&rsquo;s deposit slip it went into. Open a
-          row to see the match Linck proposed, the reason it used, and the customer&rsquo;s other open invoices.
-        </p>
       </Section>
 
-      <Section
-        caption="Confirmed by two people"
-        title="Verified today"
-        actions={<AsOfStamp asOf="14:42" source="v_receipt_verification" freshness="live" />}
-      >
+      <Section title={t.checked.title}>
         <DataTable
           density={density}
           columns={verifiedColumns}
@@ -609,12 +582,7 @@ export function VerificationQueue() {
           selectedKey={selectedId ?? undefined}
           onRowClick={(v) => setSelectedId(v.receipt.id)}
           rail={() => ({ status: 'ready', provenance: 'confirmed' })}
-          empty={
-            <EmptyState
-              fact="Nothing has been verified today."
-              because="Until a second person confirms, none of it counts as collected."
-            />
-          }
+          empty={<EmptyState fact={t.checked.none} />}
         />
       </Section>
 
@@ -625,34 +593,25 @@ export function VerificationQueue() {
         onClose={() => setSelectedId(null)}
         width="form"
         title={selected?.customerName ?? ''}
-        identifier={selected?.reference ?? (selected ? 'No reference — cash' : undefined)}
+        identifier={selected?.reference ?? (selected ? t.sheet.cash : undefined)}
         {...(selected
           ? {
               status:
                 selectedVerifier !== null
-                  ? { family: 'ready' as const, label: 'Verified' }
-                  : {
-                      family: 'pending' as const,
-                      label: 'Awaiting',
-                      severity: `${ageDays(selected.date)}d`,
-                      provisional: true,
-                    },
+                  ? { family: 'ready' as const, label: t.stamp.checked }
+                  : { family: 'pending' as const, label: t.stamp.waiting, provisional: true },
             }
           : {})}
-        revision={selected ? `RECORDED BY ${selected.recordedBy.toUpperCase()}` : undefined}
         footer={
           selected === null ? undefined : selectedVerifier !== null ? (
             // The sheet footer is a fixed 56px band. On a phone it has ~335px of
             // width, so the sentence beside the stamp has to be allowed to wrap
-            // inside its own share of the row and to set a step smaller — the
-            // alternative is copy spilling out over the scroll area above it.
+            // inside its own share of the row — the alternative is copy spilling
+            // out over the scroll area above it.
             <span className="flex w-full min-w-0 items-center gap-2.5">
-              <StatusStamp status="ready" label="Verified" />
-              <span
-                className="font-serif min-w-0 flex-1 text-[11px] italic leading-tight sm:text-[12px]"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                Confirmed by {selectedVerifier}, who did not record it. Two people have now seen this money.
+              <StatusStamp status="ready" label={t.stamp.checked} />
+              <span className="min-w-0 flex-1 text-[12px] leading-tight sm:text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                {t.sheet.checkedBy(selectedVerifier)}
               </span>
             </span>
           ) : (
@@ -665,23 +624,11 @@ export function VerificationQueue() {
                 disabled={selectedBlocked}
                 onClick={() => setConfirming([selected.id])}
               >
-                Verify this receipt
+                {t.sheet.check}
               </Button>
-              {selectedBlocked ? (
-                <span
-                  className="font-serif min-w-0 flex-1 text-[11px] italic leading-tight sm:text-[12px]"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  You recorded this one — it needs someone else.
-                </span>
-              ) : (
-                <span
-                  className="font-serif min-w-0 flex-1 text-[11px] italic leading-tight sm:text-[12px]"
-                  style={{ color: 'var(--text-tertiary)' }}
-                >
-                  Confirming counts this money as collected.
-                </span>
-              )}
+              <span className="min-w-0 flex-1 text-[12px] leading-tight sm:text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                {selectedBlocked ? t.sheet.yours : t.sheet.after}
+              </span>
             </span>
           )
         }
@@ -696,42 +643,36 @@ export function VerificationQueue() {
           verify(confirmTargets.map((r) => r.id));
           setSelectedId(null);
         }}
-        title={confirmTargets.length === 1 ? 'Verify this receipt?' : `Verify ${confirmTargets.length} receipts?`}
-        confirmLabel={confirmTargets.length === 1 ? 'Verify' : `Verify all ${confirmTargets.length}`}
+        title={confirmTargets.length === 1 ? t.confirm.titleOne : t.confirm.titleMany(confirmTargets.length)}
+        confirmLabel={confirmTargets.length === 1 ? t.confirm.yesOne : t.confirm.yesMany(confirmTargets.length)}
         consequence={
+          // One fact a line: whose money, then what checking it does.
           <>
-            {confirmTargets.length === 1 ? (
-              <>Confirming {formatINR(confirmTargets[0]?.amount ?? '0')} recorded by {confirmTargets[0]?.recordedBy}. </>
-            ) : (
-              <>
-                Confirming {formatINR(confirmTotal)} across {confirmTargets.length} receipts, each matched on exact UTR.{' '}
-              </>
-            )}
+            <p>
+              {confirmTargets.length === 1
+                ? t.confirm.one(formatINR(confirmTargets[0]?.amount ?? '0'), confirmTargets[0]?.recordedBy ?? '')
+                : t.confirm.many(confirmTargets.length, formatINR(confirmTotal))}
+            </p>
             {confirmEffects.length === 0 ? (
-              <>
-                None of them carries a suggested invoice, so this confirms the money into the ledger without closing
-                anything. Allocation stays open.
-              </>
+              // No suggested invoice: the money is confirmed into the ledger
+              // and allocation stays an open job.
+              <p className="mt-1">{t.confirm.noInvoice}</p>
             ) : (
               <>
-                {closesCount > 0
-                  ? `This closes ${closesCount === 1 ? 'one invoice' : `${closesCount} invoices`} outright.`
-                  : 'No invoice is closed by it — every one stays part-paid.'}
+                <p className="mt-1">{closesCount > 0 ? t.confirm.closes(closesCount) : t.confirm.noneCloses}</p>
                 <ul className="font-sans mt-3 not-italic">
                   {confirmEffects.map((e) => (
                     // Number over effect on a phone; the two side by side need
                     // ~380px and the modal has 343 at 375.
                     <li
                       key={e.invoice.id}
-                      className="flex flex-col gap-x-3 py-1 text-[13px] sm:flex-row sm:items-baseline sm:justify-between"
+                      className="flex flex-col gap-x-3 py-1.5 text-[13px] sm:flex-row sm:items-baseline sm:justify-between"
                       style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
                     >
                       <span className="font-id">{e.invoice.number}</span>
                       <span className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                        {formatINR(e.applied, { decimals: 0 })} applied ·{' '}
-                        {e.remaining <= 0.5
-                          ? 'balance cleared'
-                          : `${formatINR(e.remaining, { decimals: 0 })} still due`}
+                        {formatINR(e.applied, { decimals: 0 })} ·{' '}
+                        {e.remaining <= 0.5 ? t.confirm.fullyPaid : t.confirm.stillDue(formatINR(e.remaining, { decimals: 0 }))}
                       </span>
                     </li>
                   ))}
@@ -746,89 +687,95 @@ export function VerificationQueue() {
 }
 
 /**
- * The receipt, as the second person needs to see it.
+ * The payment, as the second person needs to see it.
  *
- * More than the row carried: the stated matching reason, what the suggested
- * invoice looks like before and after this money lands, the customer's OTHER
- * open invoices so a wrong allocation is visible rather than assumed, and the
- * four-eyes rule printed where the signing happens.
+ * More than the row carried: the stated match reason, what the suggested
+ * invoice looks like before and after this money lands, and the customer's
+ * OTHER unpaid invoices so a wrong allocation is visible rather than assumed.
+ * The two-person rule itself is in the footer, beside the button it governs.
  */
 function ReceiptDetail({ receipt, verifier }: { receipt: Receipt; verifier: string | null }) {
+  const t = useWords(verifyWords);
+  const status = useWords(statusWords);
   const suggested = invoiceOf(receipt.suggestedInvoiceId);
   const others = openInvoicesFor(receipt.customerId).filter((i) => i.id !== receipt.suggestedInvoiceId);
   const amount = amountOf(receipt);
-  const age = ageDays(receipt.date);
+  const isCash = receipt.method === 'cash' && receipt.reference === null;
 
   return (
     <>
-      <SheetSection caption="The receipt">
+      <SheetSection caption={t.sheet.payment}>
         <DetailGrid>
-          <Detail label="Received on">
-            {formatDate(receipt.date)} · {age === 0 ? 'today' : `${age} days in the queue`}
+          <Detail label={t.sheet.date}>
+            {formatDate(receipt.date)} · {t.ago(ageDays(receipt.date))}
           </Detail>
-          <Detail label="Amount reported">
+          <Detail label={t.sheet.amount}>
             <Provisional confirmed={verifier !== null}>
               <MoneyCell value={receipt.amount} accounting={false} />
             </Provisional>
           </Detail>
-          <Detail label="Method">{METHOD_LABEL[receipt.method]}</Detail>
-          <Detail label={receipt.method === 'cheque' ? 'Cheque number' : 'Bank reference'}>
-            <IdCell>{receipt.reference}</IdCell>
-          </Detail>
-          <Detail label="Recorded by">{receipt.recordedBy}</Detail>
-          <Detail label="Entered as of">{formatDate(receipt.date)}</Detail>
-          <Detail label="Verified by">{verifier ?? '–'}</Detail>
-          <Detail label="Verified at">
-            {receipt.verifiedAt !== null ? formatDateTime(receipt.verifiedAt) : verifier !== null ? 'Just now' : '–'}
-          </Detail>
+          <Detail label={t.sheet.how}>{t.method[receipt.method]}</Detail>
+          {isCash ? null : (
+            <Detail label={receipt.method === 'cheque' ? t.sheet.chequeNo : t.sheet.utrNo}>
+              <IdCell>{receipt.reference}</IdCell>
+            </Detail>
+          )}
+          <Detail label={t.sheet.addedBy}>{receipt.recordedBy}</Detail>
+          {verifier !== null ? (
+            <>
+              <Detail label={t.sheet.checkedByLabel}>{verifier}</Detail>
+              <Detail label={t.sheet.checkedOn}>
+                {receipt.verifiedAt !== null ? formatDateTime(receipt.verifiedAt) : t.stamp.justNow}
+              </Detail>
+            </>
+          ) : null}
         </DetailGrid>
-        {receipt.reference === null ? (
-          <Note>
-            Cash carries no bank reference, so there is nothing to match against a statement line. What stands in for it
-            is the custody trail — who took it, who counted it, and which day&rsquo;s deposit slip it went into.
-          </Note>
-        ) : null}
+        {/* Cash has no bank reference to match against a statement line. What
+            stands in for it is the custody trail; the deposit slip is the part
+            the person checking can actually look at. */}
+        {receipt.reference === null ? <Note>{t.how.cashNote}</Note> : null}
       </SheetSection>
 
-      <SheetSection caption="What Linck proposes, and why">
+      <SheetSection caption={t.sheet.likelyInvoice}>
         {suggested === null ? (
-          <Note>
-            No invoice was ranked high enough to suggest. Verifying confirms the money without allocating it, and the
-            allocation stays an open job.
-          </Note>
+          // Checking confirms the money without allocating it; the allocation
+          // stays an open job.
+          <Note>{t.sheet.noInvoice}</Note>
         ) : (
           <>
             <DetailGrid>
-              <Detail label="Suggested invoice">
+              <Detail label={t.sheet.invoice}>
                 <IdCell>{suggested.number}</IdCell>
               </Detail>
-              <Detail label="Standing">
+              <Detail label={t.sheet.status}>
                 <StatusStamp
                   status={INVOICE_STATUS_FAMILY[suggested.status]}
-                  label={INVOICE_STATUS_LABEL[suggested.status]}
-                  {...(suggested.daysOverdue > 0 ? { severity: `+${suggested.daysOverdue}d` } : {})}
+                  label={status.invoice[suggested.status]}
+                  {...(suggested.daysOverdue > 0 ? { severity: t.late(suggested.daysOverdue) } : {})}
                   {...(suggested.status === 'payment_reported' ? { provisional: true } : {})}
                 />
               </Detail>
-              <Detail label="Invoice total">
+              <Detail label={t.sheet.total}>
                 <MoneyCell value={suggested.total} accounting={false} />
               </Detail>
-              <Detail label="Balance before this">
+              <Detail label={t.sheet.dueBefore}>
                 <MoneyCell value={suggested.balanceDue} accounting={false} />
               </Detail>
             </DetailGrid>
-            <Note>Match reason as stated by the ranker: {receipt.suggestionReason ?? 'none recorded'}.</Note>
+            {/* The reason as the ranker stated it, so the person signing can
+                disagree with it. */}
+            <Note>{t.sheet.why(reasonWords(receipt.suggestionReason, t.reason) ?? t.sheet.noReason)}</Note>
+            {/* The middle segment exists only because somebody said so.
+                Checking is what moves it into the first; nothing else does. */}
             <div className="pt-3">
               <ProportionBar
-                summary={`${formatINR(suggested.receivedVerified)} verified of ${formatINR(
-                  suggested.total,
-                )}; this receipt would cover a further ${formatINR(receipt.amount)}.`}
+                summary={t.sheet.barSummary(formatINR(suggested.receivedVerified), formatINR(suggested.total), formatINR(receipt.amount))}
                 height={22}
                 segments={[
-                  { label: 'Verified', value: Number.parseFloat(suggested.receivedVerified), tone: 'var(--status-ready)' },
-                  { label: 'This receipt', value: amount, tone: 'var(--status-attention)' },
+                  { label: t.sheet.barChecked, value: Number.parseFloat(suggested.receivedVerified), tone: 'var(--status-ready)' },
+                  { label: t.sheet.barThis, value: amount, tone: 'var(--status-attention)' },
                   {
-                    label: 'Still due',
+                    label: t.sheet.barDue,
                     value: Math.max(
                       0,
                       Number.parseFloat(suggested.total) - Number.parseFloat(suggested.receivedVerified) - amount,
@@ -837,61 +784,47 @@ function ReceiptDetail({ receipt, verifier }: { receipt: Receipt; verifier: stri
                   },
                 ]}
               />
-              <ChartCaption>
-                The middle segment is the part that only exists because somebody said so. Verifying is what moves it
-                into the first segment; nothing else does.
-              </ChartCaption>
             </div>
           </>
         )}
       </SheetSection>
 
-      <SheetSection caption={`Other open invoices for this customer (${others.length})`}>
+      <SheetSection caption={t.sheet.others(others.length)}>
         {others.length === 0 ? (
-          <Note>
-            Nothing else is open for {receipt.customerName}, so the suggested invoice is the only place this money can
-            land.
-          </Note>
+          // Then the suggested invoice is the only place this money can land.
+          <Note>{t.sheet.noOthers}</Note>
         ) : (
           <>
             <ul className="text-[13px]">
               {others.map((i) => (
                 <li
                   key={i.id}
-                  className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+                  className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                   style={{ borderBottom: '1px solid var(--border-subtle)' }}
                 >
                   <span className="flex min-w-0 flex-col leading-tight">
                     <span className="font-id">{i.number}</span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                      raised {formatDate(i.date)} · due {formatDate(i.dueDate)}
+                    <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+                      {t.sheet.dated(formatDate(i.date), formatDate(i.dueDate))}
                     </span>
                   </span>
                   <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <MoneyCell value={i.balanceDue} />
                     <StatusStamp
                       status={INVOICE_STATUS_FAMILY[i.status]}
-                      label={INVOICE_STATUS_LABEL[i.status]}
-                      {...(i.daysOverdue > 0 ? { severity: `+${i.daysOverdue}d` } : {})}
+                      label={status.invoice[i.status]}
+                      {...(i.daysOverdue > 0 ? { severity: t.late(i.daysOverdue) } : {})}
                     />
                   </span>
                 </li>
               ))}
             </ul>
-            <Note>
-              Shown so a wrong allocation is visible rather than assumed. An amount that matches an older invoice
-              better than the suggested one is the commonest way money ends up against the wrong bill.
-            </Note>
+            {/* Shown so a wrong allocation is visible rather than assumed. */}
+            <div className="pt-2">
+              <Note>{t.sheet.rightInvoice}</Note>
+            </div>
           </>
         )}
-      </SheetSection>
-
-      <SheetSection caption="The rule this desk runs on">
-        <Note>
-          One person records a receipt, a different person confirms it. {receipt.recordedBy} recorded this one, so{' '}
-          {receipt.recordedBy} cannot verify it — anyone else in accounts can. Until a second person does, the amount is
-          counted as collected nowhere in this system and the invoice stays open.
-        </Note>
       </SheetSection>
     </>
   );

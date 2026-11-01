@@ -1,12 +1,6 @@
 import { useMemo, useState } from 'react';
 import { can, formatDate, formatINR, formatQty } from '@linck/domain';
-import {
-  PO_STATUS_FAMILY,
-  PO_STATUS_LABEL,
-  PRODUCTS,
-  purchaseOrdersForSite,
-  type PurchaseOrder,
-} from '@linck/mock';
+import { PO_STATUS_FAMILY, PRODUCTS, purchaseOrdersForSite, type PurchaseOrder } from '@linck/mock';
 import {
   AsOfStamp,
   Button,
@@ -26,13 +20,17 @@ import {
   SideSheet,
   Stacked,
   StatusStamp,
+  useIsPhone,
   type Column,
 } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { orderWords, salesWords, type OrderText, type SalesText } from './words.js';
 
 /**
- * The customer purchase-order database.
+ * The customer purchase-order database ("Orders" on screen).
  *
  * Every sales order a customer has raised against us, from taken-on-the-phone
  * to fully dispatched. Approval is the gate: rate and credit are checked here,
@@ -42,15 +40,23 @@ import { useViewParam } from '../../shell/useViewParam.js';
 type View = 'all' | PurchaseOrder['status'];
 const VIEWS: readonly View[] = ['all', 'pending_approval', 'approved', 'part_dispatched', 'fulfilled', 'rejected'];
 
+/** Material names are the product's own names (M-Sand, 20mm Aggregate) and are not translated. */
 const productLabel = (code: string) => PRODUCTS.find((p) => p.code === code)?.label ?? code;
+
+type StatusText = (typeof statusWords)['en'];
 
 export function PurchaseOrderDatabase() {
   const { persona, siteScope, density } = useApp();
+  const phone = useIsPhone();
   const [view, setView] = useViewParam(VIEWS, 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Decisions taken in this session, not yet written back. */
   const [decided, setDecided] = useState<Record<string, PurchaseOrder['status']>>({});
   const [confirmReject, setConfirmReject] = useState(false);
+  const t = useWords(orderWords);
+  const s = useWords(salesWords);
+  const status = useWords(statusWords);
+  const columns = useMemo(() => orderColumns(t, s, status), [t, s, status]);
 
   const mayApprove = can(persona.grants, 'sales.order.approve', { siteId: siteScope });
 
@@ -61,22 +67,23 @@ export function PurchaseOrderDatabase() {
   const rows = view === 'all' ? all : all.filter((p) => p.status === view);
   const selected = selectedId ? (all.find((p) => p.id === selectedId) ?? null) : null;
 
-  const countOf = (s: PurchaseOrder['status']) => all.filter((p) => p.status === s).length;
+  const countOf = (st: PurchaseOrder['status']) => all.filter((p) => p.status === st).length;
 
   return (
     <>
       <PageHeader
-        eyebrow="Sales"
-        title="Purchase orders"
-        meta={<AsOfStamp asOf="14:42" source="sales.purchase_orders" freshness="live" />}
+        eyebrow={s.eyebrow}
+        title={t.title}
+        // From sales.purchase_orders.
+        meta={<AsOfStamp asOf="14:42" source={s.src.orders} freshness="live" />}
       />
       <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={all.length}>
-          All orders
+          {s.all}
         </Chip>
-        {VIEWS.filter((v): v is PurchaseOrder['status'] => v !== 'all').map((s) => (
-          <Chip key={s} active={view === s} onClick={() => setView(s)} count={countOf(s)}>
-            {PO_STATUS_LABEL[s]}
+        {VIEWS.filter((v): v is PurchaseOrder['status'] => v !== 'all').map((st) => (
+          <Chip key={st} active={view === st} onClick={() => setView(st)} count={countOf(st)}>
+            {status.order[st]}
           </Chip>
         ))}
       </div>
@@ -95,13 +102,9 @@ export function PurchaseOrderDatabase() {
           })}
           empty={
             all.length === 0 ? (
-              <EmptyState fact="No purchase orders at this site." because="No customer has raised an order against this plant yet." />
+              <EmptyState fact={t.noneAtSite} />
             ) : (
-              <EmptyState
-                fact="No purchase orders match this view."
-                because="Nothing at this site is in that state right now."
-                action={{ label: 'Show all orders', onClick: () => setView('all') }}
-              />
+              <EmptyState fact={t.noneHere} action={{ label: s.showAll, onClick: () => setView('all') }} />
             )
           }
         />
@@ -114,23 +117,23 @@ export function PurchaseOrderDatabase() {
         width="form"
         title={selected?.number ?? ''}
         identifier={selected ? `${selected.customerName} · ${selected.customerPoRef}` : undefined}
-        {...(selected
-          ? { status: { family: PO_STATUS_FAMILY[selected.status], label: PO_STATUS_LABEL[selected.status] } }
-          : {})}
+        // On a phone the stamp moves into the sheet body: a status that does
+        // not shrink — and Tamil ones run long — squeezed the order number.
+        {...(selected && !phone ? { status: { family: PO_STATUS_FAMILY[selected.status], label: status.order[selected.status] } } : {})}
         footer={
           selected?.status === 'pending_approval' ? (
             mayApprove ? (
               <>
                 <Button variant="primary" onClick={() => setDecided((d) => ({ ...d, [selected.id]: 'approved' }))}>
-                  Approve order
+                  {t.approve}
                 </Button>
                 <Button variant="destructive" onClick={() => setConfirmReject(true)}>
-                  Reject
+                  {t.reject}
                 </Button>
               </>
             ) : (
-              <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-                Awaiting sign-off from a sales manager.
+              <span className="text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
+                {t.managerApproves}
               </span>
             )
           ) : null
@@ -138,44 +141,44 @@ export function PurchaseOrderDatabase() {
       >
         {selected ? (
           <>
-            <SheetSection caption="Order">
+            {phone ? (
+              <div className="mb-4">
+                <StatusStamp status={PO_STATUS_FAMILY[selected.status]} label={status.order[selected.status]} />
+              </div>
+            ) : null}
+            <SheetSection caption={t.order}>
               <DetailGrid>
-                <Detail label="Customer">{selected.customerName}</Detail>
-                <Detail label="Deliver to">{selected.deliverySite}</Detail>
-                <Detail label="Material">{productLabel(selected.productCode)}</Detail>
-                <Detail label="Rate">
-                  <MoneyCell value={selected.ratePerUnit} decimals={0} /> / unit
+                <Detail label={s.customer}>{selected.customerName}</Detail>
+                <Detail label={t.deliverTo}>{selected.deliverySite}</Detail>
+                <Detail label={s.material}>{productLabel(selected.productCode)}</Detail>
+                <Detail label={s.rate}>{t.perUnit(formatINR(selected.ratePerUnit, { decimals: 0 }))}</Detail>
+                <Detail label={t.ordered}>
+                  <QuantityCell value={selected.orderedUnits} decimals={0} uom={s.units} />
                 </Detail>
-                <Detail label="Ordered">
-                  <QuantityCell value={selected.orderedUnits} decimals={0} uom="units" />
+                <Detail label={t.sent}>
+                  <QuantityCell value={selected.dispatchedUnits} decimals={0} uom={s.units} />
                 </Detail>
-                <Detail label="Dispatched">
-                  <QuantityCell value={selected.dispatchedUnits} decimals={0} uom="units" />
+                <Detail label={s.amount}>
+                  <MoneyCell value={selected.value} accounting={false} decimals={0} />
                 </Detail>
-                <Detail label="Order value">
-                  <MoneyCell value={selected.value} decimals={0} />
-                </Detail>
-                <Detail label="Deliver by">{formatDate(selected.deliverBy)}</Detail>
+                <Detail label={t.deliverBy}>{formatDate(selected.deliverBy)}</Detail>
               </DetailGrid>
             </SheetSection>
-            <SheetSection caption="Taken">
+            <SheetSection caption={t.taken}>
               <DetailGrid>
-                <Detail label="Received">{formatDate(selected.receivedOn)}</Detail>
-                <Detail label="Taken by">{selected.takenBy}</Detail>
+                <Detail label={s.date}>{formatDate(selected.receivedOn)}</Detail>
+                <Detail label={t.takenBy}>{selected.takenBy}</Detail>
               </DetailGrid>
-              {selected.status === 'pending_approval' ? (
-                <Note>
-                  Nothing can be loaded against this order until it is approved. {formatQty(selected.orderedUnits, 0)} units
-                  are waiting on the decision.
-                </Note>
-              ) : null}
+              {/* Nothing can be loaded against an order until it is approved. */}
+              {selected.status === 'pending_approval' ? <Note>{t.approveToLoad(formatQty(selected.orderedUnits, 0))}</Note> : null}
             </SheetSection>
           </>
         ) : null}
       </SideSheet>
 
       {/* Rejecting is the one move on this screen with no way back from it, so
-          it names the customer, the units and the money before it happens. */}
+          it names the customer, the units and the money before it happens. It
+          cannot be reopened here; the customer raises a new order. */}
       <ConfirmModal
         open={confirmReject && selected !== null}
         onClose={() => setConfirmReject(false)}
@@ -183,15 +186,23 @@ export function PurchaseOrderDatabase() {
           if (selected) setDecided((d) => ({ ...d, [selected.id]: 'rejected' }));
           setConfirmReject(false);
         }}
-        title="Reject this order"
+        title={t.rejectTitle}
         destructive
-        confirmLabel="Reject the order"
+        confirmLabel={t.rejectYes}
         consequence={
           selected ? (
             <>
-              {selected.customerName}&rsquo;s order {selected.customerPoRef} for {formatQty(selected.orderedUnits, 0)} units of{' '}
-              {productLabel(selected.productCode)} ({formatINR(selected.value, { decimals: 0 })}) is turned down and cannot be reopened
-              here. They will need to raise a new order.
+              <p>
+                {selected.customerName} · {selected.customerPoRef}
+              </p>
+              <p>
+                {t.rejectWhat(
+                  formatQty(selected.orderedUnits, 0),
+                  productLabel(selected.productCode),
+                  formatINR(selected.value, { decimals: 0 }),
+                )}
+              </p>
+              <p className="mt-2">{t.rejectNote}</p>
             </>
           ) : null
         }
@@ -200,57 +211,58 @@ export function PurchaseOrderDatabase() {
   );
 }
 
-const columns: Column<PurchaseOrder>[] = [
-  {
-    key: 'number',
-    header: 'Order',
-    type: 'id',
-    sticky: true,
-    width: 170,
-    group: 'Order',
-    render: (p) => <Stacked primary={<IdCell>{p.number}</IdCell>} secondary={p.customerPoRef} />,
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    type: 'status',
-    width: 170,
-    group: 'Order',
-    render: (p) => <StatusStamp status={PO_STATUS_FAMILY[p.status]} label={PO_STATUS_LABEL[p.status]} />,
-  },
-  {
-    key: 'customer',
-    header: 'Customer',
-    group: 'Order',
-    render: (p) => <Stacked primary={p.customerName} secondary={p.deliverySite} />,
-  },
-  { key: 'material', header: 'Material', group: 'Material', render: (p) => productLabel(p.productCode) },
-  {
-    key: 'ordered',
-    header: 'Ordered',
-    unit: 'units',
-    type: 'num',
-    width: 96,
-    group: 'Material',
-    render: (p) => <QuantityCell value={p.orderedUnits} decimals={0} />,
-  },
-  {
-    key: 'dispatched',
-    header: 'Dispatched',
-    unit: 'units',
-    type: 'num',
-    width: 110,
-    group: 'Material',
-    render: (p) => <QuantityCell value={p.dispatchedUnits} decimals={0} />,
-  },
-  {
-    key: 'value',
-    header: 'Value',
-    unit: '₹',
-    type: 'money',
-    width: 130,
-    group: 'Money',
-    render: (p) => <MoneyCell value={p.value} decimals={0} />,
-  },
-  { key: 'deliverBy', header: 'Deliver by', width: 110, group: 'Dates', render: (p) => formatDate(p.deliverBy) },
-];
+/**
+ * No column groups: "Order" over the order number and "Material" over the
+ * material column only repeated their own headers, and on a phone card they
+ * printed the same word twice in a row.
+ */
+function orderColumns(t: OrderText, s: SalesText, status: StatusText): Column<PurchaseOrder>[] {
+  return [
+    {
+      key: 'number',
+      header: t.order,
+      type: 'id',
+      sticky: true,
+      width: 170,
+      render: (p) => <Stacked primary={<IdCell>{p.number}</IdCell>} secondary={p.customerPoRef} />,
+    },
+    {
+      key: 'status',
+      header: s.status,
+      type: 'status',
+      width: 200,
+      render: (p) => <StatusStamp status={PO_STATUS_FAMILY[p.status]} label={status.order[p.status]} />,
+    },
+    {
+      key: 'customer',
+      header: s.customer,
+      render: (p) => <Stacked primary={p.customerName} secondary={p.deliverySite} />,
+    },
+    { key: 'material', header: s.material, render: (p) => productLabel(p.productCode) },
+    {
+      key: 'ordered',
+      header: t.ordered,
+      unit: s.units,
+      type: 'num',
+      width: 120,
+      render: (p) => <QuantityCell value={p.orderedUnits} decimals={0} />,
+    },
+    {
+      key: 'dispatched',
+      header: t.sent,
+      unit: s.units,
+      type: 'num',
+      width: 120,
+      render: (p) => <QuantityCell value={p.dispatchedUnits} decimals={0} />,
+    },
+    {
+      key: 'value',
+      header: s.amount,
+      unit: '₹',
+      type: 'money',
+      width: 130,
+      render: (p) => <MoneyCell value={p.value} decimals={0} />,
+    },
+    { key: 'deliverBy', header: t.deliverBy, width: 120, render: (p) => formatDate(p.deliverBy) },
+  ];
+}

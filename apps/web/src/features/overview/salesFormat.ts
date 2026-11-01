@@ -1,24 +1,19 @@
 import { useMemo } from 'react';
 import { formatINR, formatINRCompact, formatTime, monthNumber, type Instant, type MoneyInput } from '@linck/domain';
-import { useLang, type Lang } from '../../i18n/lang.js';
+import { monthNames, moneyUnits } from '../../i18n/format.js';
+import { useWords } from '../../i18n/words.js';
 
 /**
  * Every rupee and date on the sales trend screens, formatted in one place.
  *
- * Kept to this file on purpose: the shared compact formatter is about to
- * learn Tamil units (a hook in the web app), and a day-and-month formatter
- * that follows the language is coming with it. When they land, swapping
- * `formatINRCompact` and the month tables below for them is a change to this
- * file only — the screens call these and nothing else.
+ * The compact rupee figure ends in the reader's own unit word (₹12.40 L /
+ * ₹12.40 லட்சம்) and months are named in the reader's language, both from the
+ * app-wide words in `i18n/format.ts`, so these screens read like the rest of
+ * Linck. The screens call these and nothing else.
  */
 
-const MONTHS: Record<Lang, readonly string[]> = {
-  en: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-  ta: ['ஜன.', 'பிப்.', 'மார்ச்', 'ஏப்.', 'மே', 'ஜூன்', 'ஜூலை', 'ஆக.', 'செப்.', 'அக்.', 'நவ.', 'டிச.'],
-};
-
 export interface SalesFormat {
-  /** `₹12.40 L` — for tiles, cells and axis ticks. */
+  /** `₹12.40 L` / `₹12.40 லட்சம்` — for tiles, cells and axis ticks. */
   money: (value: MoneyInput) => string;
   /** `₹12,40,000` — the hover behind a compact figure. */
   moneyExact: (value: MoneyInput) => string;
@@ -35,12 +30,12 @@ export interface SalesFormat {
 }
 
 export function useSalesFormat(): SalesFormat {
-  const lang = useLang((s) => s.lang);
+  const units = useWords(moneyUnits);
+  const months = useWords(monthNames);
   return useMemo(() => {
-    const months = MONTHS[lang];
     const monthName = (month: string) => months[monthNumber(month) - 1] ?? month;
     return {
-      money: (value) => formatINRCompact(value),
+      money: (value) => formatINRCompact(value, units),
       moneyExact: (value) => formatINR(value, { decimals: 0 }),
       dayMonth: (date) => `${date.slice(8, 10)} ${monthName(date.slice(0, 7))}`,
       dayMonthYear: (date) => `${date.slice(8, 10)} ${monthName(date.slice(0, 7))} ${date.slice(0, 4)}`,
@@ -48,5 +43,5 @@ export function useSalesFormat(): SalesFormat {
       monthYear: (month) => `${monthName(month)} ${month.slice(0, 4)}`,
       time: (instant) => formatTime(instant),
     };
-  }, [lang]);
+  }, [units, months]);
 }

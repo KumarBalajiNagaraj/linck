@@ -65,14 +65,22 @@ export function sourceFromArchive(archive: ChatArchive): IntakeSource {
 export function demoSource(): IntakeSource {
   return {
     kind: 'demo',
-    via: `${WHATSAPP_DEMO.group} (demo)`,
+    via: WHATSAPP_DEMO.group,
     messages: parseWhatsAppExport(WHATSAPP_DEMO.chatText).messages,
     media: new Map(),
     slipTexts: WHATSAPP_DEMO.slips,
   };
 }
 
-export class InboxUnavailable extends Error {}
+/** Why the inbox could not be read. Worded by the screen. */
+export class InboxUnavailable extends Error {
+  constructor(
+    readonly reason: 'sign-in' | 'status' | 'unreachable',
+    readonly status: number | null = null,
+  ) {
+    super(reason);
+  }
+}
 
 interface InboxRow {
   id: string;
@@ -97,11 +105,11 @@ export async function fetchInboxSource(): Promise<IntakeSource> {
   let rows: InboxRow[];
   try {
     const res = await fetch(`${API_BASE}/whatsapp/inbox`, { credentials: 'include' });
-    if (!res.ok) throw new InboxUnavailable(res.status === 401 ? 'Sign in to the API to read the WhatsApp inbox.' : `The API answered ${res.status}.`);
+    if (!res.ok) throw res.status === 401 ? new InboxUnavailable('sign-in') : new InboxUnavailable('status', res.status);
     rows = (await res.json()) as InboxRow[];
   } catch (err) {
     if (err instanceof InboxUnavailable) throw err;
-    throw new InboxUnavailable('The Linck API cannot be reached, so the WhatsApp inbox is unavailable here. Import the chat export instead.');
+    throw new InboxUnavailable('unreachable');
   }
   const media = new Map<string, File>();
   const inboxIds = new Map<number, string>();
@@ -123,7 +131,8 @@ export async function fetchInboxSource(): Promise<IntakeSource> {
       line: i + 1,
     });
   }
-  return { kind: 'inbox', via: 'WhatsApp Business number', messages, media, inboxIds };
+  // The screen names the business number in the reader's language.
+  return { kind: 'inbox', via: '', messages, media, inboxIds };
 }
 
 export async function markInboxImported(ids: string[]): Promise<void> {
@@ -232,7 +241,8 @@ export function billFromClaim(claim: IntakeClaim, source: IntakeSource): Expense
     // roster. Never the vehicle's rostered driver — that would be a guess.
     driverId: claim.driverId,
     vendor: claim.vendor ?? '',
-    description: 'HSD fill · slip sent on WhatsApp',
+    // Left blank: the screens show the type ("Diesel") in the reader's language.
+    description: '',
     litres: claim.litres,
     amount: claim.amount!.toFixed(2),
     status: 'submitted',

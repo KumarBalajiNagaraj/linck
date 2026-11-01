@@ -2,9 +2,11 @@ import { useMemo } from 'react';
 import { formatDate, formatINR, summarizeDiesel } from '@linck/domain';
 import { DRIVERS, expensesForSite, VEHICLES, type ExpenseBill } from '@linck/mock';
 import { Chip, DataTable, EmptyState, IdCell, MoneyCell, PageHeader, Provisional, QuantityCell, Section, type Column } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { useExpenses } from './expenseStore.js';
+import { expenseWords } from './words.js';
 
 /**
  * DIESEL, BY VEHICLE AND BY DRIVER.
@@ -37,6 +39,8 @@ export function DieselSummary() {
   const { siteScope } = useApp();
   const bills = useExpenses((s) => s.bills);
   const [view, setView] = useViewParam(VIEWS, 'vehicle');
+  const t = useWords(expenseWords);
+  const w = t.summary;
 
   const diesel = useMemo(
     () => expensesForSite(siteScope, 'fleet', bills).filter((b) => b.kind === 'diesel' && b.status !== 'rejected' && b.status !== 'deleted'),
@@ -48,19 +52,19 @@ export function DieselSummary() {
     const rows = diesel.map((b) => ({ key: keyOf(b), litres: b.litres, amount: b.amount, unchecked: b.status === 'submitted' ? paise(b) : 0 }));
     const unchecked = new Map<string, number>();
     for (const r of rows) unchecked.set(r.key, (unchecked.get(r.key) ?? 0) + r.unchecked);
-    return summarizeDiesel(rows, (r) => r.key).map((t) => ({
-      ...t,
+    return summarizeDiesel(rows, (r) => r.key).map((line) => ({
+      ...line,
       label:
-        t.key === 'none'
+        line.key === 'none'
           ? view === 'vehicle'
-            ? 'No vehicle'
-            : 'Driver not known'
+            ? w.noVehicle
+            : w.driverNotKnown
           : view === 'vehicle'
-            ? (VEHICLES.find((v) => v.id === t.key)?.displayReg ?? t.key)
-            : (DRIVERS.find((d) => d.id === t.key)?.name ?? t.key),
-      unchecked: (unchecked.get(t.key) ?? 0) / 100,
+            ? (VEHICLES.find((v) => v.id === line.key)?.displayReg ?? line.key)
+            : (DRIVERS.find((d) => d.id === line.key)?.name ?? line.key),
+      unchecked: (unchecked.get(line.key) ?? 0) / 100,
     }));
-  }, [diesel, view]);
+  }, [diesel, view, w]);
 
   const total = {
     litres: lines.reduce((s, l) => s + Math.round(l.litres * 100), 0) / 100,
@@ -72,17 +76,17 @@ export function DieselSummary() {
   const columns: Column<Line>[] = [
     {
       key: 'who',
-      header: view === 'vehicle' ? 'Vehicle' : 'Driver',
+      header: view === 'vehicle' ? w.vehicle : w.driver,
       sticky: true,
       type: view === 'vehicle' ? 'id' : 'text',
       render: (l) => (view === 'vehicle' && l.key !== 'none' ? <IdCell>{l.label}</IdCell> : l.label),
     },
-    { key: 'fills', header: 'Fills', type: 'num', width: 80, render: (l) => l.fills },
-    { key: 'litres', header: 'Litres', unit: 'L', type: 'num', width: 110, render: (l) => <QuantityCell value={l.litres} decimals={2} /> },
-    { key: 'amount', header: 'Amount', unit: '₹', type: 'money', width: 130, render: (l) => <MoneyCell value={l.amount.toFixed(2)} /> },
+    { key: 'fills', header: w.fills, type: 'num', width: 80, render: (l) => l.fills },
+    { key: 'litres', header: w.litres, unit: 'L', type: 'num', width: 110, render: (l) => <QuantityCell value={l.litres} decimals={2} /> },
+    { key: 'amount', header: w.amount, unit: '₹', type: 'money', width: 130, render: (l) => <MoneyCell value={l.amount.toFixed(2)} /> },
     {
       key: 'rate',
-      header: 'Per litre',
+      header: w.perLitre,
       unit: '₹',
       type: 'num',
       width: 100,
@@ -90,7 +94,7 @@ export function DieselSummary() {
     },
     {
       key: 'unchecked',
-      header: 'Not yet validated',
+      header: w.notCheckedCol,
       unit: '₹',
       type: 'money',
       width: 150,
@@ -101,22 +105,22 @@ export function DieselSummary() {
   return (
     <>
       <PageHeader
-        eyebrow="Fleet"
-        title="Diesel summary"
+        eyebrow={t.desk.fleet}
+        title={w.title}
         meta={
-          <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-            {diesel.length} fills · {total.litres.toLocaleString('en-IN')} L · {formatINR(total.amount)}
-            {total.unchecked > 0 ? ` · ${formatINR(total.unchecked)} not yet validated` : ''}
-            {dates.length > 0 ? ` · bills dated ${formatDate(dates[0])} to ${formatDate(dates[dates.length - 1])}` : ''}
+          <span className="text-[14px]" style={{ color: 'var(--text-secondary)' }}>
+            {w.meta(diesel.length, total.litres.toLocaleString('en-IN'), formatINR(total.amount))}
+            {total.unchecked > 0 ? ` · ${w.notChecked(formatINR(total.unchecked))}` : ''}
+            {dates.length > 0 ? ` · ${w.dated(formatDate(dates[0]), formatDate(dates[dates.length - 1]))}` : ''}
           </span>
         }
       />
       <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'vehicle'} onClick={() => setView('vehicle')}>
-          By vehicle
+          {w.byVehicle}
         </Chip>
         <Chip active={view === 'driver'} onClick={() => setView('driver')}>
-          By driver
+          {w.byDriver}
         </Chip>
       </div>
       <Section>
@@ -124,7 +128,7 @@ export function DieselSummary() {
           columns={columns}
           rows={lines}
           rowKey={(l) => l.key}
-          empty={<EmptyState fact="No diesel bills at this site." because="None has been uploaded, keyed or read off WhatsApp here yet." />}
+          empty={<EmptyState fact={w.none} />}
         />
       </Section>
       <div className="h-10" />

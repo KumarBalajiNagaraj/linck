@@ -8,6 +8,7 @@ import {
   type ActionInput,
   type BatchPlan,
   type BillAction,
+  type WorkflowProblem,
 } from '@linck/domain';
 import { EXPENSE_BILLS, NOW, type ExpenseBill } from '@linck/mock';
 import type { Persona } from '../../auth/personas.js';
@@ -27,12 +28,15 @@ import type { Persona } from '../../auth/personas.js';
  * correcting what capture read while a bill is still unsigned.
  */
 
+/** Why a move did not go through: a workflow rule, or the bill is gone. Worded by the screen. */
+export type ActProblem = WorkflowProblem | { code: 'bill-gone' };
+
 interface ExpenseState {
   bills: ExpenseBill[];
   add: (bill: ExpenseBill) => void;
   update: (id: string, patch: Partial<ExpenseBill>) => void;
   /** One move on one bill. Returns why it could not be taken, or null. */
-  act: (id: string, action: BillAction, actor: Actor, input?: ActionInput) => string | null;
+  act: (id: string, action: BillAction, actor: Actor, input?: ActionInput) => ActProblem | null;
   /** The same move on every bill the plan found eligible. */
   actMany: (plan: BatchPlan<ExpenseBill>, actor: Actor, input?: ActionInput) => number;
 }
@@ -46,13 +50,13 @@ export const useExpenses = create<ExpenseState>((set, get) => ({
   act: (id, action, actor, input = {}) => {
     const bills = get().bills;
     const bill = bills.find((b) => b.id === id);
-    if (!bill) return 'That bill is no longer here.';
+    if (!bill) return { code: 'bill-gone' };
     try {
       const next = applyAction(bill, action, actor, NOW.toISOString(), { usedUtrs: usedUtrs(bills), ...input });
       set((s) => ({ bills: s.bills.map((b) => (b.id === id ? next : b)) }));
       return null;
     } catch (err) {
-      if (err instanceof WorkflowError) return err.message;
+      if (err instanceof WorkflowError) return err.problem;
       throw err;
     }
   },

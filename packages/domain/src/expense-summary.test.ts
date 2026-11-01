@@ -59,7 +59,7 @@ describe('ageing', () => {
   it('ages a bill from when it reached its status, not when it was raised', () => {
     const b = bill('validated', '1.00', { submittedAt: '2026-07-01T00:00:00.000Z', history: [moved('validated', '2026-08-08T01:00:00.000Z')] });
     expect(enteredStatusAt(b)).toBe('2026-08-08T01:00:00.000Z');
-    expect(ageBucket(enteredStatusAt(b), NOW)).toBe('Under a day');
+    expect(ageBucket(enteredStatusAt(b), NOW)).toBe('under-1');
   });
 
   it('falls back to when the bill was raised, and buckets rupees by age', () => {
@@ -70,10 +70,10 @@ describe('ageing', () => {
       bill('submitted', '99.00', { submittedAt: '2026-07-20T09:00:00.000Z' }),
     ];
     expect(ageing(bills, 'validated', NOW).map((b) => [b.label, b.count, b.paise])).toEqual([
-      ['Under a day', 0, 0],
-      ['1–3 days', 1, 1000],
-      ['3–7 days', 1, 2000],
-      ['Over a week', 1, 3000],
+      ['under-1', 0, 0],
+      ['1-3', 1, 1000],
+      ['3-7', 1, 2000],
+      ['over-7', 1, 3000],
     ]);
   });
 });

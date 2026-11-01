@@ -121,18 +121,6 @@ def messages_from_webhook(payload: dict[str, Any]) -> list[InboundMessage]:
     return out
 
 
-EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "application/pdf": ".pdf",
-}
-
-
-def media_extension(mime: str | None) -> str:
-    return EXTENSIONS.get((mime or "").split(";")[0].strip(), ".bin")
-
-
 class WhatsAppError(RuntimeError):
     pass
 

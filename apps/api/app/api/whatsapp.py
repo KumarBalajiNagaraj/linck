@@ -3,7 +3,7 @@
     driver ──photo──▶ WhatsApp Business number ──webhook──▶ POST /webhooks/whatsapp
                                                              │ signature checked
                                                              │ one row per message id
-                                                             │ photo downloaded, 👍 reaction sent
+                                                             │ photo kept in the file store, 👍 sent
                                                              ▼
                               fleet manager ◀── GET /whatsapp/inbox ── core.whatsapp_messages
                                    │ reads each slip, reviews, adds bills
@@ -12,20 +12,23 @@
 The webhook answers fast and always 200 once the signature is good, because
 Meta retries anything slower or unhappy; the photo is fetched after the
 response. Storing by message id makes a retried delivery a no-op.
+
+The photo goes through the same seam as an uploaded bill scan
+(app/core/storage.py): kept under the number's tenant, typed from its own
+bytes, and only if it is a photo or a PDF. A document a driver sends that is
+anything else is recorded on the message as not kept, never served back.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -33,11 +36,11 @@ from sqlalchemy.dialects.postgresql import insert
 from app.api.deps import CurrentSession, require
 from app.core.db import tenant_session
 from app.core.settings import Settings, get_settings
+from app.core.storage import UploadRefused, file_store, stored_file_response
 from app.integrations.whatsapp import (
     InboundMessage,
     WhatsAppClient,
     WhatsAppError,
-    media_extension,
     messages_from_webhook,
     verify_signature,
 )
@@ -134,7 +137,7 @@ async def store_messages(
 async def fetch_media(
     row_id: uuid.UUID, message: InboundMessage, client: WhatsAppClient | None = None
 ) -> None:
-    """Download the photo while its media id is still valid, keep it by content hash, and react 👍."""
+    """Download the photo while its media id is still valid, keep it in the file store, and react 👍."""
     settings = get_settings()
     own_client = client is None
     try:
@@ -145,12 +148,21 @@ async def fetch_media(
         await _record_media(row_id, error=str(exc))
         return
     try:
-        content, mime = await client.download_media(message.media_id or "")
-        digest = hashlib.sha256(content).hexdigest()
-        folder = Path(settings.whatsapp_media_dir)
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{digest}{media_extension(mime or message.media_mime)}").write_bytes(content)
-        await _record_media(row_id, sha256=digest, size=len(content), mime=mime or message.media_mime)
+        content, _ = await client.download_media(message.media_id or "")
+        try:
+            stored = await file_store().put(settings.whatsapp_organization_id, content)
+        except UploadRefused as refused:
+            # Not a photo or a PDF, or too big. No thumbs-up: nothing was kept.
+            log.warning("media for %s not kept: %s", message.wamid, refused.code)
+            await _record_media(row_id, error=f"not kept: {refused.code}")
+            return
+        except Exception:
+            # A bucket is a network call that can fail. Say so on the message,
+            # so the inbox shows a missing photo rather than nothing at all.
+            log.exception("media for %s could not be stored", message.wamid)
+            await _record_media(row_id, error="not stored: the file store failed")
+            return
+        await _record_media(row_id, sha256=stored.sha256, size=stored.size, mime=stored.mime_type)
         if settings.whatsapp_react_on_receipt:
             try:
                 await client.react(message.from_phone, message.wamid)
@@ -232,14 +244,14 @@ async def inbox(
 
 
 @router.get("/media/{message_id}")
-async def media(message_id: uuid.UUID, current: ImportDep) -> FileResponse:
+async def media(message_id: uuid.UUID, current: ImportDep) -> StreamingResponse:
     row = await current.db.get(WhatsAppMessage, message_id)
     if row is None or not row.media_sha256:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No photo for that message")
-    path = Path(get_settings().whatsapp_media_dir) / f"{row.media_sha256}{media_extension(row.media_mime)}"
-    if not path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The photo is no longer on disk")
-    return FileResponse(path, media_type=row.media_mime or "application/octet-stream")
+    stored = await file_store().open(current.organization_id, row.media_sha256)
+    if stored is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The photo is no longer stored")
+    return stored_file_response(stored, media_type=row.media_mime or "application/octet-stream")
 
 
 class ImportedBody(BaseModel):

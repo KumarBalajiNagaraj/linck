@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
-from conftest import Person, Tenant
+from conftest import FakeS3, Person, Tenant
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -633,6 +633,34 @@ async def test_a_scan_is_stored_by_hash_and_served_back_safely(  # type: ignore[
     # One scan, one bill.
     r = await api(desk.clerk).post("/expenses", json=keyed(desk.plant, attachmentId=stored["id"]))
     assert r.status_code == 422 and problem(r)["field"] == "attachmentId"
+
+
+async def test_a_scan_goes_through_the_bucket_and_back_under_the_bills_permission(  # type: ignore[no-untyped-def]
+    api, desk: Desk, bucket: FakeS3
+) -> None:
+    """Production keeps scans in Spaces (LINCK_FILE_STORE=s3). The browser still
+    only ever gets them from the API, after the same checks as from a disk."""
+    content = JPEG + b" kept in the bucket"
+    stored = (await upload(api, desk.clerk, content=content, name="Slip 8.jpg")).json()
+    digest = hashlib.sha256(content).hexdigest()
+    assert bucket.keys() == {f"{desk.tenant.org_id}/{digest}"}
+
+    bill = await raise_bill(api, desk.clerk, desk.plant, attachmentId=stored["id"])
+    got = await api(desk.director).get(bill["attachment"]["url"])
+    assert got.status_code == 200 and got.content == content
+    assert got.headers["content-type"] == "image/jpeg"
+    assert got.headers["x-content-type-options"] == "nosniff"
+    assert got.headers["content-disposition"] == "inline; filename*=utf-8''Slip%208.jpg"
+
+    r = await api(desk.outsider).get(bill["attachment"]["url"])
+    assert r.status_code == 404 and problem(r) == {"code": "bill-gone"}
+    r = await api(desk.fleet_elsewhere).get(bill["attachment"]["url"])
+    assert r.status_code == 403
+
+    # Gone from the bucket, the bill says so rather than serving nothing.
+    bucket.objects.clear()
+    r = await api(desk.director).get(bill["attachment"]["url"])
+    assert r.status_code == 404 and problem(r) == {"code": "file-missing"}
 
 
 async def test_only_a_photo_or_a_pdf_and_only_so_big(  # type: ignore[no-untyped-def]

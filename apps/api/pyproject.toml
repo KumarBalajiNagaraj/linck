@@ -15,13 +15,16 @@ dependencies = [
     "httpx>=0.28.0",
     "itsdangerous>=2.2.0",
     "python-multipart>=0.0.20",
+    # Alembic's driver: the pre-deploy migration job runs from the same image.
+    "psycopg[binary]>=3.2.0",
+    # The S3-compatible file store (DigitalOcean Spaces), see app/core/storage.py.
+    "boto3>=1.40.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
-    "psycopg[binary]>=3.2.0",
     "ruff>=0.8.0",
 ]
 

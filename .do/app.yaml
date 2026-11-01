@@ -1,0 +1,176 @@
+# DigitalOcean App Platform spec for the Linck API (LIN-21).
+#
+# docs/DEPLOY.md walks through using it. In short: create the app from this
+# file once (doctl apps create --spec .do/app.yaml), then paste every SECRET
+# into the control panel. The values below are deliberately empty or obvious
+# placeholders: never put a real secret in this file.
+#
+# Re-applying this file to the running app would replace the pasted secrets
+# with these empty values. Change settings in the control panel instead, or
+# download the live spec there (its secrets are encrypted) and edit that.
+
+name: linck-api
+region: blr
+# Tenant data must never sit in a shared cache; the API sends no cacheable
+# responses, and this makes sure the edge does not try.
+disable_edge_cache: true
+
+services:
+  - name: api
+    github:
+      repo: KumarBalajiNagaraj/linck
+      branch: main
+      deploy_on_push: true
+    # The build context is the repository root (see the root .dockerignore).
+    source_dir: /
+    dockerfile_path: apps/api/Dockerfile
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      # Answers without touching the database; see app/main.py.
+      http_path: /health
+      initial_delay_seconds: 10
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    envs:
+      - key: LINCK_ENVIRONMENT
+        value: production
+        scope: RUN_TIME
+
+      # Database: the unprivileged application role (no BYPASSRLS, owns nothing).
+      # asyncpg spells TLS `ssl=require`, not `sslmode=`.
+      #   postgresql+asyncpg://linck_app:<password>@<host>:25060/linck?ssl=require
+      - key: LINCK_DATABASE_URL
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+
+      # Sessions. The web app and the API share one origin through Vercel's
+      # /api rewrite, so the cookie is first-party: __Host-, Secure, HttpOnly,
+      # SameSite=Lax, Path=/.
+      - key: LINCK_SESSION_SECRET
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_SESSION_COOKIE_NAME
+        value: __Host-linck_session
+        scope: RUN_TIME
+      - key: LINCK_SESSION_TTL_MINUTES
+        value: "60"
+        scope: RUN_TIME
+      - key: LINCK_REFRESH_TTL_DAYS
+        value: "30"
+        scope: RUN_TIME
+
+      # Google sign-in, and where the browser lands. Both URLs are the Vercel
+      # domain: the browser never sees the API's own address.
+      - key: LINCK_WEB_APP_URL
+        value: https://REPLACE-WITH-YOUR-VERCEL-DOMAIN
+        scope: RUN_TIME
+      - key: LINCK_OAUTH_REDIRECT_URL
+        value: https://REPLACE-WITH-YOUR-VERCEL-DOMAIN/api/auth/google/callback
+        scope: RUN_TIME
+      - key: LINCK_GOOGLE_CLIENT_ID
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_GOOGLE_CLIENT_SECRET
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+      # A JSON list of Google Workspace domains, or [] for any Google account
+      # (each person still has to be registered first).
+      - key: LINCK_ALLOWED_HOSTED_DOMAINS
+        value: "[]"
+        scope: RUN_TIME
+
+      # Files: bill scans and WhatsApp slip photos, in the private Spaces bucket.
+      - key: LINCK_FILE_STORE
+        value: s3
+        scope: RUN_TIME
+      - key: LINCK_S3_ENDPOINT_URL
+        value: https://blr1.digitaloceanspaces.com
+        scope: RUN_TIME
+      - key: LINCK_S3_REGION
+        value: blr1
+        scope: RUN_TIME
+      - key: LINCK_S3_BUCKET
+        value: REPLACE-WITH-YOUR-BUCKET-NAME
+        scope: RUN_TIME
+      - key: LINCK_S3_ACCESS_KEY_ID
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_S3_SECRET_ACCESS_KEY
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+
+      # WhatsApp intake. Left empty, the webhook answers 503 and nothing else
+      # is affected, so this can wait until the Meta app is set up.
+      - key: LINCK_WHATSAPP_VERIFY_TOKEN
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_WHATSAPP_APP_SECRET
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_WHATSAPP_ACCESS_TOKEN
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_WHATSAPP_PHONE_NUMBER_ID
+        value: ""
+        scope: RUN_TIME
+      - key: LINCK_WHATSAPP_ORGANIZATION_ID
+        value: ""
+        scope: RUN_TIME
+
+jobs:
+  # Runs before every deploy, from the same image. If it fails, the deploy
+  # stops and the running version keeps serving.
+  - name: migrate
+    kind: PRE_DEPLOY
+    github:
+      repo: KumarBalajiNagaraj/linck
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    dockerfile_path: apps/api/Dockerfile
+    run_command: alembic upgrade head
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    envs:
+      - key: LINCK_ENVIRONMENT
+        value: production
+        scope: RUN_TIME
+      # The migration role: only this job holds it, never the service.
+      # psycopg spells TLS `sslmode=require`.
+      #   postgresql+psycopg://linck_migrator:<password>@<host>:25060/linck?sslmode=require
+      - key: LINCK_MIGRATION_DATABASE_URL
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+
+databases:
+  # The managed PostgreSQL 16 cluster, created first (docs/DEPLOY.md), attached
+  # so the app and the cluster are tied together, trusted sources included. The
+  # app connects with the URLs above, as linck_app and linck_migrator, never as
+  # the admin user.
+  - name: db
+    engine: PG
+    version: "16"
+    production: true
+    cluster_name: linck-db
+    db_name: linck
+
+ingress:
+  rules:
+    - match:
+        path:
+          prefix: /
+      component:
+        name: api

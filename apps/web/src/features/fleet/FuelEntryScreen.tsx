@@ -194,7 +194,11 @@ export function FuelEntryScreen() {
     setEntries((prev) => [
       {
         id,
-        date: `${date}T${formatTime(NOW)}:00Z`,
+        // Both halves are Indian wall-clock: the date picker's day and
+        // `formatTime`, which formats in Asia/Kolkata. So the offset is IST's,
+        // not `Z` — with `Z` a 14:42 fill was stored as 14:42 UTC and shown
+        // back as 20:12.
+        date: `${date}T${formatTime(NOW)}:00+05:30`,
         vehicleId: vehicle.id,
         driverId,
         litres: litresN ?? 0,

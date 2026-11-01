@@ -4,6 +4,8 @@ export * from './expense-summary.js';
 export * from './delivery-docs.js';
 export * from './uom.js';
 export * from './date.js';
+export * from './calendar.js';
+export * from './sales-trends.js';
 export * from './permissions.js';
 export * from './bill-capture.js';
 export * from './whatsapp.js';

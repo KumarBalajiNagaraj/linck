@@ -188,7 +188,15 @@ async def current_session(request: Request) -> AsyncIterator[CurrentSession]:
 
 
 #: What routes annotate with, so the dependency is declared in one place.
-CurrentSessionDep = Annotated[CurrentSession, Depends(current_session)]
+#:
+#: `scope="function"` closes the transaction (commits) when the route returns,
+#: BEFORE the response is sent. FastAPI's default runs a yield dependency's exit
+#: after sending, which would let a 200 reach the client for a payment or an
+#: approval whose commit then failed, and let the client's next request race the
+#: commit. Every use of `current_session` must say the same scope, or FastAPI
+#: treats them as two dependencies and opens two transactions.
+SESSION_SCOPE = "function"
+CurrentSessionDep = Annotated[CurrentSession, Depends(current_session, scope=SESSION_SCOPE)]
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +268,7 @@ def require(permission: str) -> Callable[..., object]:
     a site, and would be wrong the first time a route took two.
     """
 
-    async def guard(current: Annotated[CurrentSession, Depends(current_session)]) -> CurrentSession:
+    async def guard(current: CurrentSessionDep) -> CurrentSession:
         grant = await load_grant(current.db, current.user.id, permission)
         if grant is None or (not grant.org_wide and not grant.site_ids):
             raise HTTPException(

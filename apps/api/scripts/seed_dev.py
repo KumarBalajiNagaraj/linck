@@ -227,7 +227,9 @@ ROLES: dict[str, RoleSpec] = {
         (
             "sales.board.read",
             "sales.customer.read",
+            "sales.customer.write",
             "sales.order.read",
+            "sales.order.write",
             "sales.order.approve",
             "sales.dispatch.read",
             "sales.dispatch.write",

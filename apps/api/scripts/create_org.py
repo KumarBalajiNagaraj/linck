@@ -1,7 +1,6 @@
 """Create a company in Linck and register its first admin. Safe to run again.
 
     cd apps/api
-    export LINCK_MIGRATION_DATABASE_URL='<the migration role's URL: docs/DEPLOY.md, step 4.2>'
     uv run python -m scripts.create_org \\
         --name "Sri Murugan Blue Metals" --entity-type partnership \\
         --site-code PLT-VNG --site-name "Vangal crusher plant" --site-type crusher_plant \\
@@ -12,39 +11,45 @@ Then, for each person who will sign in (the site is left out for org-wide):
     uv run python -m scripts.create_org --org sri-murugan-blue-metals \\
         --add-user ravi@example.com fleet PLT-VNG --name "Ravi K"
 
+On a deployment both run in the App Platform console, from /app and without
+`uv run`: docs/DEPLOY.md, step 8.
+
 Nobody can sign in to a database with no company in it: sign-in never creates
 a user, it only matches a Google account to someone already registered
 (app/api/auth.py). This registers the first someone. It writes:
 
 - the organization, with the modules it has switched on (all, unless --modules);
 - one legal entity and one site;
-- the roles scripts/seed_dev.py defines, each granting what it grants there,
-  for the modules this company has (``seed_dev.role_grants``);
+- the roles app/domain/roles.py defines, each granting what it grants there,
+  for the modules this company has (``role_grants``);
 - the first admin, pre-registered by the email of their Google account, as
   Managing Director and Administrator across the whole company.
 
-It connects with a URL that may write the core tables: the migration role's
-(LINCK_MIGRATION_DATABASE_URL, the default) or a superuser's (--database-url).
-The migration role owns the tables and is still held to row level security,
-because every core table FORCEs it; so, like the seed, every write here runs
-in a transaction scoped to the company's own id (``app.current_org_id``), and a
-company's rows are exactly the rows its tenant context can see. The id is
-derived from the slug, because RLS checks an organization's own row against
-that GUC: it must be known before the row exists.
+It needs nothing stronger than the API. The engine is app.core.db's, on
+LINCK_DATABASE_URL, which is linck_app wherever the API runs, and it refuses to
+run where the API would refuse to start (check_rls_posture), so a superuser or
+BYPASSRLS URL is turned away. Like the seed, every write goes through
+tenant_session(org_id), so row level security checks each row as it checks a
+request's, and a company's rows are exactly the rows its tenant context can
+see. The id is derived from the slug, because RLS checks an organization's own
+row against that GUC: it must be known before the row exists.
 
 Running it again changes nothing that is there: rows are found by their natural
 keys and only missing ones are added. It never renames, removes or narrows
 anything, so it cannot take a grant away from someone who is using it; a role
-that is missing a key seed_dev.py now grants gets it.
+that is missing a key app/domain/roles.py now grants gets it.
 
 One email signs in to one company: core.resolve_pending_user refuses to choose
-between two (migration 0003), so a person already registered elsewhere is
-refused here, before they could be locked out.
+between two (migration 0003). So before it commits, the script asks that
+function, sign-in's own lookup and the one query that may look across tenants,
+whom each email it registered reaches, and keeps nothing if it is someone in
+another company: that would lock both of them out.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import re
 import sys
 import uuid
@@ -55,12 +60,13 @@ from pathlib import Path
 if __package__ in (None, ""):  # run as `python scripts/create_org.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import psycopg  # noqa: E402
-from psycopg import errors  # noqa: E402
-from psycopg.conninfo import conninfo_to_dict  # noqa: E402
+import asyncpg  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.exc import DBAPIError  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
-from app.core.settings import get_settings  # noqa: E402
-from scripts.seed_dev import ALL_MODULES, ROLES, role_grants  # noqa: E402
+from app.core.db import check_rls_posture, engine, tenant_session  # noqa: E402
+from app.domain.roles import ALL_MODULES, ROLES, role_grants  # noqa: E402
 
 #: Organization ids are uuid5(ORG_NS, slug). Not seed_dev's namespace: a real
 #: company never shares an id with a development tenant.
@@ -69,7 +75,7 @@ ORG_NS = uuid.uuid5(uuid.NAMESPACE_DNS, "org.linck.app")
 #: The first admin's roles, both org-wide: the director's desks and member admin.
 ADMIN_ROLES = ("executive", "org_admin")
 
-#: The words people use for a role, beside seed_dev.py's keys.
+#: The words people use for a role, beside app/domain/roles.py's keys.
 ROLE_ALIASES = {
     "admin": "org_admin",
     "director": "executive",
@@ -95,10 +101,16 @@ SITE_TYPES = (
     "fuel_point",
 )
 
-# The same test dev-login applies to an address: one @, no spaces.
-_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+$")
+#: GST state codes, a GSTIN's first two digits. Not 25 (Daman and Diu, merged
+#: into 26 in 2020) or 28 (Andhra Pradesh before it split): no new site is in either.
+STATE_CODES = frozenset(f"{n:02d}" for n in range(1, 39)) - {"25", "28"}
+
+# Stricter than dev-login's test: every Google account's address has a dotted
+# domain, so "ravi@gmail" is a typo, not an account.
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s.]+$")
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-_SITE_CODE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{0,31}$")
+_CODE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{0,31}$")
+_DOMAIN = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+$")
 #: A pre-registration nobody has used is still matched at sign-in; this is when
 #: core.invitations says it lapses, as in seed_dev.py.
 INVITATION_DAYS = 90
@@ -138,6 +150,7 @@ class Report:
     slug: str
     created: list[str] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)
+    checked: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -172,33 +185,19 @@ def clean_email(raw: str) -> str:
     return email
 
 
+def describe() -> str:
+    """Where the writes go, and as whom, without the password."""
+    url = engine.url
+    return f"{url.username}@{url.host or 'localhost'}:{url.port or 5432}/{url.database}"
+
+
 # ---------------------------------------------------------------------------
-# Connecting
+# Writing
 # ---------------------------------------------------------------------------
 
 
-def conninfo(url: str) -> str:
-    """A libpq URL: LINCK_MIGRATION_DATABASE_URL names its driver, SQLAlchemy-style."""
-    if url.startswith("postgresql+asyncpg://"):
-        raise Refused(
-            "that is the API's own URL (linck_app). Use LINCK_MIGRATION_DATABASE_URL, the migration role's"
-        )
-    return re.sub(r"^postgres(?:ql)?\+psycopg2?://", "postgresql://", url)
-
-
-def describe(url: str) -> str:
-    """Where the writes go, without the password."""
-    p = conninfo_to_dict(url)
-    return f"{p.get('user', '?')}@{p.get('host', 'localhost')}:{p.get('port', '5432')}/{p.get('dbname', '?')}"
-
-
-def _scope(conn: psycopg.Connection, org_id: uuid.UUID) -> None:
-    """The tenant GUC, transaction-local exactly as app.core.db.tenant_session sets it."""
-    conn.execute("SELECT set_config('app.current_org_id', %s, true)", (str(org_id),))
-
-
-def _permission_modules(conn: psycopg.Connection) -> dict[str, str]:
-    rows = conn.execute("SELECT key, module FROM core.permissions").fetchall()
+async def _permission_modules(db: AsyncSession) -> dict[str, str]:
+    rows = (await db.execute(text("SELECT key, module FROM core.permissions"))).all()
     if not rows:
         raise Refused("core.permissions is empty: run `alembic upgrade head` on this database first")
     catalogue = dict(rows)
@@ -210,74 +209,107 @@ def _permission_modules(conn: psycopg.Connection) -> dict[str, str]:
     return catalogue
 
 
-# ---------------------------------------------------------------------------
-# Writing
-# ---------------------------------------------------------------------------
-
-
-def _ensure_roles(conn: psycopg.Connection, org_id: uuid.UUID, report: Report) -> dict[str, uuid.UUID]:
+async def _ensure_roles(db: AsyncSession, org_id: uuid.UUID, report: Report) -> dict[str, uuid.UUID]:
     """Every role this company's modules call for, each with at least the keys it grants."""
-    modules = [
-        m
-        for (m,) in conn.execute(
-            "SELECT module FROM core.organization_modules WHERE organization_id = %s AND enabled", (org_id,)
+    modules = (
+        await db.scalars(
+            text("SELECT module FROM core.organization_modules WHERE organization_id = :org AND enabled"),
+            {"org": org_id},
         )
-    ]
-    granted, _ = role_grants(modules, _permission_modules(conn))
+    ).all()
+    granted, _ = role_grants(modules, await _permission_modules(db))
     for key in granted:
-        row = conn.execute(
-            "INSERT INTO core.roles (organization_id, key, label, is_system) VALUES (%s, %s, %s, true)"
-            " ON CONFLICT (organization_id, key) DO NOTHING RETURNING id",
-            (org_id, key, ROLES[key].label),
-        ).fetchone()
+        row = (
+            await db.execute(
+                text(
+                    "INSERT INTO core.roles (organization_id, key, label, is_system)"
+                    " VALUES (:org, :key, :label, true)"
+                    " ON CONFLICT (organization_id, key) DO NOTHING RETURNING id"
+                ),
+                {"org": org_id, "key": key, "label": ROLES[key].label},
+            )
+        ).first()
         if row:
             report.created.append(f"role {key} ({ROLES[key].label})")
     role_ids = dict(
-        conn.execute(
-            "SELECT key, id FROM core.roles WHERE organization_id = %s AND key = ANY(%s)",
-            (org_id, list(granted)),
-        ).fetchall()
+        (
+            await db.execute(
+                text("SELECT key, id FROM core.roles WHERE organization_id = :org AND key = ANY(:keys)"),
+                {"org": org_id, "keys": list(granted)},
+            )
+        ).all()
     )
     added = 0
     for key, keys in granted.items():
         for permission in keys:
-            row = conn.execute(
-                "INSERT INTO core.role_permissions (organization_id, role_id, permission_key)"
-                " VALUES (%s, %s, %s) ON CONFLICT (role_id, permission_key) DO NOTHING RETURNING id",
-                (org_id, role_ids[key], permission),
-            ).fetchone()
+            row = (
+                await db.execute(
+                    text(
+                        "INSERT INTO core.role_permissions (organization_id, role_id, permission_key)"
+                        " VALUES (:org, :role, :key) ON CONFLICT (role_id, permission_key) DO NOTHING"
+                        " RETURNING id"
+                    ),
+                    {"org": org_id, "role": role_ids[key], "key": permission},
+                )
+            ).first()
             added += row is not None
     if added:
         report.created.append(f"{added} permission grants")
     return role_ids
 
 
-def _not_elsewhere(conn: psycopg.Connection, org_id: uuid.UUID, email: str) -> None:
-    """Refuse an email another company has registered: sign-in would then match two.
+RESOLVE = text("SELECT user_id, organization_id FROM core.resolve_pending_user(:email, :hd)")
 
-    core.resolve_pending_user is the sign-in path's own lookup, and the one
-    query that may look across tenants, so it is asked exactly what sign-in will
-    ask. The address's own domain stands in for the Google Workspace domain: a
-    company pinned to another domain could never match this person anyway.
+
+async def _check_sign_in(
+    db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID, email: str, report: Report
+) -> None:
+    """Ask sign-in's own lookup whom an email just registered reaches.
+
+    Inside the transaction, so it sees the rows just written and a refusal
+    keeps none of them. Asked twice, because the hosted domain is part of the
+    match: a personal Google account presents none, and a Workspace account its
+    domain, which the address's own stands in for.
     """
     elsewhere = (
         f"{email} is already registered in another company in Linck, and one email signs in to one "
         "company. Register another Google account of theirs, or remove them there first"
     )
-    try:
-        # A savepoint, so the refusal below leaves the transaction usable.
-        with conn.transaction():
-            found = conn.execute(
-                "SELECT organization_id FROM core.resolve_pending_user(%s, %s)", (email, email.split("@")[-1])
-            ).fetchall()
-    except errors.CardinalityViolation:
-        raise Refused(elsewhere) from None
-    if any(org != org_id for (org,) in found):
+    reached: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    for hosted_domain in (None, email.split("@")[-1]):
+        try:
+            rows = await db.execute(RESOLVE, {"email": email, "hd": hosted_domain})
+        except DBAPIError as exc:
+            # cardinality_violation: it will not choose between two companies.
+            if getattr(exc.orig, "sqlstate", None) == "21000":
+                raise Refused(elsewhere) from None
+            raise
+        reached.update((found_user, found_org) for found_user, found_org in rows)
+    if any(found_org != org_id for _, found_org in reached):
         raise Refused(elsewhere)
+    if (user_id, org_id) in reached:
+        report.checked.append(f"Google sign-in as {email} finds them here")
+        return
+
+    # Not a refusal: registering them is still right, and they can sign in once
+    # this changes. A Workspace address may be an alias on a pinned domain.
+    org_status, domains = (
+        await db.execute(
+            text("SELECT status, google_hosted_domains FROM core.organizations WHERE id = :org"),
+            {"org": org_id},
+        )
+    ).one()
+    if org_status != "active":
+        report.notes.append(f"this company is {org_status}: {email} cannot sign in until it is active")
+    else:
+        report.notes.append(
+            f"this company lets in only Google Workspace accounts on {', '.join(domains)}: "
+            f"{email} may never be able to sign in"
+        )
 
 
-def _ensure_member(
-    conn: psycopg.Connection,
+async def _ensure_member(
+    db: AsyncSession,
     org_id: uuid.UUID,
     member: Member,
     role_ids: dict[str, uuid.UUID],
@@ -297,47 +329,53 @@ def _ensure_member(
     for _, code in member.roles:
         if code is None or code in site_ids:
             continue
-        row = conn.execute(
-            "SELECT id FROM core.sites WHERE organization_id = %s AND code = %s", (org_id, code)
-        ).fetchone()
-        if row is None:
-            codes = conn.execute(
-                "SELECT code FROM core.sites WHERE organization_id = %s ORDER BY code", (org_id,)
+        site_id = (
+            await db.execute(
+                text("SELECT id FROM core.sites WHERE organization_id = :org AND code = :code"),
+                {"org": org_id, "code": code},
             )
-            raise Refused(f"there is no site {code} here. The sites are: {', '.join(c for (c,) in codes)}")
-        site_ids[code] = row[0]
+        ).scalar()
+        if site_id is None:
+            codes = await db.scalars(
+                text("SELECT code FROM core.sites WHERE organization_id = :org ORDER BY code"),
+                {"org": org_id},
+            )
+            raise Refused(f"there is no site {code} here. The sites are: {', '.join(codes)}")
+        site_ids[code] = site_id
 
-    row = conn.execute(
-        "SELECT id, full_name, status FROM core.users WHERE organization_id = %s AND email = %s",
-        (org_id, member.email),
-    ).fetchone()
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, full_name, status FROM core.users WHERE organization_id = :org AND email = :email"
+            ),
+            {"org": org_id, "email": member.email},
+        )
+    ).first()
     if row is None:
         if not member.name:
             raise Refused(f"{member.email} is new here: give their name with --name, as on the payroll")
-        _not_elsewhere(conn, org_id, member.email)
         # `invited` until their first sign-in, which makes them `active`. No
         # identity row: the Google `sub` is pinned at that first sign-in, and
         # one invented here would shadow the real one and lock them out.
-        (user_id,) = conn.execute(
-            "INSERT INTO core.users (organization_id, email, full_name, status)"
-            " VALUES (%s, %s, %s, 'invited') RETURNING id",
-            (org_id, member.email, member.name),
-        ).fetchone()
-        conn.execute(
-            "INSERT INTO core.invitations (organization_id, email, full_name, expires_at)"
-            " VALUES (%s, %s, %s, now() + make_interval(days => %s))"
-            " ON CONFLICT (organization_id, email) DO NOTHING",
-            (org_id, member.email, member.name, INVITATION_DAYS),
+        user_id = (
+            await db.execute(
+                text(
+                    "INSERT INTO core.users (organization_id, email, full_name, status)"
+                    " VALUES (:org, :email, :name, 'invited') RETURNING id"
+                ),
+                {"org": org_id, "email": member.email, "name": member.name},
+            )
+        ).scalar_one()
+        await db.execute(
+            text(
+                "INSERT INTO core.invitations (organization_id, email, full_name, expires_at)"
+                " VALUES (:org, :email, :name, now() + make_interval(days => :days))"
+                " ON CONFLICT (organization_id, email) DO NOTHING"
+            ),
+            {"org": org_id, "email": member.email, "name": member.name, "days": INVITATION_DAYS},
         )
         report.created.append(f"user {member.email} ({member.name})")
-        (domains,) = conn.execute(
-            "SELECT google_hosted_domains FROM core.organizations WHERE id = %s", (org_id,)
-        ).fetchone()
-        if domains and member.email.split("@")[-1] not in domains:
-            report.notes.append(
-                f"this company lets in only Google Workspace accounts on {', '.join(domains)}: "
-                f"{member.email} may never be able to sign in"
-            )
+        await _check_sign_in(db, org_id, user_id, member.email, report)
     else:
         user_id, full_name, user_status = row
         report.kept.append(f"user {member.email} ({full_name})")
@@ -347,84 +385,137 @@ def _ensure_member(
     for key, code in member.roles:
         # The unique index is (user, role, coalesce(site, zero)), so an
         # org-wide assignment is found again like a site's.
-        row = conn.execute(
-            "INSERT INTO core.role_assignments (organization_id, user_id, role_id, site_id)"
-            " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING id",
-            (org_id, user_id, role_ids[key], site_ids[code] if code else None),
-        ).fetchone()
+        row = (
+            await db.execute(
+                text(
+                    "INSERT INTO core.role_assignments (organization_id, user_id, role_id, site_id)"
+                    " VALUES (:org, :user, :role, :site) ON CONFLICT DO NOTHING RETURNING id"
+                ),
+                {
+                    "org": org_id,
+                    "user": user_id,
+                    "role": role_ids[key],
+                    "site": site_ids[code] if code else None,
+                },
+            )
+        ).first()
         held = f"{member.email} as {ROLES[key].label} at {code or 'the whole company'}"
         (report.created if row else report.kept).append(held)
 
 
-def create_company(conn: psycopg.Connection, company: Company, admin: Member) -> Report:
+async def create_company(company: Company, admin: Member) -> Report:
     """The organization, its entity and site, its roles, and its first admin, in one transaction."""
     org_id = org_id_for(company.slug)
     report = Report(org_id=org_id, slug=company.slug)
-    with conn.transaction():
-        _scope(conn, org_id)
-        row = conn.execute(
-            """
-            INSERT INTO core.organizations
-                (id, display_name, slug, base_currency, timezone, fiscal_year_start_month,
-                 google_hosted_domains, segregation_enforcement, status)
-            VALUES (%s, %s, %s, 'INR', 'Asia/Kolkata', 4, %s, 'review_queue', 'active')
-            ON CONFLICT DO NOTHING
-            RETURNING id
-            """,
-            (org_id, company.name, company.slug, list(company.hosted_domains)),
-        ).fetchone()
-        existing = conn.execute(
-            "SELECT display_name FROM core.organizations WHERE id = %s", (org_id,)
-        ).fetchone()
+    async with tenant_session(org_id) as db:
+        created = (
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO core.organizations
+                        (id, display_name, slug, base_currency, timezone, fiscal_year_start_month,
+                         google_hosted_domains, segregation_enforcement, status)
+                    VALUES (:org, :name, :slug, 'INR', 'Asia/Kolkata', 4, :domains, 'review_queue', 'active')
+                    ON CONFLICT DO NOTHING
+                    RETURNING id
+                    """
+                ),
+                {
+                    "org": org_id,
+                    "name": company.name,
+                    "slug": company.slug,
+                    "domains": list(company.hosted_domains),
+                },
+            )
+        ).first()
+        existing = (
+            await db.execute(
+                text("SELECT display_name FROM core.organizations WHERE id = :org"), {"org": org_id}
+            )
+        ).scalar()
         if existing is None:
             # The slug is unique across tenants, and another tenant's row is
             # invisible under this one's GUC: the insert met it and did nothing.
             raise Refused(
                 f"the slug {company.slug!r} is taken by another company: choose another with --slug"
             )
-        (report.created if row else report.kept).append(f"company {existing[0]} ({company.slug})")
+        (report.created if created else report.kept).append(f"company {existing} ({company.slug})")
 
         for module in company.modules:
-            row = conn.execute(
-                "INSERT INTO core.organization_modules (organization_id, module, enabled)"
-                " VALUES (%s, %s, true) ON CONFLICT (organization_id, module) DO NOTHING RETURNING id",
-                (org_id, module),
-            ).fetchone()
+            row = (
+                await db.execute(
+                    text(
+                        "INSERT INTO core.organization_modules (organization_id, module, enabled)"
+                        " VALUES (:org, :module, true)"
+                        " ON CONFLICT (organization_id, module) DO NOTHING RETURNING id"
+                    ),
+                    {"org": org_id, "module": module},
+                )
+            ).first()
             if row:
                 report.created.append(f"module {module}")
 
-        row = conn.execute(
-            "INSERT INTO core.legal_entities (organization_id, code, legal_name, trade_name, entity_type)"
-            " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (organization_id, code) DO NOTHING RETURNING id",
-            (org_id, company.entity_code, company.entity_name, company.name, company.entity_type),
-        ).fetchone()
-        entity_id = conn.execute(
-            "SELECT id FROM core.legal_entities WHERE organization_id = %s AND code = %s",
-            (org_id, company.entity_code),
-        ).fetchone()[0]
+        row = (
+            await db.execute(
+                text(
+                    "INSERT INTO core.legal_entities"
+                    " (organization_id, code, legal_name, trade_name, entity_type)"
+                    " VALUES (:org, :code, :legal_name, :trade_name, :entity_type)"
+                    " ON CONFLICT (organization_id, code) DO NOTHING RETURNING id"
+                ),
+                {
+                    "org": org_id,
+                    "code": company.entity_code,
+                    "legal_name": company.entity_name,
+                    "trade_name": company.name,
+                    "entity_type": company.entity_type,
+                },
+            )
+        ).first()
+        entity_id = (
+            await db.execute(
+                text("SELECT id FROM core.legal_entities WHERE organization_id = :org AND code = :code"),
+                {"org": org_id, "code": company.entity_code},
+            )
+        ).scalar_one()
         (report.created if row else report.kept).append(
             f"legal entity {company.entity_code} ({company.entity_name})"
         )
 
-        row = conn.execute(
-            "INSERT INTO core.sites (organization_id, legal_entity_id, code, name, site_type, state_code)"
-            " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (organization_id, code) DO NOTHING RETURNING id",
-            (org_id, entity_id, company.site_code, company.site_name, company.site_type, company.state_code),
-        ).fetchone()
+        row = (
+            await db.execute(
+                text(
+                    "INSERT INTO core.sites"
+                    " (organization_id, legal_entity_id, code, name, site_type, state_code)"
+                    " VALUES (:org, :entity, :code, :name, :site_type, :state)"
+                    " ON CONFLICT (organization_id, code) DO NOTHING RETURNING id"
+                ),
+                {
+                    "org": org_id,
+                    "entity": entity_id,
+                    "code": company.site_code,
+                    "name": company.site_name,
+                    "site_type": company.site_type,
+                    "state": company.state_code,
+                },
+            )
+        ).first()
         (report.created if row else report.kept).append(f"site {company.site_code} ({company.site_name})")
 
-        _ensure_member(conn, org_id, admin, _ensure_roles(conn, org_id, report), report)
+        await _ensure_member(db, org_id, admin, await _ensure_roles(db, org_id, report), report)
     return report
 
 
-def add_member(conn: psycopg.Connection, slug: str, member: Member) -> Report:
+async def add_member(slug: str, member: Member) -> Report:
     org_id = org_id_for(slug)
     report = Report(org_id=org_id, slug=slug)
-    with conn.transaction():
-        _scope(conn, org_id)
-        if conn.execute("SELECT 1 FROM core.organizations WHERE id = %s", (org_id,)).fetchone() is None:
+    async with tenant_session(org_id) as db:
+        found = (
+            await db.execute(text("SELECT 1 FROM core.organizations WHERE id = :org"), {"org": org_id})
+        ).first()
+        if found is None:
             raise Refused(f"there is no company {slug!r}: create it first (see --help), or check the slug")
-        _ensure_member(conn, org_id, member, _ensure_roles(conn, org_id, report), report)
+        await _ensure_member(db, org_id, member, await _ensure_roles(db, org_id, report), report)
     return report
 
 
@@ -437,10 +528,7 @@ def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m scripts.create_org",
         description="Create a company in Linck and its first admin, or register someone in it.",
-        epilog="Writes with LINCK_MIGRATION_DATABASE_URL unless --database-url is given.",
-    )
-    p.add_argument(
-        "--database-url", help="a URL that may write the core tables (the migrator's, or an admin's)"
+        epilog="Writes as the API does, with LINCK_DATABASE_URL, the app role's URL.",
     )
 
     new = p.add_argument_group("a new company")
@@ -493,7 +581,7 @@ def _company(args: argparse.Namespace) -> tuple[Company, Member]:
         "--admin-email": args.admin_email,
         "--admin-name": args.admin_name,
     }
-    missing = [flag for flag, value in needed.items() if not value]
+    missing = [flag for flag, value in needed.items() if not (value or "").strip()]
     if missing:
         raise Refused(f"a new company needs {', '.join(missing)} (see --help)")
     slug = args.slug or slug_for(args.name)
@@ -506,24 +594,32 @@ def _company(args: argparse.Namespace) -> tuple[Company, Member]:
             f"--modules takes some of {','.join(ALL_MODULES)}; not {','.join(unknown) or 'nothing'}"
         )
     site_code = args.site_code.strip().upper()
-    if not _SITE_CODE.fullmatch(site_code):
+    if not _CODE.fullmatch(site_code):
         raise Refused(
             f"the site code {args.site_code!r} must be letters, digits, '-' or '_', such as PLT-VNG"
         )
-    if not re.fullmatch(r"\d{2}", args.state):
+    entity_code = (args.entity_code or entity_code_for(slug)).strip().upper()
+    if not _CODE.fullmatch(entity_code):
+        raise Refused(f"the entity code {entity_code!r} must be letters, digits, '-' or '_', such as SMBM")
+    if args.state not in STATE_CODES:
         raise Refused(f"--state is the two-digit GST state code, such as 33; not {args.state!r}")
+    hosted_domains = tuple(d.strip().lower() for d in args.hosted_domain if d.strip())
+    for domain in hosted_domains:
+        # A wrong one is not harmless: it shuts out everyone the company registers.
+        if not _DOMAIN.fullmatch(domain):
+            raise Refused(f"--hosted-domain {domain!r} is not a domain: give it as vaigai.in, without '@'")
     company = Company(
         name=args.name.strip(),
         slug=slug,
         modules=modules,
-        entity_code=(args.entity_code or entity_code_for(slug)).strip().upper(),
+        entity_code=entity_code,
         entity_name=(args.entity_name or args.name).strip(),
         entity_type=args.entity_type,
         site_code=site_code,
         site_name=args.site_name.strip(),
         site_type=args.site_type,
         state_code=args.state,
-        hosted_domains=tuple(d.strip().lower() for d in args.hosted_domain if d.strip()),
+        hosted_domains=hosted_domains,
     )
     admin = Member(
         clean_email(args.admin_email), args.admin_name.strip(), tuple((k, None) for k in ADMIN_ROLES)
@@ -545,18 +641,20 @@ def _member(args: argparse.Namespace) -> Member:
 
 def _print(report: Report, say: Callable[[str], None]) -> None:
     for line in report.created:
-        say(f"  added  {line}")
+        say(f"  added    {line}")
     for line in report.kept:
-        say(f"  kept   {line}")
+        say(f"  kept     {line}")
+    for line in report.checked:
+        say(f"  checked  {line}")
     for line in report.notes:
-        say(f"  note   {line}")
+        say(f"  note     {line}")
     say(
         f"\ncompany id: {report.org_id}"
         "  (LINCK_WHATSAPP_ORGANIZATION_ID, if this company takes WhatsApp slips)"
     )
 
 
-def main(argv: list[str] | None = None, say: Callable[[str], None] = print) -> int:
+async def main(argv: list[str] | None = None, say: Callable[[str], None] = print) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     try:
@@ -564,19 +662,41 @@ def main(argv: list[str] | None = None, say: Callable[[str], None] = print) -> i
             member, company = _member(args), None
         else:
             company, member = _company(args)
-        url = conninfo(args.database_url or get_settings().migration_database_url)
-        say(f"writing to {describe(url)}")
-        with psycopg.connect(url) as conn:
-            if company is None:
-                report = add_member(conn, args.org, member)
-            else:
-                report = create_company(conn, company, member)
+        say(f"writing to {describe()}")
+        problems = await check_rls_posture()
+        if problems:
+            raise Refused(
+                "the API would not start against this database, and nor will this:\n"
+                + "\n".join(f"  {problem}" for problem in problems)
+            )
+        if company is None:
+            report = await add_member(args.org, member)
+        else:
+            report = await create_company(company, member)
     except Refused as refused:
         print(f"refused: {refused}", file=sys.stderr)
         return 2
-    except psycopg.Error as exc:
+    except DBAPIError as exc:
+        # insufficient_privilege: a role other than the app's, most likely the
+        # cluster's admin, which is granted nothing of Linck's.
+        if getattr(exc.orig, "sqlstate", None) == "42501":
+            print(
+                f"refused: {engine.url.username} may not use Linck's tables. "
+                "Set LINCK_DATABASE_URL to the app role's URL, the one for linck_app",
+                file=sys.stderr,
+            )
+        else:
+            print(f"the database refused: {exc.orig.__cause__ or exc.orig}", file=sys.stderr)
+        return 2
+    except asyncpg.PostgresError as exc:
+        # Refused while connecting, a wrong password say: SQLAlchemy passes those on as they are.
         print(f"the database refused: {exc}", file=sys.stderr)
         return 2
+    except OSError as exc:
+        print(f"could not reach the database: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        await engine.dispose()
 
     _print(report, say)
     if company is not None:
@@ -589,4 +709,4 @@ def main(argv: list[str] | None = None, say: Callable[[str], None] = print) -> i
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

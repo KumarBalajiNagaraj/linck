@@ -1,9 +1,28 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, MetaData, func, text
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, MetaData, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+#: Every schema docs/DATABASE.md names. The boot-time RLS posture check, the
+#: invariant lint and Alembic's autogenerate scope all read this one tuple, so a
+#: table in a schema nobody migrated yet is still covered the day it appears.
+#: `reporting` holds views only; a table there is checked like any other.
+BUSINESS_SCHEMAS = (
+    "core",
+    "master",
+    "fleet",
+    "inventory",
+    "production",
+    "procurement",
+    "logistics",
+    "sales",
+    "finance",
+    "compliance",
+    "ai",
+    "reporting",
+)
 
 # Naming convention so Alembic autogenerate produces stable, readable object
 # names instead of anonymous ones it later fails to drop.
@@ -42,4 +61,20 @@ def org_fk(nullable: bool = False) -> Mapped[uuid.UUID]:
         ForeignKey("core.organizations.id", ondelete="RESTRICT"),
         nullable=nullable,
         index=True,
+    )
+
+
+def tenant_fk(column: str, target: str) -> ForeignKeyConstraint:
+    """`(organization_id, column) -> target (organization_id, id)`.
+
+    The composite key is what makes a cross-tenant reference unrepresentable: a
+    row in one tenant cannot point at another tenant's site, user or bill, even
+    by a bug that knows the other row's id. Every target carries
+    `UNIQUE (organization_id, id)` for this. A nullable `column` is simply not
+    checked while it is NULL (MATCH SIMPLE).
+    """
+    return ForeignKeyConstraint(
+        ["organization_id", column],
+        [f"{target}.organization_id", f"{target}.id"],
+        ondelete="RESTRICT",
     )

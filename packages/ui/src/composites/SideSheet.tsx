@@ -190,8 +190,18 @@ export function SideSheet({
           boxShadow: 'var(--e3)',
         }}
       >
+        {/*
+          On a desk the stamp and the revision sit in a column beside the
+          title. On a phone that column took width it never gave back — a
+          stamp does not shrink, and a long Tamil status left the title one
+          word a line — so there they wrap onto their own row under the title,
+          with the whole width, and the close button stays beside the title.
+        */}
         <header
-          className="sticky top-0 z-10 flex shrink-0 items-start gap-3 px-5 py-3"
+          className={cn(
+            'sticky top-0 z-10 flex shrink-0 items-start gap-3 px-5 py-3',
+            phone && 'flex-wrap gap-y-2',
+          )}
           style={{ background: 'var(--surface-raised)', borderBottom: '1px solid var(--border-subtle)' }}
         >
           <div className="min-w-0 flex-1">
@@ -204,21 +214,30 @@ export function SideSheet({
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            {status ? (
-              <StatusStamp
-                status={status.family}
-                label={status.label}
-                {...(status.severity !== undefined ? { severity: status.severity } : {})}
-                {...(status.provisional ? { provisional: true } : {})}
-              />
-            ) : null}
-            {revision ? (
-              <span className="font-id text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
-                {revision}
-              </span>
-            ) : null}
-          </div>
+          {status || revision ? (
+            <div
+              className={
+                phone
+                  ? 'order-last flex w-full min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1'
+                  : 'flex shrink-0 flex-col items-end gap-1'
+              }
+            >
+              {status ? (
+                <StatusStamp
+                  status={status.family}
+                  label={status.label}
+                  {...(status.severity !== undefined ? { severity: status.severity } : {})}
+                  {...(status.provisional ? { provisional: true } : {})}
+                  {...(phone ? { className: 'max-w-full' } : {})}
+                />
+              ) : null}
+              {revision ? (
+                <span className="font-id text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+                  {revision}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -249,6 +268,10 @@ export function SideSheet({
  * A label/value row. Labels in Newsreader italic, values in the data face —
  * the same split the rest of the product uses to separate the caption from the
  * fact it captions.
+ *
+ * `wide` spans both columns of a `DetailGrid` — from `sm` up only. Below it
+ * the grid has one column, and a two-column span there invented a second,
+ * auto-sized column that squeezed every field after it.
  */
 export function Detail({
   label,
@@ -260,7 +283,7 @@ export function Detail({
   wide?: boolean;
 }) {
   return (
-    <div className={cn('flex flex-col gap-0.5 py-2', wide && 'col-span-2')}>
+    <div className={cn('flex flex-col gap-0.5 py-2', wide && 'sm:col-span-2')}>
       <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </span>

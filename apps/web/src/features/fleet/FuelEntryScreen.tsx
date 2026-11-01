@@ -10,6 +10,7 @@ import {
   type Column,
 } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
+import { useDayMonth } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { fleetWords, fuelWords } from './words.js';
 
@@ -47,6 +48,7 @@ import { fleetWords, fuelWords } from './words.js';
 export function FuelEntryScreen() {
   const t = useWords(fuelWords);
   const f = useWords(fleetWords);
+  const dayMonth = useDayMonth();
   const { siteScope, density } = useApp();
   // A bar is a click target here — 20px of it is a miss on a thumb, and no CSS
   // reaches inside the SVG to say so.
@@ -625,11 +627,6 @@ type FleetText = (typeof fleetWords)['en'];
 function toNum(v: string): number | null {
   const n = Number.parseFloat(v);
   return v.trim() !== '' && Number.isFinite(n) ? n : null;
-}
-
-/** `2026-08-08` → `08-08` — digits read the same in both languages. */
-function dayMonth(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}-${isoDate.slice(5, 7)}`;
 }
 
 function benchmarkOf(vehicleId: string): number {

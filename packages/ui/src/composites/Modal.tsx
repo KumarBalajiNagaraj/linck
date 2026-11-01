@@ -77,8 +77,8 @@ export function Modal({ open, onClose, title, children, footer, width = 460 }: M
         {/*
           The footer reverses on a phone: buttons stack, and `flex-col-reverse`
           puts the primary action at the BOTTOM of the stack — nearest the
-          thumb, and last in the reading order, so "Cancel" is never the thing
-          under a thumb reaching for "Confirm".
+          thumb, and last in the reading order, so the way out is never the
+          thing under a thumb reaching for "Confirm".
         */}
         {footer ? (
           <footer
@@ -103,6 +103,11 @@ export function Modal({ open, onClose, title, children, footer, width = 460 }: M
  *
  * The consequence is stated in plain language, with the real numbers in it. "Are
  * you sure?" tells an operator nothing they did not already know.
+ *
+ * The way out says "Go back", not "Cancel". The question is often about
+ * cancelling something, and "Cancel" beside "Yes, cancel the load" reads as
+ * the same action twice. A plain `Modal` names its own buttons and may still
+ * say "Cancel" where nothing else does.
  */
 export function ConfirmModal({
   open,
@@ -111,6 +116,7 @@ export function ConfirmModal({
   title,
   consequence,
   confirmLabel,
+  backLabel,
   confirmPhrase,
   destructive,
 }: {
@@ -120,6 +126,8 @@ export function ConfirmModal({
   title: string;
   consequence: React.ReactNode;
   confirmLabel?: string;
+  /** The button that closes without acting. "Go back" unless the screen has a clearer word. */
+  backLabel?: string;
   confirmPhrase?: string;
   destructive?: boolean;
 }) {
@@ -139,7 +147,7 @@ export function ConfirmModal({
       title={title}
       footer={
         <>
-          <Button onClick={onClose}>{words.cancel}</Button>
+          <Button onClick={onClose}>{backLabel ?? words.goBack}</Button>
           <Button
             variant={destructive ? 'destructive' : 'primary'}
             disabled={!armed}

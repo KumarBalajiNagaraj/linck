@@ -35,9 +35,7 @@ async def _scoped_sites(db: AsyncSession, organization_id: uuid.UUID, user_id: u
     stockyard should not keep appearing in the scope switcher.
     """
     org_wide = (
-        select(literal(1))
-        .where(RoleAssignment.user_id == user_id, RoleAssignment.site_id.is_(None))
-        .exists()
+        select(literal(1)).where(RoleAssignment.user_id == user_id, RoleAssignment.site_id.is_(None)).exists()
     )
     assigned = select(RoleAssignment.site_id).where(
         RoleAssignment.user_id == user_id, RoleAssignment.site_id.is_not(None)

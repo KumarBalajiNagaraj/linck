@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { can, formatDate, formatINR, formatINRCompact } from '@linck/domain';
+import { can, formatDate, formatINR } from '@linck/domain';
 import { DOCUMENTS, vehiclesForSite, type ComplianceDocument, type Vehicle } from '@linck/mock';
 import {
   AsOfStamp,
@@ -30,6 +30,7 @@ import {
   type Column,
 } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { complianceWords, type ComplianceWords } from './words.js';
 
@@ -71,6 +72,7 @@ const IST_OFFSET_MS = 330 * 60_000;
 export function DocumentRegister() {
   const { persona, siteScope, density } = useApp();
   const t = useWords(complianceWords);
+  const inr = useInrCompact();
   const w = t.docs;
   /* Charts are drawn in real pixels, so the gutter reserved for their direct
      labels is a number and not a class. On a phone the month labels ("Aug 2026")
@@ -232,25 +234,21 @@ export function DocumentRegister() {
             text: w.kpi.stopping(blocking.length),
             tone: blocking.length > 0 ? 'critical' : 'neutral',
           }}
-          asOf="14:42"
-          source={w.source}
+          asOfInHeader
         />
         <KpiTile
           eyebrow={w.kpi.in30}
           value={String(in30.length)}
-          delta={{ text: w.kpi.toRenew(formatINRCompact(sumCost(in30))), tone: in30.length > 0 ? 'attention' : 'neutral' }}
-          asOf="14:42"
-          source={w.source}
+          delta={{ text: w.kpi.toRenew(inr(sumCost(in30))), tone: in30.length > 0 ? 'attention' : 'neutral' }}
+          asOfInHeader
         />
         {/* Ninety days out is far enough to book the RTO slot calmly. */}
-        <KpiTile eyebrow={w.kpi.in90} value={String(in90.length)} asOf="14:42" source={w.source} />
+        <KpiTile eyebrow={w.kpi.in90} value={String(in90.length)} asOfInHeader />
         {/* Insurance, FC, permits, road tax and PUC for the sites in scope. */}
         <KpiTile
           eyebrow={w.kpi.yearly}
-          value={formatINRCompact(annualBook)}
-          asOf="14:42"
-          source={w.source}
-          freshness="materialised"
+          value={inr(annualBook)}
+          asOfInHeader
         />
       </TileRow>
 
@@ -280,8 +278,8 @@ export function DocumentRegister() {
         <div className="mt-5 px-6">
           <BarChart
             data={cashBars}
-            summary={w.cash.summary(formatINRCompact(sumCost(lapsed)), peakMonth.label, formatINRCompact(peakMonth.amount))}
-            format={(v) => formatINRCompact(v)}
+            summary={w.cash.summary(inr(sumCost(lapsed)), peakMonth.label, inr(peakMonth.amount))}
+            format={inr}
             labelWidth={isPhone ? 104 : 140}
             onSelect={(d) => {
               const match = months.find((m) => monthLabel(m) === d.label);
@@ -588,6 +586,7 @@ function DocumentDetail({
   onOpenSibling: (id: string) => void;
 }) {
   const t = useWords(complianceWords);
+  const inr = useInrCompact();
   const w = t.docs;
   const L = w.sheet.labels;
   const isPhone = useIsPhone();
@@ -639,7 +638,7 @@ function DocumentDetail({
             {row.stage === 'open' ? (
               formatDate(row.expiresOn)
             ) : (
-              <Provisional confirmed={row.stage === 'received'} originalValue={formatDate(row.doc.expiresOn)}>
+              <Provisional confirmed={row.stage === 'received'} originalValue={formatDate(row.doc.expiresOn)} by="person">
                 {formatDate(row.expiresOn)}
               </Provisional>
             )}
@@ -704,8 +703,8 @@ function DocumentDetail({
                     ? { tone: s.doc.blocksOperation ? 'var(--status-critical)' : 'var(--status-attention)' }
                     : {}),
                 }))}
-                summary={w.sheet.fileSummary(formatINRCompact(vehicleBook), soonest ? w.docType[soonest.doc.type] : null)}
-                format={(v) => formatINRCompact(v)}
+                summary={w.sheet.fileSummary(inr(vehicleBook), soonest ? w.docType[soonest.doc.type] : null)}
+                format={inr}
                 labelWidth={isPhone ? 120 : 150}
                 onSelect={(d) => {
                   const hit = siblings.find((s) => w.docType[s.doc.type] === d.label);
@@ -867,7 +866,7 @@ function makeColumns(t: ComplianceWords): Column<Row>[] {
           formatDate(r.expiresOn)
         ) : (
           // Filed but not in hand is asserted, not true. Received dries the ink.
-          <Provisional confirmed={r.stage === 'received'} originalValue={formatDate(r.doc.expiresOn)}>
+          <Provisional confirmed={r.stage === 'received'} originalValue={formatDate(r.doc.expiresOn)} by="person">
             {formatDate(r.expiresOn)}
           </Provisional>
         ),
@@ -938,6 +937,7 @@ function makeColumns(t: ComplianceWords): Column<Row>[] {
 /* ------------------------------------------------------------------ cards */
 
 function DueCard({ label: caption, amount, note }: { label: string; amount: number; note?: string }) {
+  const inr = useInrCompact();
   return (
     // The 240px floor is gone: the grid above decides how many cards ride
     // abreast, so the card only has to fill whatever cell it lands in.
@@ -949,7 +949,7 @@ function DueCard({ label: caption, amount, note }: { label: string; amount: numb
         {caption}
       </span>
       <p className="num mt-1 text-[24px] leading-none tabular-nums" style={{ color: 'var(--text-primary)' }}>
-        {formatINRCompact(amount)}
+        {inr(amount)}
       </p>
       {note ? (
         <p className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>

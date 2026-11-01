@@ -190,17 +190,13 @@ def set_auth_cookies(response: Response, credential: SessionCredential) -> None:
         SESSION_COOKIE,
         # `oid`, not `org` — see SESSION_COOKIE_SALT above. app/api/deps.py
         # reads this key on every authenticated request.
-        _session_signer.dumps(
-            {"sid": str(credential.session_id), "oid": str(credential.organization_id)}
-        ),
+        _session_signer.dumps({"sid": str(credential.session_id), "oid": str(credential.organization_id)}),
         max_age=max_age,
         **kwargs,
     )
     response.set_cookie(
         REFRESH_COOKIE,
-        _refresh_signer.dumps(
-            {"tok": credential.refresh_token, "org": str(credential.organization_id)}
-        ),
+        _refresh_signer.dumps({"tok": credential.refresh_token, "org": str(credential.organization_id)}),
         max_age=max_age,
         **kwargs,
     )
@@ -372,9 +368,10 @@ async def rotate_session(
 ) -> RotationResult:
     """Exchange a refresh token for a new session row, or detect a replay."""
     row = (
-        await db.execute(
-            text(
-                """
+        (
+            await db.execute(
+                text(
+                    """
                 select s.id,
                        s.organization_id,
                        s.user_id,
@@ -387,10 +384,13 @@ async def rotate_session(
                 where s.refresh_token_hash = :hash
                 limit 1
                 """
-            ),
-            {"hash": hash_refresh_token(presented_token), "days": settings.refresh_ttl_days},
+                ),
+                {"hash": hash_refresh_token(presented_token), "days": settings.refresh_ttl_days},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
 
     if row is None:
         # Either a forged token or one belonging to a chain that was revoked and
@@ -472,11 +472,7 @@ async def google_metadata(*, force: bool = False) -> dict[str, Any]:
     if _metadata is not None and not force and time.monotonic() - _metadata_at < _DISCOVERY_TTL_SECONDS:
         return _metadata
     async with _discovery_lock:
-        if (
-            _metadata is not None
-            and not force
-            and time.monotonic() - _metadata_at < _DISCOVERY_TTL_SECONDS
-        ):
+        if _metadata is not None and not force and time.monotonic() - _metadata_at < _DISCOVERY_TTL_SECONDS:
             return _metadata
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(GOOGLE_DISCOVERY_URL)
@@ -497,11 +493,7 @@ async def google_key_set(*, force: bool = False) -> KeySet:
     async with _discovery_lock:
         # Re-checked inside the lock so a burst of sign-ins after a restart
         # results in one fetch rather than one per concurrent request.
-        if (
-            _key_set is not None
-            and not force
-            and time.monotonic() - _key_set_at < _DISCOVERY_TTL_SECONDS
-        ):
+        if _key_set is not None and not force and time.monotonic() - _key_set_at < _DISCOVERY_TTL_SECONDS:
             return _key_set
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(metadata["jwks_uri"])

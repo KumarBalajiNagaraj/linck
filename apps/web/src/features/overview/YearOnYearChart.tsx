@@ -1,4 +1,4 @@
-import { AxisLabels, ChartFrame, GridLines, linearScale, niceDomain, ticks } from '@linck/ui';
+import { AxisLabels, ChartFrame, GridLines, labelWidth, linearScale, niceDomain, ticks } from '@linck/ui';
 
 export interface YearPoint {
   label: string;
@@ -40,14 +40,17 @@ export function YearOnYearChart({
 }) {
   const values = data.flatMap((d) => (d.lastYear === null ? [d.now] : [d.now, d.lastYear]));
   const domain = niceDomain(values);
+  const grid = ticks(domain, 3);
+  // The value labels sit in the right gutter, so it is as wide as the widest
+  // of them: "₹50.00 லட்சம்" needs far more room than "₹50.00 L".
+  const padRight = Math.max(58, Math.ceil(Math.max(...grid.map((v) => labelWidth(format(v), 5.9)))) + 12);
 
   return (
-    <ChartFrame summary={summary} height={height} padLeft={4} padRight={58} padBottom={24}>
+    <ChartFrame summary={summary} height={height} padLeft={4} padRight={padRight} padBottom={24}>
       {(box) => {
         const y = linearScale(domain, [box.y1, box.y0]);
         const step = data.length > 1 ? box.width / (data.length - 1) : 0;
         const px = (i: number) => box.x0 + i * step;
-        const grid = ticks(domain, 3);
 
         const nowPath = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${px(i)},${y(d.now)}`).join(' ');
         // Last year breaks where the history has no record, instead of

@@ -8,7 +8,6 @@ import {
   formatDate,
   formatDateTime,
   formatINR,
-  formatINRCompact,
   STAGES,
   summarizeExpenses,
   totalOf,
@@ -41,6 +40,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { BatchBar, BillHistory, ChainActions } from '../expenses/ApprovalChain.js';
@@ -66,7 +66,6 @@ const GROUPS = ['type', 'site', 'vehicle', 'desk'] as const;
 type Group = (typeof GROUPS)[number];
 
 const rupees = (paise: number) => formatINR(paise / 100);
-const compact = (paise: number) => formatINRCompact(paise / 100);
 const money = (paise: number) => (paise / 100).toFixed(2);
 
 const keyOf: Record<Group, (b: ExpenseBill) => string | null> = {
@@ -93,6 +92,8 @@ export function ExpenseApprovals() {
   const t = useWords(expenseWords);
   const a = t.approvals;
   const status = useWords(statusWords);
+  const inr = useInrCompact();
+  const compact = (paise: number) => inr(paise / 100);
 
   const scoped = useMemo(() => expensesForSite(siteScope, null, bills), [siteScope, bills]);
   const total = useMemo(() => totalOf(scoped), [scoped]);
@@ -212,32 +213,28 @@ export function ExpenseApprovals() {
             text: stage('director').count === 0 ? a.tiles.nothing : a.tiles.waiting(stage('director').count, oldest ? a.age(daysWaited(oldest)) : '–'),
             tone: overAWeek.count > 0 ? 'critical' : stage('director').count > 0 ? 'attention' : 'neutral',
           }}
-          asOf="14:42"
-          source="expense_bills"
+          asOfInHeader
         />
         <KpiTile
           eyebrow={a.tiles.notChecked}
           value={compact(stage('desk').paise)}
           title={rupees(stage('desk').paise)}
           delta={{ text: a.tiles.bills(stage('desk').count) }}
-          asOf="14:42"
-          source="expense_bills"
+          asOfInHeader
         />
         <KpiTile
           eyebrow={a.tiles.withAccounts}
           value={compact(stage('accounts').paise)}
           title={rupees(stage('accounts').paise)}
           delta={{ text: a.tiles.toPay(stage('accounts').count) }}
-          asOf="14:42"
-          source="expense_bills"
+          asOfInHeader
         />
         <KpiTile
           eyebrow={a.tiles.paid}
           value={compact(stage('paid').paise)}
           title={rupees(stage('paid').paise)}
           delta={{ text: a.tiles.bills(stage('paid').count) }}
-          asOf="14:42"
-          source="expense_bills"
+          asOfInHeader
         />
       </TileRow>
 
@@ -260,7 +257,7 @@ export function ExpenseApprovals() {
           <AgeingBar
             summary={a.ageSummary(stage('director').count, rupees(stage('director').paise), overAWeek.count)}
             buckets={ages.map((b) => ({ label: a.buckets[b.label], value: b.paise / 100 }))}
-            format={(v) => formatINRCompact(v)}
+            format={inr}
           />
           <p className="mt-2 text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
             {a.countedFrom}

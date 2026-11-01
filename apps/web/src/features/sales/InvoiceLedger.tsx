@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatDate, formatINR, formatINRCompact } from '@linck/domain';
+import { formatDate, formatINR } from '@linck/domain';
 import {
   CUSTOMERS_LIST,
   INVOICE_STATUS_FAMILY,
@@ -44,6 +44,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useDayMonth, useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { shortName } from './shortName.js';
@@ -133,9 +134,6 @@ const isClosed = (r: LedgerRow) => r.status === 'closed';
 /** Live receivable: neither a draft nobody has sent nor a closed file. */
 const isLive = (r: LedgerRow) => r.status !== 'closed' && r.status !== 'draft';
 
-/** `2026-07-26` → `26-07`: day and month as digits, the same in both languages. */
-const dayMonth = (iso: string) => `${iso.slice(8, 10)}-${iso.slice(5, 7)}`;
-
 type StatusText = (typeof statusWords)['en'];
 
 export function InvoiceLedger() {
@@ -160,6 +158,8 @@ export function InvoiceLedger() {
   const s = useWords(salesWords);
   const status = useWords(statusWords);
   const columns = useMemo(() => ledgerColumns(t, s, status), [t, s, status]);
+  const inr = useInrCompact();
+  const dayMonth = useDayMonth();
 
   /**
    * Site scope goes through `invoicesForSite` — the same selector the sales
@@ -301,30 +301,25 @@ export function InvoiceLedger() {
         <KpiTile
           eyebrow={t.moneyDue}
           hero
-          value={formatINRCompact(outstanding)}
+          value={inr(outstanding)}
           delta={{ text: t.openN(openInvoices.length) }}
-          asOf="14:42"
-          source={s.src.invoices}
-          freshness="materialised"
           title={formatINR(outstanding)}
+          asOfInHeader
         />
         {/* v_ar_ageing. */}
         <KpiTile
           eyebrow={status.invoice.overdue}
-          value={formatINRCompact(overdue.reduce((s, r) => s + r.balance, 0))}
+          value={inr(overdue.reduce((s, r) => s + r.balance, 0))}
           delta={{ text: t.pastDueN(overdue.length), tone: overdue.length > 0 ? 'critical' : 'neutral' }}
-          asOf="14:42"
-          source={s.src.invoices}
-          freshness="materialised"
+          asOfInHeader
         />
         {/* The rule, as a number. This money is counted as collected nowhere —
             it waits for a second pair of eyes (v_receipt_verification). */}
         <KpiTile
           eyebrow={status.invoice.payment_reported}
-          value={formatINRCompact(unverified.reduce((s, r) => s + r.reportedUnverified, 0))}
+          value={inr(unverified.reduce((s, r) => s + r.reportedUnverified, 0))}
           delta={{ text: t.toCheckN(unverified.length), tone: unverified.length > 0 ? 'attention' : 'neutral' }}
-          asOf="14:42"
-          source={s.src.payments}
+          asOfInHeader
         />
         {/* Counted to the verification date, never to the reporting date
             (v_ar_collection_days_90d). */}
@@ -352,21 +347,21 @@ export function InvoiceLedger() {
             </Chip>
           </div>
           <AgeingBar
-            summary={t.ageingSummary(formatINRCompact(ageingTotal), formatINRCompact(beyondSixty))}
+            summary={t.ageingSummary(inr(ageingTotal), inr(beyondSixty))}
             buckets={ageingBuckets}
-            format={(v) => formatINRCompact(v)}
+            format={inr}
           />
         </Section>
 
         <Section caption={t.last14} title={t.moneyReceived}>
           <TrendChart
             data={collectionSeries}
-            summary={t.trendSummary(formatINRCompact(avgCollected), formatINRCompact(avgBilled), shortDays)}
+            summary={t.trendSummary(inr(avgCollected), inr(avgBilled), shortDays)}
             seriesLabel={t.received}
-            benchmark={{ value: avgBilled, label: t.billedPerDay(formatINRCompact(avgBilled)) }}
+            benchmark={{ value: avgBilled, label: t.billedPerDay(inr(avgBilled)) }}
             flagBelow={avgBilled * 0.55}
             height={170}
-            format={(v) => formatINRCompact(v)}
+            format={inr}
           />
           {/* The dashed rule is what an average day bills. Days under it are
               days receivables grew, whatever the sales board says. */}
@@ -395,13 +390,13 @@ export function InvoiceLedger() {
                   topCustomer
                     ? t.topSummary(
                         topCustomer.name,
-                        formatINRCompact(topCustomer.balance),
+                        inr(topCustomer.balance),
                         Math.round((topCustomer.balance / (outstanding || 1)) * 100),
                       )
                     : t.noMoneyDue
                 }
                 data={customerBars}
-                format={(v) => formatINRCompact(v)}
+                format={inr}
                 // 190px of name gutter plus a 64px value gutter leaves 73px of
                 // actual bar inside a 327px phone column, which is a chart you
                 // cannot read a ratio off. Halving the gutter gives the bars
@@ -487,10 +482,9 @@ export function InvoiceLedger() {
         width="form"
         title={selected?.invoice.customerName ?? ''}
         identifier={selected?.invoice.number}
-        // On a phone the stamp moves into the sheet body: a status that does
-        // not shrink — and Tamil ones run long — left the customer's name a
-        // sliver of the header.
-        {...(selectedStatus && !phone ? { status: selectedStatus } : {})}
+        // On a phone the sheet header sets the stamp on its own row under the
+        // customer's name, so the name keeps the full width.
+        {...(selectedStatus ? { status: selectedStatus } : {})}
         revision={selected ? t.dated(formatDate(selected.invoice.date)) : undefined}
         footer={
           selected ? (
@@ -521,19 +515,7 @@ export function InvoiceLedger() {
         }
       >
         {selected ? (
-          <>
-            {phone && selectedStatus ? (
-              <div className="mb-4">
-                <StatusStamp
-                  status={selectedStatus.family}
-                  label={selectedStatus.label}
-                  {...(selectedStatus.severity !== undefined ? { severity: selectedStatus.severity } : {})}
-                  {...(selectedStatus.provisional ? { provisional: true } : {})}
-                />
-              </div>
-            ) : null}
-            <InvoiceDetail row={selected} density={density} reminded={reminded.includes(selected.invoice.id)} />
-          </>
+          <InvoiceDetail row={selected} density={density} reminded={reminded.includes(selected.invoice.id)} />
         ) : null}
       </SideSheet>
 
@@ -698,7 +680,7 @@ function InvoiceDetail({
           {/* Never summed into the line above it. That is the whole rule. */}
           <Detail label={t.receivedNotChecked}>
             {row.reportedUnverified > 0 ? (
-              <Provisional>
+              <Provisional by="person">
                 <MoneyCell value={row.reportedUnverified} accounting={false} />
               </Provisional>
             ) : (
@@ -798,7 +780,7 @@ function ledgerColumns(t: InvoiceText, s: SalesText, status: StatusText): Column
       type: 'money',
       group: t.groups.received,
       // Its own column, hatched, and never added into Checked. Asserted, not true.
-      render: (r) => (r.reportedUnverified > 0 ? <Provisional><MoneyCell value={r.reportedUnverified} /></Provisional> : null),
+      render: (r) => (r.reportedUnverified > 0 ? <Provisional by="person"><MoneyCell value={r.reportedUnverified} /></Provisional> : null),
     },
     { key: 'balance', header: t.due, unit: '₹', type: 'money', group: t.groups.received, render: (r) => <MoneyCell value={r.balance} /> },
     {
@@ -838,7 +820,7 @@ function tripColumns(s: SalesText): Column<Trip>[] {
       // weighbridge ticket is not.
       render: (trip) =>
         trip.qtyBasis === 'agreed_units' || trip.qtyBasis === 'loader_buckets' ? (
-          <Provisional>{s.basis[trip.qtyBasis]}</Provisional>
+          <Provisional by="person">{s.basis[trip.qtyBasis]}</Provisional>
         ) : (
           s.basis[trip.qtyBasis]
         ),

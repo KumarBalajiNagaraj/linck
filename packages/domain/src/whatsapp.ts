@@ -20,7 +20,7 @@
  * Pure functions, no DOM.
  */
 
-import type { BillCapture } from './bill-capture.js';
+import type { BillCapture, CaptureWarning } from './bill-capture.js';
 
 /* ----------------------------------------------------------------- types */
 
@@ -219,6 +219,42 @@ export interface DriverRef {
   phone: string;
 }
 
+/**
+ * What a fleet manager should read before checking a claim, as a code and its
+ * values. The screen words it in the reader's language (docs/WRITING.md).
+ */
+export type ClaimIssue =
+  /** Litres and rupees make a rate outside the believable band. */
+  | { code: 'rate-out-of-band'; rate: number; min: number; max: number }
+  /** Unlabelled numbers read as litres and/or rupees; null where not inferred. */
+  | { code: 'inferred'; litres: number | null; amount: number | null }
+  | { code: 'no-litres' }
+  /** `near` is a number written but not read as rupees; with `litres` it gives that rate. */
+  | { code: 'no-amount'; near: number | null; litres: number | null }
+  | { code: 'no-photo' }
+  /** A photo with no words: its figures can only come from the slip. */
+  | { code: 'photo-only' }
+  /** The chat was exported without media, so the photo is not in the file. */
+  | { code: 'media-omitted' }
+  | { code: 'no-vehicle' }
+  | { code: 'vehicle-unmatched'; text: string }
+  /** Posted by a member who is not reporting a fill of their own. */
+  | { code: 'not-own-fill'; sender: string }
+  | { code: 'not-a-driver'; sender: string }
+  /** Mentions diesel but gives no litres, amount or slip. */
+  | { code: 'no-fill' }
+  | { code: 'same-photo-as-line'; line: number }
+  | { code: 'same-figures-as-line'; line: number }
+  /** Message and slip disagree; the slip's figure is used. */
+  | { code: 'slip-litres-differ'; message: number; slip: number }
+  | { code: 'slip-amount-differ'; message: number; slip: number }
+  | { code: 'slip-names-other-vehicle'; slip: string }
+  | { code: 'slip-vehicle-unknown'; slip: string }
+  | { code: 'slip-unreadable' };
+
+/** Anything a bill's reading carries for a person to look at. */
+export type BillNotice = CaptureWarning | ClaimIssue;
+
 export interface DieselClaim {
   /** Stable across re-imports of the same export: used to refuse duplicates. */
   key: string;
@@ -248,8 +284,8 @@ export interface DieselClaim {
   vehicleMatch: 'registration' | 'last_four' | 'none';
   driverId: string | null;
   driverMatch: 'name' | 'phone' | 'none';
-  /** Plain sentences a fleet manager should read before validating. */
-  issues: string[];
+  /** What a fleet manager should read before validating, most important first. */
+  issues: ClaimIssue[];
   /** Key of an earlier claim in the same import this one repeats, if any. */
   duplicateOf: string | null;
   /**
@@ -433,7 +469,7 @@ export function extractDieselClaims(
       unread = free.filter((n) => n !== litres && n !== amount && n >= 10);
     }
 
-    const issues: string[] = [];
+    const issues: ClaimIssue[] = [];
     let ratePerLitre = statedRate;
     let rateDerived = false;
     if (ratePerLitre === null && litres && amount) {
@@ -441,39 +477,31 @@ export function extractDieselClaims(
       rateDerived = true;
     }
     if (ratePerLitre !== null && (ratePerLitre < DIESEL_RATE_BAND.min || ratePerLitre > DIESEL_RATE_BAND.max)) {
-      issues.push(
-        `Works out at ₹${ratePerLitre.toFixed(2)} a litre, outside ₹${DIESEL_RATE_BAND.min}–${DIESEL_RATE_BAND.max} — a litre or rupee figure is probably wrong.`,
-      );
+      issues.push({ code: 'rate-out-of-band', rate: ratePerLitre, min: DIESEL_RATE_BAND.min, max: DIESEL_RATE_BAND.max });
     }
     if (litresInferred || amountInferred) {
-      issues.push(
-        `${[litresInferred ? `${litres} as litres` : null, amountInferred ? `${amount} as rupees` : null].filter(Boolean).join(' and ')} — read from unlabelled numbers; check against the slip.`,
-      );
+      issues.push({ code: 'inferred', litres: litresInferred ? litres : null, amount: amountInferred ? amount : null });
     }
-    if (litres === null) issues.push('No litres stated.');
+    if (litres === null) issues.push({ code: 'no-litres' });
     if (amount === null) {
       const near = litres !== null ? unread.find((n) => n > litres!) : undefined;
-      issues.push(
-        near !== undefined
-          ? `No amount stated. ${near} is written but was not read as rupees — with ${litres} litres it would be ₹${(near / litres!).toFixed(2)} a litre.`
-          : 'No amount stated.',
-      );
+      issues.push({ code: 'no-amount', near: near ?? null, litres });
     }
-    if (!hasPhoto) issues.push('No bill photo posted with it.');
-    if (bareSlip) issues.unshift('A photo with no message — its figures can only come from the slip.');
-    if (msg.mediaOmitted) issues.push('The chat was exported without media — the photo is not in this file.');
+    if (!hasPhoto) issues.push({ code: 'no-photo' });
+    if (bareSlip) issues.unshift({ code: 'photo-only' });
+    if (msg.mediaOmitted) issues.push({ code: 'media-omitted' });
 
-    if (!vehicle.vehicleText) issues.push('No vehicle number in the message.');
-    else if (!vehicle.vehicleId) issues.push(`"${vehicle.vehicleText}" does not match exactly one vehicle in the fleet.`);
+    if (!vehicle.vehicleText) issues.push({ code: 'no-vehicle' });
+    else if (!vehicle.vehicleId) issues.push({ code: 'vehicle-unmatched', text: vehicle.vehicleText });
 
     const driver = matchDriver(msg.sender, drivers, notDrivers);
     if (notDrivers.some((n) => normalizeName(n) === normalizeName(msg.sender))) {
-      issues.push(`Posted by ${msg.sender}, who is not reporting a fill of their own.`);
+      issues.push({ code: 'not-own-fill', sender: msg.sender });
     } else if (!driver.driverId) {
-      issues.push(`"${msg.sender}" is not a driver on the roster.`);
+      issues.push({ code: 'not-a-driver', sender: msg.sender });
     }
     const noFill = litres === null && amount === null && !hasPhoto;
-    if (noFill) issues.unshift('Mentions diesel but gives no litres, amount or slip — nothing here could be paid.');
+    if (noFill) issues.unshift({ code: 'no-fill' });
 
     claims.push({
       // Stable across re-imports, and across phones: the sender's saved name
@@ -525,11 +553,7 @@ export function extractDieselClaims(
     if (earlier) {
       c.duplicateOf = earlier.key;
       c.duplicateReason = samePhoto ? 'same_photo' : 'same_figures';
-      c.issues.unshift(
-        samePhoto
-          ? `The same photo as the message on line ${earlier.line} — the same bill posted again.`
-          : `Looks like a repeat of the message on line ${earlier.line}: same vehicle, litres and amount.`,
-      );
+      c.issues.unshift(samePhoto ? { code: 'same-photo-as-line', line: earlier.line } : { code: 'same-figures-as-line', line: earlier.line });
     }
   });
 
@@ -584,11 +608,21 @@ export interface LedgerBill {
 
 export type ImportOutcome = 'add' | 'needs_details' | 'repeat' | 'already_imported' | 'already_in_linck' | 'no_fill';
 
+/** Why a claim is not being added, as a code and its values. */
+export type PlanReason =
+  /** `on` is the ISO time it was imported. */
+  | { code: 'already-imported'; on: string }
+  | { code: 'photo-in-linck'; bill: string }
+  | { code: 'same-photo-again'; line: number | null }
+  | { code: 'bill-in-linck'; billNumber: string; vendor: string }
+  | { code: 'no-fill' }
+  | { code: 'needs-details'; vehicle: boolean; amount: boolean };
+
 export interface PlannedClaim<C extends DieselClaim = DieselClaim> {
   claim: C;
   outcome: ImportOutcome;
-  /** Why it is not being added, in a sentence. Null for 'add'. */
-  reason: string | null;
+  /** Why it is not being added. Null for 'add'. */
+  reason: PlanReason | null;
 }
 
 const billKey = (vendor: string, billNumber: string) =>
@@ -614,21 +648,23 @@ export function planDieselImport<C extends DieselClaim & { billNumber?: string |
   const byKey = new Map(ledger.filter((b) => b.claimKey).map((b) => [b.claimKey!, b]));
   const byPhoto = new Map(ledger.flatMap((b) => b.attachmentNames.map((n) => [n, b] as const)));
   const byBill = new Map(ledger.map((b) => [billKey(b.vendor, b.billNumber), b] as const).filter(([k]) => k !== null) as [string, LedgerBill][]);
-  const day = (iso: string) => iso.slice(0, 10).split('-').reverse().join('-');
-
   return claims.map((claim) => {
-    const plan = (outcome: ImportOutcome, reason: string | null): PlannedClaim<C> => ({ claim, outcome, reason });
+    const plan = (outcome: ImportOutcome, reason: PlanReason | null): PlannedClaim<C> => ({ claim, outcome, reason });
     const imported = byKey.get(claim.key);
-    if (imported) return plan('already_imported', `Already imported on ${day(imported.submittedAt)}.`);
+    if (imported) return plan('already_imported', { code: 'already-imported', on: imported.submittedAt });
     const photo = claim.attachments.map((a) => byPhoto.get(a)).find(Boolean);
-    if (photo) return plan('repeat', `The same photo as a bill already in Linck (${photo.billNumber || photo.id}).`);
-    if (claim.duplicateReason === 'same_photo') return plan('repeat', claim.issues[0] ?? 'The same photo posted again.');
+    if (photo) return plan('repeat', { code: 'photo-in-linck', bill: photo.billNumber || photo.id });
+    if (claim.duplicateReason === 'same_photo') {
+      const first = claim.issues[0];
+      return plan('repeat', { code: 'same-photo-again', line: first?.code === 'same-photo-as-line' ? first.line : null });
+    }
     const key = billKey(claim.vendor ?? '', claim.billNumber ?? '');
     const same = key ? byBill.get(key) : undefined;
-    if (same) return plan('already_in_linck', `Bill ${same.billNumber} from ${same.vendor} is already in Linck.`);
-    if (claim.noFill) return plan('no_fill', 'No litres, amount or slip — nothing here could be paid.');
-    const missing = [claim.vehicleId ? null : 'the vehicle', claim.amount === null ? 'the amount' : null].filter(Boolean);
-    if (missing.length > 0) return plan('needs_details', `Needs ${missing.join(' and ')} before it can go for validation.`);
+    if (same) return plan('already_in_linck', { code: 'bill-in-linck', billNumber: same.billNumber, vendor: same.vendor });
+    if (claim.noFill) return plan('no_fill', { code: 'no-fill' });
+    if (!claim.vehicleId || claim.amount === null) {
+      return plan('needs_details', { code: 'needs-details', vehicle: !claim.vehicleId, amount: claim.amount === null });
+    }
     return plan('add', null);
   });
 }
@@ -649,7 +685,7 @@ export interface SlipReading {
   billDate: string | null;
   /** Compact registration, as read. */
   vehicle: string | null;
-  warnings: string[];
+  warnings: CaptureWarning[];
   engine: string;
 }
 
@@ -660,6 +696,19 @@ export interface ReconciledClaim extends DieselClaim {
   billNumber: string | null;
   vendor: string | null;
   billDate: string | null;
+}
+
+/**
+ * The "read from unlabelled numbers" note, once the slip bears out `which`
+ * figure: dropped when nothing inferred is left, narrowed when the other
+ * figure is still only inferred.
+ */
+function dropInferred(issues: ClaimIssue[], which: 'litres' | 'amount'): ClaimIssue[] {
+  return issues.flatMap((i): ClaimIssue[] => {
+    if (i.code !== 'inferred') return [i];
+    const left = { ...i, [which]: null };
+    return left.litres === null && left.amount === null ? [] : [left];
+  });
 }
 
 /** Figures within this of each other are the same reading. */
@@ -711,12 +760,12 @@ export function reconcileWithSlip(claim: DieselClaim, slip: SlipReading | null, 
       c.filledFromSlip.push('litres');
     } else if (Math.abs(c.litres - slip.litres) > LITRE_SLACK) {
       // The slip is what the bunk dispensed; a figure typed from memory is not.
-      c.issues.unshift(`The message says ${c.litres} L but the slip reads ${slip.litres} L — the slip's figure is used.`);
+      c.issues.unshift({ code: 'slip-litres-differ', message: c.litres, slip: slip.litres });
       c.litres = slip.litres;
       c.litresInferred = false;
     } else if (c.litresInferred) {
       c.litresInferred = false;
-      c.issues = c.issues.filter((i) => !/as litres/.test(i) || !/unlabelled numbers/.test(i));
+      c.issues = dropInferred(c.issues, 'litres');
     }
   }
   if (slip.amount !== null) {
@@ -726,7 +775,7 @@ export function reconcileWithSlip(claim: DieselClaim, slip: SlipReading | null, 
       c.filledFromSlip.push('amount');
     } else if (Math.abs(c.amount - slip.amount) > RUPEE_SLACK) {
       // What is paid is what the bunk charged.
-      c.issues.unshift(`The message says ₹${c.amount} but the slip reads ₹${slip.amount} — the slip's figure is used.`);
+      c.issues.unshift({ code: 'slip-amount-differ', message: c.amount, slip: slip.amount });
       c.amount = slip.amount;
       c.amountInferred = false;
     } else {
@@ -734,7 +783,7 @@ export function reconcileWithSlip(claim: DieselClaim, slip: SlipReading | null, 
       c.amount = slip.amount;
       if (c.amountInferred) {
         c.amountInferred = false;
-        c.issues = c.issues.filter((i) => !/unlabelled numbers/.test(i));
+        c.issues = dropInferred(c.issues, 'amount');
       }
     }
   }
@@ -746,33 +795,31 @@ export function reconcileWithSlip(claim: DieselClaim, slip: SlipReading | null, 
       c.vehicleText = slip.vehicle;
       c.filledFromSlip.push('vehicle');
     } else if (c.vehicleId !== null && onSlip && onSlip.id !== c.vehicleId) {
-      c.issues.unshift(`The message is about one vehicle but the slip names ${slip.vehicle}.`);
+      c.issues.unshift({ code: 'slip-names-other-vehicle', slip: slip.vehicle });
     } else if (!onSlip && c.vehicleId === null) {
-      c.issues.unshift(`The slip names ${slip.vehicle}, which is not one of our vehicles.`);
+      c.issues.unshift({ code: 'slip-vehicle-unknown', slip: slip.vehicle });
     }
   }
   if (c.filledFromSlip.length > 0) {
     // What was missing is now filled: drop the notes it answers.
     c.issues = c.issues.filter(
       (i) =>
-        !(c.filledFromSlip.includes('litres') && i.startsWith('No litres')) &&
-        !(c.filledFromSlip.includes('amount') && i.startsWith('No amount')) &&
-        !(c.filledFromSlip.includes('vehicle') && (i.startsWith('No vehicle') || i.includes('does not match exactly one vehicle'))) &&
-        !i.startsWith('A photo with no message'),
+        !(c.filledFromSlip.includes('litres') && i.code === 'no-litres') &&
+        !(c.filledFromSlip.includes('amount') && i.code === 'no-amount') &&
+        !(c.filledFromSlip.includes('vehicle') && (i.code === 'no-vehicle' || i.code === 'vehicle-unmatched')) &&
+        i.code !== 'photo-only',
     );
   }
   if (slip.litres === null && slip.amount === null && slip.billNumber === null) {
-    c.issues.unshift('The slip photo could not be read — check it by eye, or ask the driver for a clearer photo.');
+    c.issues.unshift({ code: 'slip-unreadable' });
   }
   // A stated rate stands; a derived one is re-derived from the reconciled figures.
   if (c.litres && c.amount && (c.ratePerLitre === null || c.rateDerived)) {
     c.ratePerLitre = Math.round((c.amount / c.litres) * 100) / 100;
     c.rateDerived = true;
-    c.issues = c.issues.filter((i) => !i.startsWith('Works out at'));
+    c.issues = c.issues.filter((i) => i.code !== 'rate-out-of-band');
     if (c.ratePerLitre < DIESEL_RATE_BAND.min || c.ratePerLitre > DIESEL_RATE_BAND.max) {
-      c.issues.unshift(
-        `Works out at ₹${c.ratePerLitre.toFixed(2)} a litre, outside ₹${DIESEL_RATE_BAND.min}–${DIESEL_RATE_BAND.max} — a litre or rupee figure is probably wrong.`,
-      );
+      c.issues.unshift({ code: 'rate-out-of-band', rate: c.ratePerLitre, min: DIESEL_RATE_BAND.min, max: DIESEL_RATE_BAND.max });
     }
   }
   return c;

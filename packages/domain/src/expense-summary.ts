@@ -20,13 +20,6 @@ export type ExpenseStage = 'desk' | 'director' | 'accounts' | 'paid';
 
 export const STAGES: readonly ExpenseStage[] = ['desk', 'director', 'accounts', 'paid'];
 
-export const STAGE_LABEL: Record<ExpenseStage, string> = {
-  desk: 'With the desk',
-  director: 'Awaiting director',
-  accounts: 'With accounts',
-  paid: 'Paid',
-};
-
 export function stageOf(status: BillStatus): ExpenseStage | null {
   switch (status) {
     case 'submitted':
@@ -124,14 +117,15 @@ export function enteredStatusAt(bill: SummaryBill): string {
   return bill.submittedAt;
 }
 
-export const AGE_BUCKETS = ['Under a day', '1–3 days', '3–7 days', 'Over a week'] as const;
+/** How long a bill has waited: under a day, 1–3 days, 3–7 days, over a week. */
+export const AGE_BUCKETS = ['under-1', '1-3', '3-7', 'over-7'] as const;
 export type AgeBucket = (typeof AGE_BUCKETS)[number];
 
 const DAY = 24 * 60 * 60 * 1000;
 
 export function ageBucket(since: string, now: Date): AgeBucket {
   const days = (now.getTime() - Date.parse(since)) / DAY;
-  return days < 1 ? 'Under a day' : days < 3 ? '1–3 days' : days < 7 ? '3–7 days' : 'Over a week';
+  return days < 1 ? 'under-1' : days < 3 ? '1-3' : days < 7 ? '3-7' : 'over-7';
 }
 
 /** How long the bills in one status have waited there, in rupees per bucket. */

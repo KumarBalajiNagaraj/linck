@@ -7,9 +7,9 @@ import {
   sitesFor,
   type BillCapture,
   type BillFieldKey,
+  type BillNotice,
 } from '@linck/domain';
 import {
-  EXPENSE_KIND_LABEL,
   NOW,
   SITES,
   VEHICLES,
@@ -19,9 +19,12 @@ import {
   type Vehicle,
 } from '@linck/mock';
 import { Button, ConfidenceMeter, Note, Rail, SheetSection, SideSheet } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { newBillId, useExpenses } from './expenseStore.js';
 import { readBillImage } from './ocr.js';
+import { expenseWords } from './words.js';
 
 /**
  * UPLOAD A SCANNED BILL.
@@ -71,7 +74,7 @@ const FIELD_STYLE: React.CSSProperties = {
   boxShadow: 'inset 0 0 0 1px var(--border-strong)',
   borderRadius: 'var(--r-1)',
 };
-const FIELD_CLASS = 'h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[13px]';
+const FIELD_CLASS = 'h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[38px] [@media(hover:hover)]:text-[14px]';
 
 interface Draft {
   file: File | null;
@@ -113,9 +116,12 @@ export function UploadBillSheet({
 }) {
   const { persona, siteScope } = useApp();
   const add = useExpenses((s) => s.add);
+  const t = useWords(expenseWords);
+  const u = t.upload;
+  const kindWords = useWords(statusWords).expenseKind;
   const [draft, setDraft] = useState<Draft>(() => blank(desk));
   const [preview, setPreview] = useState<string | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<'wrong-file' | 'too-big' | null>(null);
   const [unviewable, setUnviewable] = useState(false);
   const [capture, setCapture] = useState<{ result: BillCapture; engine: string; text: string } | null>(null);
   const [reading, setReading] = useState<ReadingState>({ state: 'idle', progress: 0 });
@@ -171,7 +177,7 @@ export function UploadBillSheet({
 
   const pickFile = (file: File | undefined) => {
     if (!file) return;
-    const refuse = (message: string) => {
+    const refuse = (message: 'wrong-file' | 'too-big') => {
       // The earlier scan and its reading go too: figures keyed from bill B
       // must never be submitted against bill A's photo.
       release();
@@ -183,11 +189,11 @@ export function UploadBillSheet({
       setFileError(message);
     };
     if (!ACCEPT.split(',').includes(file.type)) {
-      refuse('That is not a JPG, PNG or PDF. Upload the scan of the bill itself; nothing is attached now.');
+      refuse('wrong-file');
       return;
     }
     if (file.size > MAX_MB * 1024 * 1024) {
-      refuse(`That file is over ${MAX_MB} MB. Retake the photo at a normal size; nothing is attached now.`);
+      refuse('too-big');
       return;
     }
     release();
@@ -260,10 +266,10 @@ export function UploadBillSheet({
     // offered, a diesel slip on the stores desk — is not a correction the
     // person made.
     if (key === 'vehicle' && !current && !offered.some((v) => v.registrationNumber === field.value)) {
-      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'not one of your vehicles' };
+      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'vehicle' };
     }
     if (key === 'kind' && !KINDS_BY_DESK[desk].includes(field.value as ExpenseBill['kind'])) {
-      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'not a type this desk books' };
+      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'kind' };
     }
     const same =
       key === 'amount' || key === 'litres'
@@ -277,18 +283,18 @@ export function UploadBillSheet({
   const today = businessDate(NOW);
   const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(draft.billDate) && !Number.isNaN(Date.parse(`${draft.billDate}T00:00:00+05:30`));
   const needsVehicle = desk === 'fleet' && draft.kind !== 'toll' && draft.kind !== 'other';
-  const amountError = draft.amount.trim() !== '' && (amount === null || amount <= 0) ? 'Type the total as printed, such as 12,500.00' : null;
-  const litresError = draft.litres.trim() !== '' && (litres === null || litres <= 0) ? 'Type the litres as printed, such as 120.45' : null;
-  const dateError = !dateOk ? 'Pick the date printed on the bill' : draft.billDate > today ? 'A bill cannot be dated after today' : null;
+  const amountError = draft.amount.trim() !== '' && (amount === null || amount <= 0) ? t.detail.errors.amount : null;
+  const litresError = draft.litres.trim() !== '' && (litres === null || litres <= 0) ? t.detail.errors.litres : null;
+  const dateError = !dateOk ? t.detail.errors.date : draft.billDate > today ? t.detail.errors.futureDate : null;
   const problems = [
-    draft.file ? null : 'Attach the scanned bill',
-    draft.billNumber.trim() ? null : 'Bill number',
-    dateError ? 'Bill date' : null,
-    draft.vendor.trim() ? null : 'Vendor',
-    amount !== null && amount > 0 ? null : 'Amount',
-    draft.kind === 'diesel' && !(litres !== null && litres > 0) ? 'Litres' : null,
-    needsVehicle && !vehicle ? 'Vehicle' : null,
-    bookedTo ? null : 'Site',
+    draft.file ? null : u.needs.photo,
+    draft.billNumber.trim() ? null : u.needs.billNumber,
+    dateError ? u.needs.billDate : null,
+    draft.vendor.trim() ? null : u.needs.vendor,
+    amount !== null && amount > 0 ? null : u.needs.amount,
+    draft.kind === 'diesel' && !(litres !== null && litres > 0) ? u.needs.litres : null,
+    needsVehicle && !vehicle ? u.needs.vehicle : null,
+    bookedTo ? null : u.needs.site,
   ].filter((p): p is string => p !== null);
 
   const save = () => {
@@ -337,7 +343,8 @@ export function UploadBillSheet({
       vehicleId: desk === 'fleet' ? (vehicle?.id ?? null) : null,
       driverId: desk === 'fleet' && draft.kind === 'diesel' ? (vehicle?.driverId ?? null) : null,
       vendor: draft.vendor.trim(),
-      description: draft.description.trim() || EXPENSE_KIND_LABEL[draft.kind],
+      // Left blank when nothing was typed: the screens show the type in the reader's language.
+      description: draft.description.trim(),
       litres: draft.kind === 'diesel' ? litres : null,
       amount: amount.toFixed(2),
       status: 'submitted',
@@ -367,22 +374,20 @@ export function UploadBillSheet({
       open={open}
       onClose={onClose}
       width="split"
-      title={desk === 'fleet' ? 'Upload a fleet bill' : 'Upload a stores bill'}
+      title={u.title(desk)}
       footer={
         <>
           <Button variant="primary" onClick={save} disabled={problems.length > 0}>
-            Submit for approval
+            {u.submit}
           </Button>
-          <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-            {problems.length > 0
-              ? `Still needed: ${problems.join(', ')}`
-              : `Booked to ${siteName(bookedTo!)}. Goes to validation first, then the director, then accounts.`}
+          <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+            {problems.length > 0 ? u.stillNeeded(problems) : u.bookedTo(siteName(bookedTo!))}
           </span>
         </>
       }
     >
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <SheetSection caption="The scan">
+        <SheetSection caption={t.detail.photo}>
           {/* No `capture`: on a phone that forces the camera, and a bill that
               arrived as a PDF on WhatsApp, or a photo already taken, could
               never be picked. Without it the phone offers camera and files. */}
@@ -391,17 +396,20 @@ export function UploadBillSheet({
             style={FIELD_STYLE}
           >
             {preview && !isPdf && !unviewable ? (
-              <img src={preview} alt="Scanned bill" className="max-h-[360px] w-full object-contain" onError={() => setUnviewable(true)} />
+              <img src={preview} alt={u.photoAlt} className="max-h-[360px] w-full object-contain" onError={() => setUnviewable(true)} />
             ) : preview ? (
               <span style={{ color: 'var(--text-primary)' }}>
-                {isPdf ? 'PDF attached' : 'Attached, but this browser cannot show it'} — {draft.file?.name}
+                {isPdf ? u.pdfAttached : u.cannotShow} — {draft.file?.name}
               </span>
             ) : (
-              <span style={{ color: 'var(--text-secondary)' }}>
-                Tap to photograph the bill or choose the file
+              <span className="text-[15px]" style={{ color: 'var(--text-secondary)' }}>
+                <span aria-hidden="true" className="mb-1 block text-[28px] leading-none">
+                  ⎙
+                </span>
+                {u.tapToAdd}
                 <br />
                 <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-                  JPG, PNG or PDF, up to {MAX_MB} MB
+                  {u.fileTypes(MAX_MB)}
                 </span>
               </span>
             )}
@@ -409,7 +417,7 @@ export function UploadBillSheet({
               type="file"
               accept={ACCEPT}
               className="sr-only"
-              aria-label="Scanned bill"
+              aria-label={u.photoAria}
               onChange={(e) => {
                 pickFile(e.target.files?.[0]);
                 // Cleared at once, so picking the same file again still fires.
@@ -419,51 +427,51 @@ export function UploadBillSheet({
           </label>
           <CaptureStatus reading={reading} warnings={capture?.result.warnings ?? []} />
           {capture ? (
-            <details className="mt-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              <summary className="cursor-pointer">Text read from the {capture.engine === 'pasted text' ? 'pasted bill' : 'photo'}</summary>
+            <details className="mt-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              <summary className="cursor-pointer">{u.textRead(capture.engine === 'pasted text')}</summary>
               <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap p-2 font-mono text-[11px]" style={FIELD_STYLE}>
                 {capture.text}
               </pre>
             </details>
           ) : null}
           {reading.state === 'failed' || reading.state === 'pdf' || reading.state === 'done' ? (
-            <details className="mt-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              <summary className="cursor-pointer">Read from pasted text instead</summary>
+            <details className="mt-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              <summary className="cursor-pointer">{u.pasteInstead}</summary>
               <textarea
                 value={pasted}
                 onChange={(e) => setPasted(e.target.value)}
                 rows={6}
-                aria-label="Bill text"
-                placeholder="Paste the bill's text here"
+                aria-label={u.pasteAria}
+                placeholder={u.pasteHere}
                 className="mt-2 w-full p-2 font-mono text-[12px]"
                 style={FIELD_STYLE}
               />
-              <Button onClick={() => pasted.trim() && applyCapture(captureExpenseBill(pasted), 'pasted text', pasted, true)}>Capture from text</Button>
+              <Button onClick={() => pasted.trim() && applyCapture(captureExpenseBill(pasted), 'pasted text', pasted, true)}>{u.readText}</Button>
             </details>
           ) : null}
           {fileError ? (
-            <p className="relative mt-2 pl-3 text-[12px]" style={{ color: 'var(--status-critical)' }}>
+            <p className="relative mt-2 pl-3 text-[14px]" style={{ color: 'var(--status-critical)' }}>
               <Rail status="critical" />
-              {fileError}
+              {fileError === 'too-big' ? u.tooBig(MAX_MB) : u.wrongFile}
             </p>
           ) : null}
         </SheetSection>
 
-        <SheetSection caption="What the bill says">
+        <SheetSection caption={u.whatTheBillSays}>
           <div className="flex flex-col gap-3">
-            <Field label="Type" captured={capturedFor('kind', draft.kind)}>
+            <Field label={t.detail.fields.kind!} captured={capturedFor('kind', draft.kind)}>
               <select value={draft.kind} onChange={(e) => set('kind', e.target.value as ExpenseBill['kind'])} className={FIELD_CLASS} style={FIELD_STYLE}>
                 {KINDS_BY_DESK[desk].map((k) => (
                   <option key={k} value={k}>
-                    {EXPENSE_KIND_LABEL[k]}
+                    {kindWords[k]}
                   </option>
                 ))}
               </select>
             </Field>
-            <Field label="Bill number" captured={capturedFor('billNumber', draft.billNumber)}>
+            <Field label={t.detail.fields.billNumber!} captured={capturedFor('billNumber', draft.billNumber)}>
               <input value={draft.billNumber} onChange={(e) => set('billNumber', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
-            <Field label="Bill date" captured={capturedFor('billDate', draft.billDate)} error={dateError}>
+            <Field label={t.detail.fields.billDate!} captured={capturedFor('billDate', draft.billDate)} error={dateError}>
               <input
                 type="date"
                 value={draft.billDate}
@@ -473,14 +481,14 @@ export function UploadBillSheet({
                 style={FIELD_STYLE}
               />
             </Field>
-            <Field label="Vendor" captured={capturedFor('vendor', draft.vendor)}>
+            <Field label={t.detail.fields.vendor!} captured={capturedFor('vendor', draft.vendor)}>
               <input value={draft.vendor} onChange={(e) => set('vendor', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
-            <Field label="What for">
+            <Field label={t.detail.fields.whatFor!}>
               <input value={draft.description} onChange={(e) => set('description', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
             {desk === 'fleet' ? (
-              <Field label={needsVehicle ? 'Vehicle' : 'Vehicle (optional)'} captured={capturedFor('vehicle', vehicle?.registrationNumber ?? '')}>
+              <Field label={needsVehicle ? t.detail.fields.vehicle! : u.vehicleOptional} captured={capturedFor('vehicle', vehicle?.registrationNumber ?? '')}>
                 <select value={vehicle?.id ?? ''} onChange={(e) => set('vehicleId', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE}>
                   <option value="">—</option>
                   {vehicleGroups.map((g) => (
@@ -497,7 +505,7 @@ export function UploadBillSheet({
             ) : null}
             {draft.kind === 'diesel' ? (
               <Field
-                label="Litres"
+                label={t.detail.fields.litres!}
                 captured={capturedFor('litres', draft.litres)}
                 error={litresError}
                 echo={litres !== null && litres > 0 ? `${litres} L` : null}
@@ -506,7 +514,7 @@ export function UploadBillSheet({
               </Field>
             ) : null}
             <Field
-              label="Amount ₹ (bill total, incl. GST)"
+              label={u.amountTotal}
               captured={capturedFor('amount', draft.amount)}
               error={amountError}
               echo={amount !== null && amount > 0 ? formatINR(amount) : null}
@@ -516,7 +524,7 @@ export function UploadBillSheet({
           </div>
         </SheetSection>
       </div>
-      <Note>Type what the paper says, not what it should say. A wrong bill is rejected at validation, never corrected silently.</Note>
+      <Note>{u.note}</Note>
     </SideSheet>
   );
 }
@@ -526,8 +534,8 @@ interface CapturedMark {
   confidence: 1 | 2 | 3;
   source: string;
   corrected: boolean;
-  /** Read cleanly, but matches nothing the form can select: says why. */
-  unmatched: string | null;
+  /** Read cleanly, but matches nothing the form can select: which kind of mismatch. */
+  unmatched: 'vehicle' | 'kind' | null;
 }
 
 /**
@@ -548,58 +556,61 @@ function Field({
   error?: string | null;
   echo?: string | null;
 }) {
+  const u = useWords(expenseWords).upload;
   return (
     <label className="relative flex flex-col gap-1">
       {error ? <Rail status="critical" className="-left-2" /> : null}
-      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
+      <span className="flex flex-wrap items-center gap-x-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
         {label}
         {captured ? (
-          <span className="flex items-center gap-1.5 normal-case tracking-normal" title={`Read from: ${captured.source}`}>
+          <span className="flex items-center gap-1.5 text-[12px]" title={captured.source}>
             <ConfidenceMeter level={captured.confidence} />
             {captured.unmatched ? (
               <span style={{ color: 'var(--status-attention)' }}>
-                scan read {captured.value} — {captured.unmatched}
+                {u.photoSaid(captured.value, captured.unmatched === 'vehicle' ? u.notYourVehicle : u.notThisDesk)}
               </span>
             ) : captured.corrected ? (
-              <span style={{ color: 'var(--status-attention)' }}>corrected — scan read {captured.value}</span>
+              <span style={{ color: 'var(--status-attention)' }}>{u.correctedFrom(captured.value)}</span>
             ) : (
-              <span>read from scan</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>{u.fromPhoto}</span>
             )}
           </span>
         ) : null}
       </span>
       {children}
       {error ? (
-        <span className="text-[11px]" style={{ color: 'var(--status-critical)' }}>
+        <span className="text-[13px]" style={{ color: 'var(--status-critical)' }}>
           {error}
         </span>
       ) : echo ? (
-        <span className="num text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-          Read as {echo}
+        <span className="num text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+          {u.readAs(echo)}
         </span>
       ) : null}
     </label>
   );
 }
 
-function CaptureStatus({ reading, warnings }: { reading: ReadingState; warnings: string[] }) {
+function CaptureStatus({ reading, warnings }: { reading: ReadingState; warnings: BillNotice[] }) {
+  const t = useWords(expenseWords);
+  const u = t.upload;
   const text =
     reading.state === 'reading'
-      ? `Reading the bill… ${Math.round(reading.progress * 100)}%`
+      ? u.reading(Math.round(reading.progress * 100))
       : reading.state === 'done'
-        ? 'Read. Check every filled field against the paper — the bars show how sure the reading is.'
+        ? u.read
         : reading.state === 'failed'
-          ? 'Could not read this photo. Key the fields from the paper.'
+          ? u.failed
           : reading.state === 'pdf'
-            ? 'PDFs are not read automatically yet. Key the fields, or paste the text below.'
+            ? u.pdf
             : null;
   if (!text) return null;
   return (
-    <div className="mt-2 flex flex-col gap-1 text-[12px]" style={{ color: reading.state === 'failed' ? 'var(--status-critical)' : 'var(--text-secondary)' }}>
+    <div className="mt-2 flex flex-col gap-1 text-[14px]" style={{ color: reading.state === 'failed' ? 'var(--status-critical)' : 'var(--text-secondary)' }}>
       <span aria-live="polite">{text}</span>
-      {warnings.map((w) => (
-        <span key={w} style={{ color: 'var(--status-attention)' }}>
-          {w}
+      {warnings.map((w, i) => (
+        <span key={`${w.code}-${i}`} style={{ color: 'var(--status-attention)' }}>
+          {t.notice(w)}
         </span>
       ))}
     </div>

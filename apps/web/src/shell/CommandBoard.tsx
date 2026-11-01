@@ -109,12 +109,21 @@ export function UrgentActionsRow({ caption, actions }: { caption: string; action
                 boxShadow: 'inset 0 0 0 1px var(--border-subtle)',
               }}
             >
+              {/* The arrow says the card leaves the page, the way the
+                  destination buttons below say it. It used to be "Open list →",
+                  shown on hover — but an invisible label still takes its width,
+                  and beside it "மிக அவசரம்" broke onto two lines on every desk
+                  card. An arrow is one character, and a thumb sees it too. */}
               <span className="flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-[0.04em]">
                 <span style={{ color: tone }}>
                   <span aria-hidden="true">{glyph}</span> {t.priority[a.priority]}
                 </span>
-                <span className="normal-case tracking-normal opacity-0 transition-opacity group-hover:opacity-100" style={{ color: 'var(--brand)' }}>
-                  {t.openList}
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 text-[13px] leading-none opacity-70 transition-opacity group-hover:opacity-100"
+                  style={{ color: 'var(--brand)' }}
+                >
+                  →
                 </span>
               </span>
               <span className="flex items-baseline gap-2">

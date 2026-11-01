@@ -73,7 +73,8 @@ export function StatusStamp({
         border: `1px ${provisional ? 'dashed' : 'solid'} color-mix(in srgb, ${color} 45%, transparent)`,
         borderRadius: 'var(--r-1)',
       }}
-      title={spec.meaning}
+      // No hover text. The family's `meaning` is a design note for whoever
+      // builds a screen, in English; the reader already has the word.
     >
       {/* The proportional rail. A 62%-paid invoice shows a 62% rail. */}
       <span aria-hidden="true" className="absolute left-0 top-0 bottom-0" style={{ width: railWidth }}>

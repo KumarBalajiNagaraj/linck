@@ -18,12 +18,10 @@ export const dashboardWords = words({
     sinceApril: 'Since 1 April',
 
     /** Hover on each as-of dot: where the figure comes from, in plain words. */
+    // Where the page's figures come from, on hover over its one "Updated"
+    // stamp. The tiles share the header's time and do not repeat it.
     source: {
       daily: 'Daily totals',
-      bank: 'Bank',
-      invoices: 'Invoices',
-      payments: 'Payments added',
-      vehicles: 'Vehicle status',
     },
 
     tiles: {
@@ -38,7 +36,6 @@ export const dashboardWords = words({
     },
 
     last14: 'Last 14 days',
-    months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
 
     sales: {
       title: 'Sales',
@@ -196,16 +193,12 @@ export const dashboardWords = words({
 
     source: {
       daily: 'தினசரி கணக்கு',
-      bank: 'வங்கி',
-      invoices: 'இன்வாய்ஸ்கள்',
-      payments: 'சேர்த்த வரவுகள்',
-      vehicles: 'வண்டி நிலை',
     },
 
     tiles: {
       cash: 'வங்கியில் உள்ள பணம்',
       cashUp: (amount) => `கடந்த வாரத்தை விட ↑ ${amount}`,
-      due: 'வர வேண்டிய பணம்',
+      due: 'பாக்கி',
       overdue: (n, amount) => `${n} இன்வாய்ஸ் தாமதம் · ${amount}`,
       toCheck: (n) => `${n} சரிபார்க்க வேண்டும்`,
       vehicles: 'ஓடும் நிலையில் வண்டிகள்',
@@ -213,7 +206,6 @@ export const dashboardWords = words({
     },
 
     last14: 'கடந்த 14 நாள்',
-    months: ['ஜன.', 'பிப்.', 'மார்ச்', 'ஏப்.', 'மே', 'ஜூன்', 'ஜூலை', 'ஆக.', 'செப்.', 'அக்.', 'நவ.', 'டிச.'],
 
     sales: {
       title: 'விற்பனை',
@@ -248,7 +240,7 @@ export const dashboardWords = words({
 
     due: {
       caption: 'தாமத நாட்கள் வாரியாக',
-      title: 'வர வேண்டிய பணம்',
+      title: 'பாக்கி',
       notLate: 'தாமதம் இல்லை',
       bucket: (range) => `${range} நாள்`,
       summary: (total, late) => `மொத்தம் ${total} வர வேண்டும். ${late} தாமதம்.`,
@@ -320,8 +312,8 @@ export const dashboardWords = words({
     invoiceSheet: {
       dated: (date) => `தேதி ${date}`,
       amount: 'தொகை',
-      withoutGst: 'GST இல்லாமல்',
-      gst: 'GST 5%',
+      withoutGst: 'ஜிஎஸ்டி இல்லாமல்',
+      gst: 'ஜிஎஸ்டி 5%',
       total: 'மொத்தம்',
       due: 'பாக்கி',
       payment: 'பணம் வரவு',
@@ -333,7 +325,7 @@ export const dashboardWords = words({
       partPaid: (checked, due, daysLate) =>
         `${checked} சரிபார்த்தது, பாக்கி ${due}${daysLate > 0 ? `, ${daysLate} நாள் தாமதம்` : ''}.`,
       nothingYet: 'இன்னும் பணம் வரவில்லை.',
-      gstPapers: 'GST ஆவணங்கள்',
+      gstPapers: 'ஜிஎஸ்டி ஆவணங்கள்',
       eInvoice: 'இ-இன்வாய்ஸ் எண்',
       ewb: 'இ-வே பில்கள்',
       loads: (n) => `லோடுகள் (${n})`,
@@ -355,7 +347,7 @@ export const dashboardWords = words({
       sent: 'அனுப்பியது',
       now: 'இப்போது',
       summary: (start, made, sent) => `தொடக்கம் ${start}, உற்பத்தி ${made}, அனுப்பியது ${sent}.`,
-      lastCount: 'கடைசி அளவீடு',
+      lastCount: 'கடைசி அளவு',
       countedOn: 'அளந்த தேதி',
       gap: (units, short) => `கடைசி அளவீட்டை விட ${units} யூனிட் ${short ? 'குறைவு' : 'அதிகம்'}. மீண்டும் அளவிடுங்கள்.`,
       matches: 'கடைசி அளவீட்டுடன் சரியாக உள்ளது.',

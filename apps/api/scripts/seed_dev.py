@@ -1212,6 +1212,7 @@ def print_summary(reports: list[TenantReport], rls_ok: bool, rls_detail: str) ->
         print("    GRANT USAGE ON SCHEMA core TO linck_app;")
         print("    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA core TO linck_app;")
         print("    REVOKE UPDATE, DELETE ON core.audit_logs FROM linck_app;")
+        print("    REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON core.permissions FROM linck_app;")
 
 
 # ---------------------------------------------------------------------------

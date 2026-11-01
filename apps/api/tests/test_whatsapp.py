@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from conftest import Tenant
+from conftest import TOO_BIG, Feed, Tenant
 from sqlalchemy import select
 
 from app.api import whatsapp as intake
@@ -230,6 +230,50 @@ async def test_the_webhook_route_refuses_unsigned_posts_and_stores_signed_ones(
         )
         assert retried.json() == {"received": 1, "stored": 0}
     assert fetched == [wamid]
+
+
+async def test_the_webhook_has_a_cap_of_its_own_and_still_checks_the_raw_body(configured: None) -> None:
+    """Meta's deliveries are not a screen's JSON. One over the cap every other
+    route has is taken, up to the most Meta says a delivery can be, and its
+    signature is still checked over the bytes as they came. Past its own cap a
+    body is refused before any signature is computed over it: at once if it
+    says its size, at the cap if it does not."""
+    from app.core.limits import WHATSAPP_WEBHOOK_MAX_BYTES
+    from app.main import app
+
+    words = {
+        "from": "919578246168",
+        "id": f"wamid.{uuid.uuid4().hex}",
+        "timestamp": "1786332180",
+        "type": "text",
+        "text": {"body": "432 ltr"},
+    }
+    body = json.dumps({**payload(words), "padding": "x" * get_settings().max_body_bytes}).encode()
+    assert get_settings().max_body_bytes < len(body) < WHATSAPP_WEBHOOK_MAX_BYTES
+    # Unsigned, so a body that got through would be refused with a 401, not a 413.
+    too_big = b"x" * (WHATSAPP_WEBHOOK_MAX_BYTES + 1)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://api") as http:
+        tampered = body.replace(b"432 ltr", b"999 ltr")
+        forged = await http.post(
+            "/webhooks/whatsapp", content=tampered, headers={"X-Hub-Signature-256": signed(body)}
+        )
+        assert forged.status_code == 401
+        ok = await http.post(
+            "/webhooks/whatsapp", content=Feed(body), headers={"X-Hub-Signature-256": signed(body)}
+        )
+        assert ok.status_code == 200 and ok.json() == {"received": 1, "stored": 1}
+
+        declared = Feed(too_big)
+        r = await http.post(
+            "/webhooks/whatsapp", content=declared, headers={"Content-Length": str(len(too_big))}
+        )
+        assert r.status_code == 413 and r.json() == TOO_BIG
+        assert declared.taken == 0
+        undeclared = Feed(too_big * 2)
+        r = await http.post("/webhooks/whatsapp", content=undeclared)
+        assert r.status_code == 413 and r.json() == TOO_BIG
+        assert WHATSAPP_WEBHOOK_MAX_BYTES < undeclared.taken <= WHATSAPP_WEBHOOK_MAX_BYTES + undeclared.chunk
 
 
 async def test_the_subscription_handshake(monkeypatch: pytest.MonkeyPatch) -> None:

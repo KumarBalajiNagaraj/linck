@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     file_storage_dir: str = "var/files"
     file_max_bytes: int = 10 * 1024 * 1024
 
+    # The largest request body any route takes but the bill upload and Meta's
+    # webhook, which have caps of their own (app/core/limits.py). The screens
+    # send small JSON; the largest, a WhatsApp import at its 500-claim limit,
+    # comes to about 0.9 MB with every claim's capture record.
+    max_body_bytes: int = 1024 * 1024
+
     # Industry news (LIN-10). Headlines come from Google News RSS, which is
     # free and needs no key: one search per query below (LINCK_NEWS_QUERIES,
     # as a JSON list). The short summaries are written by any OpenAI-compatible

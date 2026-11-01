@@ -28,6 +28,7 @@ from app.api.whatsapp import router as whatsapp_router
 from app.api.whatsapp import webhook_router as whatsapp_webhook_router
 from app.api.whatsapp_imports import router as whatsapp_imports_router
 from app.core.db import check_rls_posture, engine
+from app.core.limits import BodySizeLimit
 from app.core.settings import get_settings
 from app.core.storage import UploadSizeLimit
 
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     # inside request_id_middleware below, whose receive runs in a task group
     # that would wrap the refusal into a generic 400.
     app.add_middleware(UploadSizeLimit, paths=("/expenses/attachments",))
+    app.add_middleware(BodySizeLimit)  # Every route's body, the same way and for the same reason.
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next) -> Response:  # type: ignore[no-untyped-def]

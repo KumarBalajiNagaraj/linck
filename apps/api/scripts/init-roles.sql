@@ -82,3 +82,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE linck_migrator IN SCHEMA core
 -- schema, so revoking UPDATE/DELETE here would strip them from all tables and
 -- silently break every write path in the product. The revoke is targeted at
 -- core.audit_logs in the migration that creates it, where it can name one table.
+-- The same goes for core.permissions, which the app may only read: migration
+-- 0021 revokes the writes these defaults give it there.

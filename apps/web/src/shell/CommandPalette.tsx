@@ -7,21 +7,22 @@ import {
   INDENTS,
   INVOICES,
   INVOICE_STATUS_FAMILY,
-  INVOICE_STATUS_LABEL,
   NOW,
   SITES,
   TRIPS,
   TRIP_STATUS_FAMILY,
-  TRIP_STATUS_LABEL,
   VEHICLES,
   VEHICLE_STATUS_FAMILY,
-  VEHICLE_STATUS_LABEL,
   vehiclesForSite,
 } from '@linck/mock';
 import { cn, EmptyState, StatusStamp } from '@linck/ui';
 import type { Persona } from '../auth/personas.js';
-import { WORKSPACES, type ModuleKey } from './nav-manifest.js';
+import { useLang, type Lang } from '../i18n/lang.js';
+import { statusWords } from '../i18n/statusWords.js';
+import { useWords, wordsNow } from '../i18n/words.js';
+import { navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
+import { shellWords } from './words.js';
 
 /**
  * THE ANTI-MEGA-MENU.
@@ -80,8 +81,13 @@ interface Entry {
 }
 
 /** Strips everything a human might or might not type: spaces, slashes, dashes. */
+/**
+ * Letters and digits of any script, lower-cased, everything else dropped — so
+ * "TN 38 AB" finds TN38AB and "டீசல்" finds the diesel page. Tamil vowel signs
+ * are combining marks (\p{M}); dropping them would cut every word in half.
+ */
 function norm(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }
 
 function field(text: string, weight: number): Field {
@@ -126,8 +132,10 @@ function score(entry: Entry, tokens: string[]): number | null {
 
 /* ------------------------------------------------------------ entry sources */
 
-function useEntries(persona: Persona, siteScope: string | null, enabledModules: string[]): Entry[] {
+function useEntries(persona: Persona, siteScope: string | null, enabledModules: string[], lang: Lang): Entry[] {
   return useMemo(() => {
+    const status = wordsNow(statusWords, lang);
+    const t = wordsNow(shellWords, lang).palette;
     const moduleOn = (m: ModuleKey) => enabledModules.includes(m);
     const allow = (permissions: string[]) => permissions.every((p) => can(persona.grants, p, { siteId: siteScope }));
     const siteCode = (id: string) => SITES.find((s) => s.id === id)?.code ?? '–';
@@ -142,12 +150,13 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           id: `nav:${item.key}`,
           kind: 'navigate',
           tag: 'screen',
-          title: item.label,
+          title: navLabel(item, lang),
           mono: false,
-          subtitle: ws.label,
+          subtitle: navLabel(ws, lang),
           status: null,
           route: item.route,
-          fields: [field(item.label, W_TITLE), field(ws.label, W_CONTEXT), field('screen', W_TAG)],
+          // Both languages are searchable whichever one is showing.
+          fields: [field(item.label, W_TITLE), field(item.ta, W_TITLE), field(ws.label, W_CONTEXT), field(ws.ta, W_CONTEXT), field('screen', W_TAG)],
         });
       }
     }
@@ -164,7 +173,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           subtitle: `${v.model} · ${siteCode(v.siteId)}`,
           status: {
             family: VEHICLE_STATUS_FAMILY[v.status],
-            label: VEHICLE_STATUS_LABEL[v.status],
+            label: status.vehicle[v.status],
             // Severity is an integer beside the word, never a darker shade —
             // and for a stopped vehicle the integer people ask for is hours.
             ...(v.status === 'breakdown' || v.status === 'under_service'
@@ -189,7 +198,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           subtitle: `${inv.customerName} · ${formatINRCompact(inv.total)}`,
           status: {
             family: INVOICE_STATUS_FAMILY[inv.status],
-            label: INVOICE_STATUS_LABEL[inv.status],
+            label: status.invoice[inv.status],
             ...(inv.daysOverdue > 0 ? { severity: `+${inv.daysOverdue}d` } : {}),
           },
           route: '/sales/invoices',
@@ -207,7 +216,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           mono: false,
           // The count is the reason anyone looks a customer up, so it is on the
           // row rather than one click further in.
-          subtitle: open.length > 0 ? `${c.site} · ${open.length} open ${open.length === 1 ? 'invoice' : 'invoices'}` : c.site,
+          subtitle: open.length > 0 ? `${c.site} · ${t.openInvoices(open.length)}` : c.site,
           status: null,
           route: '/sales/invoices',
           fields: [field(c.name, W_TITLE), field(c.site, W_CONTEXT), field('customer party', W_TAG)],
@@ -231,7 +240,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           subtitle: `${customerName} · ${t.productCode}`,
           status: {
             family: TRIP_STATUS_FAMILY[t.status],
-            label: TRIP_STATUS_LABEL[t.status],
+            label: status.trip[t.status],
           },
           route: '/sales/dispatch',
           fields: [field(t.tripNumber, W_IDENTIFIER), field(customerName, W_NAME), field('trip load', W_TAG)],
@@ -252,7 +261,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           subtitle: `${ind.itemName} · ${ind.quantity} ${ind.uom}`,
           status: {
             family: ind.urgency === 'breakdown' && ind.status === 'submitted' ? 'critical' : INDENT_STAGE_FAMILY[ind.status],
-            label: INDENT_STAGE_LABEL[ind.status],
+            label: status.indent[ind.status],
           },
           route: '/stores/indents',
           fields: [field(ind.number, W_IDENTIFIER), field(ind.itemName, W_NAME), field(ind.itemCode, W_NAME), field('indent part', W_TAG)],
@@ -272,17 +281,17 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
         id: a.id,
         kind: 'action',
         tag: 'action',
-        title: a.title,
+        title: t.actions[a.id.slice(4)]?.[0] ?? a.title,
         mono: false,
-        subtitle: a.subtitle,
+        subtitle: t.actions[a.id.slice(4)]?.[1] ?? a.subtitle,
         status: null,
         route: a.route,
-        fields: [field(a.title, W_TITLE), field(a.keywords, W_CONTEXT), field('action new', W_TAG)],
+        fields: [field(a.title, W_TITLE), field(t.actions[a.id.slice(4)]?.[0] ?? '', W_TITLE), field(a.keywords, W_CONTEXT), field('action new', W_TAG)],
       });
     }
 
     return entries;
-  }, [persona, siteScope, enabledModules]);
+  }, [persona, siteScope, enabledModules, lang]);
 }
 
 const INDENT_STAGE_FAMILY: Record<'submitted' | 'approved' | 'issued' | 'rejected', StatusFamily> = {
@@ -292,12 +301,6 @@ const INDENT_STAGE_FAMILY: Record<'submitted' | 'approved' | 'issued' | 'rejecte
   rejected: 'dormant',
 };
 
-const INDENT_STAGE_LABEL: Record<'submitted' | 'approved' | 'issued' | 'rejected', string> = {
-  submitted: 'Awaiting approval',
-  approved: 'Approved',
-  issued: 'Issued',
-  rejected: 'Rejected',
-};
 
 const ACTIONS: ReadonlyArray<{
   id: string;
@@ -349,12 +352,6 @@ interface Group {
 
 const MAX_PER_GROUP = 6;
 
-const GROUP_CAPTION: Record<EntryKind, string> = {
-  navigate: 'Screens you can open',
-  record: 'Records that match',
-  action: 'Things you can start',
-};
-
 const KIND_ORDER: EntryKind[] = ['navigate', 'record', 'action'];
 
 /* --------------------------------------------------------------- the panel */
@@ -362,7 +359,10 @@ const KIND_ORDER: EntryKind[] = ['navigate', 'record', 'action'];
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { persona, siteScope, enabledModules } = useApp();
   const navigate = useNavigate();
-  const entries = useEntries(persona, siteScope, enabledModules);
+  const lang = useLang((s) => s.lang);
+  const shell = useWords(shellWords);
+  const t = shell.palette;
+  const entries = useEntries(persona, siteScope, enabledModules, lang);
 
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
@@ -389,13 +389,13 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       const doable = entries.filter((e) => e.kind === 'action' && !recentIds.has(e.id));
       const out: Group[] = [];
       if (recentEntries.length > 0) {
-        out.push({ key: 'recent', caption: 'Where you were last', entries: recentEntries, more: 0 });
+        out.push({ key: 'recent', caption: t.groups.recent, entries: recentEntries, more: 0 });
       }
       if (screens.length > 0) {
-        out.push({ key: 'likely', caption: 'Where this role usually starts', entries: screens, more: 0 });
+        out.push({ key: 'likely', caption: t.groups.likely, entries: screens, more: 0 });
       }
       if (doable.length > 0) {
-        out.push({ key: 'doable', caption: 'Things you can start', entries: doable, more: 0 });
+        out.push({ key: 'doable', caption: t.groups.action, entries: doable, more: 0 });
       }
       return out;
     }
@@ -410,7 +410,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       if (items.length === 0) continue;
       out.push({
         key: kind,
-        caption: GROUP_CAPTION[kind],
+        caption: t.groups[kind],
         entries: items.slice(0, MAX_PER_GROUP).map((r) => r.entry),
         more: Math.max(0, items.length - MAX_PER_GROUP),
       });
@@ -422,7 +422,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       return first ? (score(first, tokens) ?? 0) : 0;
     };
     return out.sort((a, b) => bestOf(b) - bestOf(a));
-  }, [entries, tokens, recent]);
+  }, [entries, tokens, recent, t]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.entries), [groups]);
 
@@ -496,7 +496,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Search or jump to"
+        aria-label={shell.search}
         className="fixed left-1/2 top-[12vh] z-[71] flex max-h-[70vh] flex-col overflow-hidden"
         style={{
           width: 'min(620px, calc(100vw - 32px))',
@@ -520,7 +520,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             aria-expanded="true"
             aria-controls="linck-palette-results"
             aria-autocomplete="list"
-            placeholder="Registration, invoice number, customer, or a screen"
+            placeholder={t.placeholder}
             className="h-full flex-1 bg-transparent text-[14px] outline-none placeholder:text-[color:var(--text-tertiary)]"
             style={{ color: 'var(--text-primary)' }}
           />
@@ -529,13 +529,9 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           </span>
         </div>
 
-        <div ref={listRef} id="linck-palette-results" role="listbox" aria-label="Results" className="min-h-0 flex-1 overflow-y-auto py-1">
+        <div ref={listRef} id="linck-palette-results" role="listbox" aria-label={t.results} className="min-h-0 flex-1 overflow-y-auto py-1">
           {flat.length === 0 ? (
-            <EmptyState
-              fact="Nothing here matches that."
-              because="Registrations match with or without spaces, and invoices and trips match on their number. Screens you cannot open are never listed."
-              action={{ label: 'Clear the query', onClick: () => setQuery('') }}
-            />
+            <EmptyState fact={t.nothing} action={{ label: t.clear, onClick: () => setQuery('') }} />
           ) : (
             groups.map((group) => (
               <div key={group.key}>
@@ -559,7 +555,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                       style={{ background: selected ? 'var(--surface-selected)' : 'transparent' }}
                     >
                       <span className="font-id w-[54px] shrink-0 text-[10px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
-                        {entry.tag}
+                        {t.tags[entry.tag] ?? entry.tag}
                       </span>
                       <span className="flex min-w-0 flex-1 items-baseline gap-2">
                         <span className={cn('truncate', entry.mono && 'font-id')} style={{ color: 'var(--text-primary)' }}>
@@ -581,7 +577,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 })}
                 {group.more > 0 ? (
                   <p className="px-4 pb-1 pt-0.5 font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                    {group.more} more match — keep typing to narrow it.
+                    {t.more(group.more)}
                   </p>
                 ) : null}
               </div>
@@ -594,12 +590,12 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
         >
           <span>
-            <span className="font-id">↑↓</span> move
+            <span className="font-id">↑↓</span> {t.move}
           </span>
           <span>
-            <span className="font-id">↵</span> open
+            <span className="font-id">↵</span> {t.open}
           </span>
-          <span className="ml-auto num tabular-nums">{flat.length === 0 ? 'no matches' : `${flat.length} shown`}</span>
+          <span className="ml-auto num tabular-nums">{t.shown(flat.length)}</span>
         </div>
       </div>
     </>

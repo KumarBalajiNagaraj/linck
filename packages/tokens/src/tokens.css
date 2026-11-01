@@ -203,7 +203,7 @@
    Slashed zero because a clerk has to read TN38 AL 1I04 off a paper slip.
    Money is NEVER mono. */
 .font-id {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: 'IBM Plex Mono', 'Noto Sans Tamil Variable', ui-monospace, monospace;
   font-variant-numeric: slashed-zero;
   letter-spacing: 0.01em;
 }

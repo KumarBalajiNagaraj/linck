@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useUiWords } from '../lib/words.js';
 import { Button } from './Chrome.js';
 
 /**
@@ -109,7 +110,7 @@ export function ConfirmModal({
   onConfirm,
   title,
   consequence,
-  confirmLabel = 'Confirm',
+  confirmLabel,
   confirmPhrase,
   destructive,
 }: {
@@ -122,6 +123,7 @@ export function ConfirmModal({
   confirmPhrase?: string;
   destructive?: boolean;
 }) {
+  const words = useUiWords();
   const [typed, setTyped] = useState('');
 
   useEffect(() => {
@@ -137,7 +139,7 @@ export function ConfirmModal({
       title={title}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{words.cancel}</Button>
           <Button
             variant={destructive ? 'destructive' : 'primary'}
             disabled={!armed}
@@ -146,7 +148,7 @@ export function ConfirmModal({
               onClose();
             }}
           >
-            {confirmLabel}
+            {confirmLabel ?? words.confirm}
           </Button>
         </>
       }
@@ -157,7 +159,7 @@ export function ConfirmModal({
       {confirmPhrase ? (
         <label className="mt-4 block">
           <span className="block text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-            Type <span className="font-id" style={{ color: 'var(--text-primary)' }}>{confirmPhrase}</span> to confirm
+            {words.typeToConfirm[0]} <span className="font-id" style={{ color: 'var(--text-primary)' }}>{confirmPhrase}</span> {words.typeToConfirm[1]}
           </span>
           <input
             value={typed}

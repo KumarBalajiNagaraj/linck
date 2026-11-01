@@ -1,4 +1,6 @@
 export { cn } from './lib/cn.js';
+export { ENGLISH_UI_WORDS, UiWordsProvider, useUiWords } from './lib/words.js';
+export type { UiWords } from './lib/words.js';
 export { useMinWidth, useIsPhone, useIsTouch, BREAKPOINTS } from './lib/useBreakpoint.js';
 export type { Breakpoint } from './lib/useBreakpoint.js';
 export { Rail } from './composites/Rail.js';

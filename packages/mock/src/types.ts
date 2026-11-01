@@ -355,6 +355,8 @@ export interface Alert {
   detail: string;
   at: string;
   route: string;
+  /** The same alert in Tamil. At cutover the server words alerts by code. */
+  ta?: { title: string; detail: string };
 }
 
 /**

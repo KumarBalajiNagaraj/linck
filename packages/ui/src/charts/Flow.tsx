@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useUiWords } from '../lib/words.js';
 import { ChartFrame } from './core.js';
 
 export interface FlowOutput {
@@ -27,7 +28,7 @@ export function YieldFlow({
   inputLabel,
   inputValue,
   outputs,
-  lossLabel = 'Unaccounted',
+  lossLabel,
   summary,
   height = 260,
   format = (v) => `${Math.round(v * 10) / 10}`,
@@ -42,12 +43,14 @@ export function YieldFlow({
   format?: (v: number) => string;
   unit?: string;
 }) {
+  const words = useUiWords();
+  const lossName = lossLabel ?? words.unaccounted;
   const [hover, setHover] = useState<string | null>(null);
 
   const outTotal = outputs.reduce((s, o) => s + o.value, 0);
   const loss = Math.max(0, inputValue - outTotal);
   const ordered = [...outputs].sort((a, b) => b.value - a.value);
-  const lanes = loss > 0.0001 ? [...ordered, { label: lossLabel, value: loss }] : ordered;
+  const lanes = loss > 0.0001 ? [...ordered, { label: lossName, value: loss }] : ordered;
 
   return (
     <ChartFrame summary={summary} height={height} padLeft={4} padRight={4} padTop={6} padBottom={6}>
@@ -85,7 +88,7 @@ export function YieldFlow({
               const y = cursor;
               cursor += h + gap;
 
-              const isLoss = lane.label === lossLabel;
+              const isLoss = lane.label === lossName;
               const fill = isLoss ? 'var(--status-attention)' : `var(--chart-${Math.min(5, i + 1)})`;
               const dim = hover !== null && hover !== lane.label;
               const pct = (lane.value / inputValue) * 100;

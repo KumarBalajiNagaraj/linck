@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { StatusFamily } from '@linck/tokens';
 import { cn } from '../lib/cn.js';
+import { useUiWords } from '../lib/words.js';
 import { useIsPhone } from '../lib/useBreakpoint.js';
 import { StatusStamp } from './StatusStamp.js';
 
@@ -87,6 +88,7 @@ export function SideSheet({
   footer,
   children,
 }: SideSheetProps) {
+  const words = useUiWords();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusTo = useRef<HTMLElement | null>(null);
   const id = useRef<symbol>(Symbol('side-sheet'));
@@ -220,7 +222,7 @@ export function SideSheet({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={words.close}
             className="ml-1 shrink-0 px-1 text-[16px] leading-none"
             style={{ color: 'var(--text-tertiary)' }}
           >

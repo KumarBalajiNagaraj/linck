@@ -42,7 +42,9 @@ export const MODULES: readonly ModuleKey[] = [
 
 export interface NavItem {
   key: string;
+  /** Short, plain words (docs/WRITING.md), in English and in Tamil. */
   label: string;
+  ta: string;
   route: string;
   permission: string;
   /** Shown against the item so the rail communicates work-to-do without opening anything. */
@@ -52,6 +54,7 @@ export interface NavItem {
 export interface Workspace {
   key: string;
   label: string;
+  ta: string;
   /** A single glyph. Labels appear on hover in a popover; no per-module colour theme. */
   glyph: string;
   /**
@@ -67,90 +70,103 @@ export const WORKSPACES: Workspace[] = [
   {
     key: 'overview',
     label: 'Overview',
+    ta: 'மேலோட்டம்',
     glyph: '◱',
     module: null,
     items: [
-      { key: 'exec', label: 'Executive dashboard', route: '/overview', permission: 'executive.dashboard.read' },
-      { key: 'expense-approvals', label: 'Expense approvals', route: '/overview/expenses', permission: 'finance.expense.approve', badge: 'awaiting_director' },
+      { key: 'exec', label: 'Dashboard', ta: 'டாஷ்போர்டு', route: '/overview', permission: 'executive.dashboard.read' },
+      { key: 'expense-approvals', label: 'Approve bills', ta: 'பில் அனுமதி', route: '/overview/expenses', permission: 'finance.expense.approve', badge: 'awaiting_director' },
     ],
   },
   {
     key: 'fleet',
     label: 'Fleet',
+    ta: 'வண்டிகள்',
     glyph: '▤',
     module: 'fleet',
     items: [
-      { key: 'board', label: 'Command board', route: '/fleet/board', permission: 'fleet.board.read' },
-      { key: 'vehicles', label: 'Vehicle status', route: '/fleet/vehicles', permission: 'fleet.vehicle.read', badge: 'breakdowns' },
-      { key: 'drivers', label: 'Driver list', route: '/fleet/drivers', permission: 'fleet.driver.read' },
-      { key: 'breakdowns', label: 'Breakdown register', route: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
-      { key: 'expenses', label: 'Expenses', route: '/fleet/expenses', permission: 'fleet.expense.read', badge: 'pending_expenses' },
-      { key: 'fuel', label: 'Diesel & DEF entry', route: '/fleet/fuel/new', permission: 'fleet.fuel.create' },
-      { key: 'whatsapp', label: 'Diesel slips from WhatsApp', route: '/fleet/whatsapp', permission: 'fleet.expense.upload' },
-      { key: 'diesel-summary', label: 'Diesel summary', route: '/fleet/diesel-summary', permission: 'fleet.expense.read' },
-      { key: 'docs', label: 'Documents & expiry', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
+      { key: 'board', label: 'Home', ta: 'முகப்பு', route: '/fleet/board', permission: 'fleet.board.read' },
+      { key: 'vehicles', label: 'Vehicles', ta: 'வண்டிகள்', route: '/fleet/vehicles', permission: 'fleet.vehicle.read', badge: 'breakdowns' },
+      { key: 'drivers', label: 'Drivers', ta: 'டிரைவர்கள்', route: '/fleet/drivers', permission: 'fleet.driver.read' },
+      { key: 'breakdowns', label: 'Breakdowns', ta: 'பழுதுகள்', route: '/fleet/breakdowns', permission: 'fleet.breakdown.read' },
+      { key: 'expenses', label: 'Expenses', ta: 'செலவுகள்', route: '/fleet/expenses', permission: 'fleet.expense.read', badge: 'pending_expenses' },
+      { key: 'fuel', label: 'Add diesel', ta: 'டீசல் சேர்', route: '/fleet/fuel/new', permission: 'fleet.fuel.create' },
+      { key: 'whatsapp', label: 'WhatsApp bills', ta: 'வாட்ஸ்அப் பில்கள்', route: '/fleet/whatsapp', permission: 'fleet.expense.upload' },
+      { key: 'diesel-summary', label: 'Diesel report', ta: 'டீசல் அறிக்கை', route: '/fleet/diesel-summary', permission: 'fleet.expense.read' },
+      { key: 'docs', label: 'Documents', ta: 'ஆவணங்கள்', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
       // Inter-state movement is material here, so the e-way bill console is a
       // first-class destination and not a tab hidden inside dispatch.
-      { key: 'ewb', label: 'e-Way bills', route: '/compliance/ewb', permission: 'compliance.ewb.read' },
+      { key: 'ewb', label: 'e-Way bills', ta: 'இ-வே பில்கள்', route: '/compliance/ewb', permission: 'compliance.ewb.read' },
     ],
   },
   {
     key: 'production',
     label: 'Production',
+    ta: 'உற்பத்தி',
     glyph: '◧',
     module: 'production',
     items: [
-      { key: 'stock', label: 'Live stock', route: '/production/stock', permission: 'production.stock.read' },
-      { key: 'run', label: 'Shift production entry', route: '/production/runs/new', permission: 'production.run.create' },
+      { key: 'stock', label: 'Stock', ta: 'இருப்பு', route: '/production/stock', permission: 'production.stock.read' },
+      { key: 'run', label: 'Add shift', ta: 'ஷிப்ட் சேர்', route: '/production/runs/new', permission: 'production.run.create' },
     ],
   },
   {
     key: 'sales',
     label: 'Sales',
+    ta: 'விற்பனை',
     glyph: '◨',
     module: 'sales',
     items: [
-      { key: 'sales-board', label: 'Command board', route: '/sales/board', permission: 'sales.board.read' },
-      { key: 'customers', label: 'Customers', route: '/sales/customers', permission: 'sales.customer.read' },
-      { key: 'orders', label: 'Purchase orders', route: '/sales/orders', permission: 'sales.order.read' },
-      { key: 'dispatch', label: 'Dispatch board', route: '/sales/dispatch', permission: 'sales.dispatch.read' },
-      { key: 'invoices', label: 'Invoices', route: '/sales/invoices', permission: 'sales.invoice.read' },
+      { key: 'sales-board', label: 'Home', ta: 'முகப்பு', route: '/sales/board', permission: 'sales.board.read' },
+      { key: 'customers', label: 'Customers', ta: 'வாடிக்கையாளர்கள்', route: '/sales/customers', permission: 'sales.customer.read' },
+      { key: 'orders', label: 'Orders', ta: 'ஆர்டர்கள்', route: '/sales/orders', permission: 'sales.order.read' },
+      { key: 'dispatch', label: 'Loads', ta: 'லோடுகள்', route: '/sales/dispatch', permission: 'sales.dispatch.read' },
+      { key: 'invoices', label: 'Invoices', ta: 'இன்வாய்ஸ்கள்', route: '/sales/invoices', permission: 'sales.invoice.read' },
     ],
   },
   {
     key: 'stores',
     label: 'Stores',
+    ta: 'ஸ்டோர்ஸ்',
     glyph: '▥',
     module: 'stores',
     items: [
-      { key: 'indents', label: 'Indent queue', route: '/stores/indents', permission: 'stores.indent.read', badge: 'open_indents' },
-      { key: 'store-expenses', label: 'Expenses', route: '/stores/expenses', permission: 'stores.expense.read' },
+      { key: 'indents', label: 'Material requests', ta: 'பொருள் கோரிக்கைகள்', route: '/stores/indents', permission: 'stores.indent.read', badge: 'open_indents' },
+      { key: 'store-expenses', label: 'Expenses', ta: 'செலவுகள்', route: '/stores/expenses', permission: 'stores.expense.read' },
     ],
   },
   {
     key: 'finance',
-    label: 'Finance',
+    label: 'Accounts',
+    ta: 'கணக்கு',
     glyph: '▧',
     module: 'finance',
     items: [
       {
         key: 'verify',
-        label: 'Payment verification',
+        label: 'Check payments',
+        ta: 'பணம் சரிபார்',
         route: '/finance/receipts/verification',
         permission: 'finance.receipt.read',
         badge: 'unverified_receipts',
       },
-      { key: 'expense-bills', label: 'Expense bills', route: '/finance/expenses', permission: 'finance.expense.read' },
+      { key: 'expense-bills', label: 'Expense bills', ta: 'செலவு பில்கள்', route: '/finance/expenses', permission: 'finance.expense.read' },
     ],
   },
   {
     key: 'ai',
-    label: 'Review queue',
+    label: 'Review',
+    ta: 'சரிபார்ப்பு',
     glyph: '◑',
     module: 'ai',
     items: [
-      { key: 'review', label: 'Extraction review', route: '/ai/review', permission: 'ai.extraction.review', badge: 'extraction_queue' },
-      { key: 'crosscheck', label: 'Delivery paper cross-check', route: '/ai/crosscheck', permission: 'ai.extraction.review' },
+      { key: 'review', label: 'Check readings', ta: 'படித்ததை சரிபார்', route: '/ai/review', permission: 'ai.extraction.review', badge: 'extraction_queue' },
+      { key: 'crosscheck', label: 'Check delivery papers', ta: 'டெலிவரி சலான் சரிபார்', route: '/ai/crosscheck', permission: 'ai.extraction.review' },
     ],
   },
 ];
+
+/** A nav item or workspace named in the person's language. */
+export function navLabel(entry: { label: string; ta: string }, lang: 'en' | 'ta'): string {
+  return lang === 'ta' ? entry.ta : entry.label;
+}

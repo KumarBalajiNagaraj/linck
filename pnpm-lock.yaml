@@ -23,6 +23,12 @@ importers:
       '@fontsource-variable/newsreader':
         specifier: ^5.2.5
         version: 5.3.0
+      '@fontsource-variable/noto-sans-tamil':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource-variable/noto-serif-tamil':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/ibm-plex-mono':
         specifier: ^5.2.5
         version: 5.3.0
@@ -387,6 +393,12 @@ packages:
 
   '@fontsource-variable/newsreader@5.3.0':
     resolution: {integrity: sha512-rrzYi43qMpbzwuFtf9OkWH8sxAPVPcQQQEwXpPtwaKYeJ8yVg5aLs5kawmo1f2Q1t1M38TLmEKCkGVDsYwgdFw==}
+
+  '@fontsource-variable/noto-sans-tamil@5.3.0':
+    resolution: {integrity: sha512-zyyajkRVJb7Uy6T2+ws2hR+0U7FnJqMfzakls3WgWNZ4ia0EFHLyFAHLZdUV5yiFzHufc701KOxktrwrI3J7FQ==}
+
+  '@fontsource-variable/noto-serif-tamil@5.3.0':
+    resolution: {integrity: sha512-zo7vizxKzSX8TB1ln2Oql1j2W2S+3W33G24fgYIyOB5vNkl30F0GrX5b/KHCAMjC5+wOq1i1vC7OjtN3uOOR7A==}
 
   '@fontsource/ibm-plex-mono@5.3.0':
     resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
@@ -1448,6 +1460,10 @@ snapshots:
   '@fontsource-variable/inter@5.3.0': {}
 
   '@fontsource-variable/newsreader@5.3.0': {}
+
+  '@fontsource-variable/noto-sans-tamil@5.3.0': {}
+
+  '@fontsource-variable/noto-serif-tamil@5.3.0': {}
 
   '@fontsource/ibm-plex-mono@5.3.0': {}
 

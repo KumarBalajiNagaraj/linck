@@ -63,7 +63,7 @@ describe('diesel bunk slip', () => {
   it('flags a total that litres × rate does not support', () => {
     const bad = captureExpenseBill(BUNK.replace('41,277.60', '44,277.60'));
     expect(bad.fields.amount?.confidence).toBe(1);
-    expect(bad.warnings[0]).toMatch(/Litres × rate/);
+    expect(bad.warnings[0]).toEqual({ code: 'litres-rate-mismatch', expected: 41277.6, stated: 44277.6 });
   });
   it('never scores a field high off a line the OCR doubted', () => {
     const doubted = captureExpenseBill(BUNK, [95, 95, 95, 95, 95, 95, 95, 95, 95, 40]);
@@ -91,7 +91,7 @@ describe('nothing to read', () => {
   it('leaves blanks blank and says so', () => {
     const c = captureExpenseBill('smudged paper');
     expect(c.fields.amount).toBeUndefined();
-    expect(c.warnings).toContain('No total could be read — key the amount from the paper.');
+    expect(c.warnings).toContainEqual({ code: 'no-total' });
   });
 });
 
@@ -99,7 +99,7 @@ describe('unreadable values', () => {
   it('says a labelled date could not be read instead of guessing one', () => {
     const c = captureExpenseBill(BUNK.replace('Date: 06/08/2026', 'Date: 07/68/2026'));
     expect(c.fields.billDate).toBeUndefined();
-    expect(c.warnings.some((w) => w.includes('The date is on the bill but could not be read') && w.includes('07/68/2026'))).toBe(true);
+    expect(c.warnings).toContainEqual({ code: 'unreadable', field: 'billDate', text: '07/68/2026' });
   });
 });
 

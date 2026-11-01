@@ -1,8 +1,10 @@
 import { expensesForSite, fleetAttention } from '@linck/mock';
 import { AsOfStamp, PageHeader } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { DestinationRow, UrgentActionsRow, type BoardDestination, type UrgentAction } from '../../shell/CommandBoard.js';
 import { useApp } from '../../shell/store.js';
 import { useExpenses } from '../expenses/expenseStore.js';
+import { boardWords, fleetWords } from './words.js';
 
 /**
  * The Fleet Manager's command board.
@@ -16,8 +18,13 @@ import { useExpenses } from '../expenses/expenseStore.js';
  * On-trip and ready vehicles are deliberately not counted here: they are the
  * healthy state, and a card for them would put good news in the row meant for
  * work.
+ *
+ * The labels are the nav rail's own words, so a card and the menu item it
+ * opens say the same thing.
  */
 export function FleetCommandBoard() {
+  const t = useWords(boardWords);
+  const f = useWords(fleetWords);
   const { siteScope } = useApp();
   const counts = fleetAttention(siteScope);
   // Bills move in-session (uploaded, validated), so this one count reads the
@@ -26,31 +33,33 @@ export function FleetCommandBoard() {
   const expensesAwaiting = expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length;
 
   const destinations: BoardDestination[] = [
-    { label: 'Vehicles', to: '/fleet/vehicles' },
-    { label: 'Driver List', to: '/fleet/drivers' },
-    { label: 'Delivery Order & Dispatch', to: '/sales/dispatch' },
-    { label: 'Breakdown Register', to: '/fleet/breakdowns' },
-    { label: 'Expenses Approval', to: '/fleet/expenses' },
-    { label: 'Maintenance Stores', to: '/stores/indents', view: 'all' },
-    { label: 'Vehicle Documents', to: '/compliance/documents' },
+    { label: t.go.vehicles, to: '/fleet/vehicles' },
+    { label: t.go.drivers, to: '/fleet/drivers' },
+    { label: t.go.loads, to: '/sales/dispatch' },
+    { label: t.go.breakdowns, to: '/fleet/breakdowns' },
+    { label: t.go.expenses, to: '/fleet/expenses' },
+    { label: t.go.requests, to: '/stores/indents', view: 'all' },
+    { label: t.go.documents, to: '/compliance/documents' },
   ];
 
   // In the brief's order. Priority and colour say what is urgent; the order
   // stays the one the fleet manager wrote down.
   const urgent: UrgentAction[] = [
     {
-      label: 'Vehicles — Breakdown',
+      label: t.cards.breakdown[0],
       count: counts.breakdown,
-      definition: 'Broken down and off the road right now',
+      definition: t.cards.breakdown[1],
       priority: 'highest',
       accent: 'critical',
       to: '/fleet/vehicles',
       view: 'breakdown',
     },
     {
-      label: 'Vehicles — Idle',
+      // Idle AND roadworthy: a tipper idle only because its permit lapsed is
+      // counted under documents expired instead.
+      label: t.cards.idle[0],
       count: counts.idle,
-      definition: 'Roadworthy but not assigned a load',
+      definition: t.cards.idle[1],
       priority: 'medium',
       // The brief asks for a neutral accent here: idle is worth a look, not an alarm.
       accent: 'neutral',
@@ -58,45 +67,49 @@ export function FleetCommandBoard() {
       view: 'idle',
     },
     {
-      label: 'Vehicles — Due for service',
+      // Run past their service interval in km, and still on the road.
+      label: t.cards.service[0],
       count: counts.serviceOverdue,
-      definition: 'Run past their service interval in km',
+      definition: t.cards.service[1],
       priority: 'high',
       accent: 'attention',
       to: '/fleet/vehicles',
       view: 'service_overdue',
     },
     {
-      label: 'Vehicles — Documents expired',
+      // Insurance, permit, fitness, road tax or PUC past its expiry date.
+      label: t.cards.docs[0],
       count: counts.docsExpired,
-      definition: 'Insurance, permit, fitness, road tax or PUC past its expiry date',
+      definition: t.cards.docs[1],
       priority: 'highest',
       accent: 'critical',
       to: '/fleet/vehicles',
       view: 'docs_expired',
     },
     {
-      label: 'Drivers Absent',
+      label: t.cards.drivers[0],
       count: counts.driversAbsent,
-      definition: 'Marked absent or on leave today',
+      definition: t.cards.drivers[1],
       priority: 'high',
       accent: 'attention',
       to: '/fleet/drivers',
       view: 'absent',
     },
     {
-      label: 'Expenses awaiting approval',
+      // Bills waiting on the fleet manager's check before they go to the director.
+      label: t.cards.bills[0],
       count: expensesAwaiting,
-      definition: 'Diesel, repair and other bills waiting on your sign-off',
+      definition: t.cards.bills[1],
       priority: 'high',
       accent: 'attention',
       to: '/fleet/expenses',
       view: 'submitted',
     },
     {
-      label: 'Open store requests',
+      // Requisitioned for the fleet and not yet issued or rejected.
+      label: t.cards.requests[0],
       count: counts.openStoreRequests,
-      definition: 'Spares, oil and tyres requisitioned for the fleet and not yet issued or rejected',
+      definition: t.cards.requests[1],
       priority: 'high',
       accent: 'attention',
       to: '/stores/indents',
@@ -104,16 +117,16 @@ export function FleetCommandBoard() {
     },
   ];
 
-
   return (
     <>
+      {/* The counts come from v_fleet_attention; the hover names it in plain words. */}
       <PageHeader
-        eyebrow="Fleet"
-        title="Command board"
-        meta={<AsOfStamp asOf="14:42" source="v_fleet_attention" freshness="live" />}
+        eyebrow={f.eyebrow}
+        title={t.title}
+        meta={<AsOfStamp asOf="14:42" source={f.from.board} freshness="live" />}
       />
-      <DestinationRow caption="Go to" destinations={destinations} />
-      <UrgentActionsRow caption="Needs you now" actions={urgent} />
+      <DestinationRow caption={t.open} destinations={destinations} />
+      <UrgentActionsRow caption={t.waiting} actions={urgent} />
       <div className="h-10" />
     </>
   );

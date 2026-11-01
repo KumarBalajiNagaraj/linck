@@ -1,41 +1,48 @@
-"""vehicle P&L: trips with their diesel, purchases, sales, costs and payments
+"""vehicle P&L: trip sheets with their trips, diesel, en-route expenses, purchases, sales and payments
 
-LIN-22. A tipper buys material from a vendor, delivers it to a customer, and the
-trip's profit is the sale less the material, the diesel, the batta and the
-costs on the road. These tables keep a trip and its lines, each in the schema
-docs/DATABASE.md names for it:
+LIN-22, as the owner's workbook ("Vehicle Trip Entry Form") lays it out. A
+trip sheet is one vehicle and its driver from a start date to an end date;
+its trips are the loads it carried, each bought from a vendor and delivered to
+a customer. Diesel, km readings, batta, en-route expenses and payments may sit
+on the sheet or on a trip. Each table is in the schema docs/DATABASE.md names
+for it:
 
-    master.items                     materials: name, HSN code, GST rate, unit
-    logistics.vehicle_duty_logs      one vehicle, one day: the cost container
-    logistics.trips                  a leg of that day, with its km
-    logistics.duty_fuel_links        a diesel bill or fuel entry posted to the day
-    logistics.trip_diesel            a trip's diesel: typed, or its part of a fill
-    logistics.trip_costs             batta, en-route and other costs
-    procurement.trip_purchases       material bought for the trip
-    procurement.trip_purchase_files  the vendor's invoice, photographed
-    sales.trip_sales                 material sold, with transport as its own line
-    finance.trip_payments            money in from customers, out to vendors, as reported
+    master.items                     the Material DB: name, HSN, unit, default GST rate
+    master.party_locations           where a vendor sells from, where a customer takes delivery
+    master.gst_rates                 the GST rates a line may be billed at
+    logistics.trip_sheets            one vehicle and driver, start date to end date
+    logistics.trips                  the loads it carried, numbered as each is added
+    logistics.diesel_lines           diesel on the sheet or a trip: typed, or a bill or fuel entry linked
+    logistics.enroute_expenses       toll, police and minor maintenance
+    procurement.trip_purchases       material bought for a trip
+    procurement.trip_purchase_files  the vendor's bill, photographed
+    sales.trip_sales                 material sold; transport inside the taxable price
+    sales.trip_closures              accounts' confirmation that a customer paid a trip in full
+    finance.trip_payments            money in from customers, out to vendors, on a trip or its sheet
 
 and changes two LIN-20 tables: master.parties takes vendors (a firm that only
 sells to us is served from no site of ours, so served_from_site_id is null for
-it, and still required of every customer), and core.files takes a vendor's
-invoice as well as an expense bill.
+it, and still required of every customer), and core.files takes a trip sheet's
+papers as well as an expense bill.
 
 Every new table is a tenant table like the rest: organization_id, RLS enabled
 AND forced with the tenant_isolation policy, UNIQUE (organization_id, id) under
-composite tenant foreign keys, and the audit trigger. Money is numeric(18,2),
-litres numeric(12,3), times timestamptz. No figure the rules derive (a line's
-value, GST, total, a trip's profit) is stored: app/domain/vehicle_pl.py works
-them out on every read, so a correction or a changed rule shows at once.
+composite tenant foreign keys, and the audit trigger. A line of a sheet or of
+one of its trips names the trip through the sheet (a three-column key), so it
+cannot name another sheet's trip. Money is numeric(18,2), litres
+numeric(12,3), km numeric(10,1), times timestamptz. No figure the rules derive
+(a line's cost, GST, total, a trip's share of its sheet's costs, a profit) is
+stored: app/domain/vehicle_pl.py works them out on every read.
 
 Three permission keys: fleet.trip_pl.read and fleet.trip_pl.write for whoever
-enters trips (each sees the P&L of the trips they may read), and
-finance.pl_report.read for the vehicle-wise and monthly reports and the
-money-due lists, which are the director's and accounts'.
+enters trip sheets (each sees the P&L of the sheets they may read), and
+finance.pl_report.read for the trip-wise, vehicle-wise and monthly reports and
+the money-due lists, which are the director's and accounts'. Closing a trip a
+customer paid in full is accounts' existing finance.receipt.verify.
 
 Downgrade refuses (foreign-key violation or a failed check) while any role
 holds one of the keys, any party is a vendor with no site, or any upload is a
-vendor's invoice: silently dropping a grant or a party is not a schema change.
+trip sheet's paper: silently dropping a grant or a party is not a schema change.
 
 Revision ID: 0030_vehicle_pl
 Revises: 0012_whatsapp_names
@@ -55,22 +62,21 @@ NEW_SCHEMAS = ("logistics", "procurement")
 
 # Parents before children; downgrade walks it backwards.
 TENANT_TABLES = (
+    "master.gst_rates",
     "master.items",
-    "logistics.vehicle_duty_logs",
+    "logistics.trip_sheets",
     "logistics.trips",
-    "logistics.duty_fuel_links",
-    "logistics.trip_diesel",
-    "logistics.trip_costs",
-    "procurement.trip_purchases",
-    "procurement.trip_purchase_files",
-    "sales.trip_sales",
+    "master.party_locations",
     "finance.trip_payments",
+    "logistics.diesel_lines",
+    "logistics.enroute_expenses",
+    "procurement.trip_purchases",
+    "sales.trip_closures",
+    "sales.trip_sales",
+    "procurement.trip_purchase_files",
 )
 
 KEYS = ("fleet.trip_pl.read", "fleet.trip_pl.write", "finance.pl_report.read")
-
-UNITS = "('unit', 'tonne', 'cft', 'cum', 'load')"
-HSN = "hsn_code ~ '^[0-9]{4,8}$'"
 
 
 def _if_app_role(statements: str) -> None:
@@ -86,82 +92,6 @@ def _if_app_role(statements: str) -> None:
         $$
         """
     )
-
-
-def _id_and_org() -> list[sa.Column]:
-    return [
-        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-        sa.Column("organization_id", sa.UUID(), nullable=False),
-    ]
-
-
-def _timestamps(updated: bool = True) -> list[sa.Column]:
-    columns = [
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
-    ]
-    if updated:
-        columns.append(
-            sa.Column(
-                "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
-            )
-        )
-    return columns
-
-
-def _tenant_keys(table: str) -> list[sa.Constraint]:
-    return [
-        sa.ForeignKeyConstraint(
-            ["organization_id"],
-            ["core.organizations.id"],
-            name=op.f(f"fk_{table}_organization_id"),
-            ondelete="RESTRICT",
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f(f"pk_{table}")),
-        sa.UniqueConstraint("organization_id", "id", name=op.f(f"uq_{table}_organization_id_id")),
-    ]
-
-
-def _tenant_fk(table: str, column: str, target: str) -> sa.ForeignKeyConstraint:
-    return sa.ForeignKeyConstraint(
-        ["organization_id", column],
-        [f"{target}.organization_id", f"{target}.id"],
-        name=op.f(f"fk_{table}_organization_id_{column}"),
-        ondelete="RESTRICT",
-    )
-
-
-def _check(table: str, name: str, sql: str) -> sa.CheckConstraint:
-    return sa.CheckConstraint(sql, name=op.f(f"ck_{table}_{name}"))
-
-
-def _org_index(schema: str, table: str) -> None:
-    op.create_index(
-        op.f(f"ix_{schema}_{table}_organization_id"), table, ["organization_id"], unique=False, schema=schema
-    )
-
-
-def _line_columns() -> list[sa.Column]:
-    """What a purchase and a sale line share: the material, as billed."""
-    return [
-        sa.Column("item_id", sa.UUID(), nullable=False),
-        sa.Column("hsn_code", sa.Text(), nullable=False),
-        sa.Column("unit", sa.Text(), nullable=False),
-        sa.Column("quantity", sa.Numeric(precision=12, scale=3), nullable=False),
-        sa.Column("rate", sa.Numeric(precision=18, scale=2), nullable=False),
-        sa.Column("gst_billed", sa.Boolean(), nullable=False),
-        sa.Column("gst_rate_pct", sa.Numeric(precision=5, scale=2), nullable=False),
-    ]
-
-
-def _line_checks(table: str) -> list[sa.CheckConstraint]:
-    return [
-        _check(table, "hsn_shape", HSN),
-        _check(table, "unit_known", f"unit in {UNITS}"),
-        _check(table, "gst_rate_range", "gst_rate_pct >= 0 AND gst_rate_pct <= 100"),
-        _check(table, "position_not_negative", "position >= 0"),
-        _check(table, "quantity_positive", "quantity > 0"),
-        _check(table, "rate_positive", "rate > 0"),
-    ]
 
 
 def upgrade() -> None:
@@ -182,7 +112,7 @@ def upgrade() -> None:
         )
 
     # ------------------------------------------------------------------
-    # LIN-20 tables: vendors in the party master, invoices among the uploads
+    # LIN-20 tables: vendors in the party master, trip papers among the uploads
     # ------------------------------------------------------------------
     op.alter_column("parties", "served_from_site_id", existing_type=sa.UUID(), nullable=True, schema="master")
     op.create_check_constraint(
@@ -195,73 +125,82 @@ def upgrade() -> None:
     op.create_check_constraint(
         op.f("ck_files_purpose_known"),
         "files",
-        "purpose in ('expense_bill', 'purchase_invoice')",
+        "purpose in ('expense_bill', 'trip_document')",
         schema="core",
     )
 
     # ------------------------------------------------------------------
-    # master.items
+    # The tables, in the order their keys need
     # ------------------------------------------------------------------
     op.create_table(
+        "gst_rates",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("rate_pct", sa.Numeric(precision=5, scale=2), nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint("rate_pct >= 0 AND rate_pct <= 100", name=op.f("ck_gst_rates_rate_range")),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_gst_rates_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_gst_rates")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_gst_rates_organization_id_id")),
+        sa.UniqueConstraint(
+            "organization_id", "rate_pct", name=op.f("uq_gst_rates_organization_id_rate_pct")
+        ),
+        schema="master",
+    )
+    op.create_index(
+        op.f("ix_master_gst_rates_organization_id"),
+        "gst_rates",
+        ["organization_id"],
+        unique=False,
+        schema="master",
+    )
+    op.create_table(
         "items",
-        *_id_and_org(),
-        sa.Column("code", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("code", sa.Text(), nullable=True),
         sa.Column("name", sa.Text(), nullable=False),
-        sa.Column("hsn_code", sa.Text(), nullable=False),
+        sa.Column("hsn_code", sa.Text(), nullable=True),
         sa.Column(
             "gst_rate_pct", sa.Numeric(precision=5, scale=2), server_default=sa.text("0"), nullable=False
         ),
         sa.Column("unit", sa.Text(), server_default=sa.text("'unit'"), nullable=False),
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
-        *_timestamps(),
-        _check("items", "code_shape", "code ~ '^[A-Z0-9_-]{1,32}$'"),
-        _check("items", "hsn_shape", HSN),
-        _check("items", "unit_known", f"unit in {UNITS}"),
-        _check("items", "gst_rate_range", "gst_rate_pct >= 0 AND gst_rate_pct <= 100"),
-        *_tenant_keys("items"),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint("code IS NULL OR code ~ '^[A-Z0-9_-]{1,32}$'", name=op.f("ck_items_code_shape")),
+        sa.CheckConstraint("hsn_code IS NULL OR hsn_code ~ '^[0-9]{4,8}$'", name=op.f("ck_items_hsn_shape")),
+        sa.CheckConstraint("char_length(name) BETWEEN 1 AND 120", name=op.f("ck_items_name_length")),
+        sa.CheckConstraint("char_length(unit) BETWEEN 1 AND 20", name=op.f("ck_items_unit_shape")),
+        sa.CheckConstraint("gst_rate_pct >= 0 AND gst_rate_pct <= 100", name=op.f("ck_items_gst_rate_range")),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_items_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_items")),
         sa.UniqueConstraint("organization_id", "code", name=op.f("uq_items_organization_id_code")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_items_organization_id_id")),
         schema="master",
     )
-    _org_index("master", "items")
-
-    # ------------------------------------------------------------------
-    # logistics.vehicle_duty_logs
-    # ------------------------------------------------------------------
-    op.create_table(
-        "vehicle_duty_logs",
-        *_id_and_org(),
-        sa.Column("vehicle_ref", sa.Text(), nullable=False),
-        sa.Column("duty_date", sa.Date(), nullable=False),
-        sa.Column("allocation_rule_version", sa.Text(), server_default=sa.text("'km-v1'"), nullable=False),
-        *_timestamps(),
-        *_tenant_keys("vehicle_duty_logs"),
-        sa.UniqueConstraint(
-            "organization_id",
-            "vehicle_ref",
-            "duty_date",
-            name=op.f("uq_vehicle_duty_logs_organization_id_vehicle_ref_duty_date"),
-        ),
-        sa.UniqueConstraint(
-            "organization_id",
-            "id",
-            "vehicle_ref",
-            "duty_date",
-            name=op.f("uq_vehicle_duty_logs_organization_id_id_vehicle_ref_duty_date"),
-        ),
-        schema="logistics",
+    op.create_index(
+        op.f("ix_master_items_organization_id"), "items", ["organization_id"], unique=False, schema="master"
     )
-    _org_index("logistics", "vehicle_duty_logs")
-
-    # ------------------------------------------------------------------
-    # logistics.trips
-    # ------------------------------------------------------------------
     op.create_table(
-        "trips",
-        *_id_and_org(),
+        "trip_sheets",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
         sa.Column("financial_year", sa.Text(), nullable=False),
         sa.Column("serial", sa.Integer(), nullable=False),
-        sa.Column("trip_number", sa.Text(), nullable=False),
-        sa.Column("duty_log_id", sa.UUID(), nullable=False),
+        sa.Column("sheet_number", sa.Text(), nullable=False),
         sa.Column("site_id", sa.UUID(), nullable=False),
         sa.Column("vehicle_ref", sa.Text(), nullable=False),
         sa.Column("registration_number", sa.Text(), nullable=False),
@@ -269,277 +208,182 @@ def upgrade() -> None:
         sa.Column("driver_ref", sa.Text(), nullable=True),
         sa.Column("driver_name", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("driver_phone", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("trip_date", sa.Date(), nullable=False),
-        sa.Column("start_km", sa.Numeric(precision=12, scale=2), nullable=True),
-        sa.Column("end_km", sa.Numeric(precision=12, scale=2), nullable=True),
+        sa.Column("start_date", sa.Date(), nullable=False),
+        sa.Column("end_date", sa.Date(), nullable=True),
+        sa.Column("start_km", sa.Numeric(precision=10, scale=1), nullable=True),
+        sa.Column("end_km", sa.Numeric(precision=10, scale=1), nullable=True),
+        sa.Column("batta", sa.Numeric(precision=18, scale=2), nullable=True),
         sa.Column("notes", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("rules_version", sa.Text(), server_default=sa.text("'sheet-v1'"), nullable=False),
         sa.Column("created_by", sa.UUID(), nullable=False),
         sa.Column("created_by_name", sa.Text(), nullable=False),
-        *_timestamps(),
-        _check(
-            "trips",
-            "km_in_order",
-            "(start_km IS NULL OR start_km >= 0) AND (end_km IS NULL OR end_km >= 0) "
-            "AND (start_km IS NULL OR end_km IS NULL OR end_km >= start_km)",
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "(start_km IS NULL OR start_km >= 0) AND (end_km IS NULL OR end_km >= 0) AND (start_km IS NULL OR end_km IS NULL OR end_km >= start_km)",
+            name=op.f("ck_trip_sheets_km_in_order"),
         ),
-        _check("trips", "serial_positive", "serial > 0"),
-        # A trip's vehicle and date are its day's.
+        sa.CheckConstraint("batta IS NULL OR batta >= 0", name=op.f("ck_trip_sheets_batta_not_negative")),
+        sa.CheckConstraint(
+            "end_date IS NULL OR end_date >= start_date", name=op.f("ck_trip_sheets_dates_in_order")
+        ),
+        sa.CheckConstraint("serial > 0", name=op.f("ck_trip_sheets_serial_positive")),
         sa.ForeignKeyConstraint(
-            ["organization_id", "duty_log_id", "vehicle_ref", "trip_date"],
-            [
-                "logistics.vehicle_duty_logs.organization_id",
-                "logistics.vehicle_duty_logs.id",
-                "logistics.vehicle_duty_logs.vehicle_ref",
-                "logistics.vehicle_duty_logs.duty_date",
-            ],
-            name=op.f("fk_trips_organization_id_duty_log_id_vehicle_ref_trip_date"),
+            ["organization_id", "created_by"],
+            ["core.users.organization_id", "core.users.id"],
+            name=op.f("fk_trip_sheets_organization_id_created_by"),
             ondelete="RESTRICT",
         ),
-        _tenant_fk("trips", "site_id", "core.sites"),
-        _tenant_fk("trips", "created_by", "core.users"),
-        *_tenant_keys("trips"),
-        sa.UniqueConstraint(
-            "organization_id", "trip_number", name=op.f("uq_trips_organization_id_trip_number")
+        sa.ForeignKeyConstraint(
+            ["organization_id", "site_id"],
+            ["core.sites.organization_id", "core.sites.id"],
+            name=op.f("fk_trip_sheets_organization_id_site_id"),
+            ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trip_sheets_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trip_sheets")),
+        sa.UniqueConstraint(
+            "organization_id",
+            "financial_year",
+            "serial",
+            name=op.f("uq_trip_sheets_organization_id_financial_year_serial"),
+        ),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trip_sheets_organization_id_id")),
+        sa.UniqueConstraint(
+            "organization_id", "sheet_number", name=op.f("uq_trip_sheets_organization_id_sheet_number")
+        ),
+        schema="logistics",
+    )
+    op.create_index(
+        op.f("ix_logistics_trip_sheets_organization_id"),
+        "trip_sheets",
+        ["organization_id"],
+        unique=False,
+        schema="logistics",
+    )
+    op.create_index(
+        "ix_trip_sheets_start_date",
+        "trip_sheets",
+        ["organization_id", "start_date"],
+        unique=False,
+        schema="logistics",
+    )
+    op.create_index(
+        "ix_trip_sheets_vehicle_start_date",
+        "trip_sheets",
+        ["organization_id", "vehicle_ref", "start_date"],
+        unique=False,
+        schema="logistics",
+    )
+    op.create_table(
+        "trips",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_sheet_id", sa.UUID(), nullable=False),
+        sa.Column("financial_year", sa.Text(), nullable=False),
+        sa.Column("serial", sa.Integer(), nullable=False),
+        sa.Column("trip_number", sa.Text(), nullable=False),
+        sa.Column("trip_date", sa.Date(), nullable=False),
+        sa.Column("start_km", sa.Numeric(precision=10, scale=1), nullable=True),
+        sa.Column("end_km", sa.Numeric(precision=10, scale=1), nullable=True),
+        sa.Column("batta", sa.Numeric(precision=18, scale=2), nullable=True),
+        sa.Column("notes", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "(start_km IS NULL OR start_km >= 0) AND (end_km IS NULL OR end_km >= 0) AND (start_km IS NULL OR end_km IS NULL OR end_km >= start_km)",
+            name=op.f("ck_trips_km_in_order"),
+        ),
+        sa.CheckConstraint("batta IS NULL OR batta >= 0", name=op.f("ck_trips_batta_not_negative")),
+        sa.CheckConstraint("serial > 0", name=op.f("ck_trips_serial_positive")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id"],
+            ["logistics.trip_sheets.organization_id", "logistics.trip_sheets.id"],
+            name=op.f("fk_trips_organization_id_trip_sheet_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trips_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trips")),
         sa.UniqueConstraint(
             "organization_id",
             "financial_year",
             "serial",
             name=op.f("uq_trips_organization_id_financial_year_serial"),
         ),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trips_organization_id_id")),
         sa.UniqueConstraint(
-            "organization_id", "duty_log_id", "id", name=op.f("uq_trips_organization_id_duty_log_id_id")
+            "organization_id", "trip_number", name=op.f("uq_trips_organization_id_trip_number")
+        ),
+        sa.UniqueConstraint(
+            "organization_id", "trip_sheet_id", "id", name=op.f("uq_trips_organization_id_trip_sheet_id_id")
         ),
         schema="logistics",
     )
-    _org_index("logistics", "trips")
     op.create_index(
-        "ix_trips_date", "trips", ["organization_id", "trip_date"], unique=False, schema="logistics"
-    )
-    op.create_index(
-        "ix_trips_vehicle_date",
+        op.f("ix_logistics_trips_organization_id"),
         "trips",
-        ["organization_id", "vehicle_ref", "trip_date"],
+        ["organization_id"],
         unique=False,
         schema="logistics",
     )
-
-    # ------------------------------------------------------------------
-    # logistics.duty_fuel_links
-    # ------------------------------------------------------------------
-    op.create_table(
-        "duty_fuel_links",
-        *_id_and_org(),
-        sa.Column("duty_log_id", sa.UUID(), nullable=False),
-        sa.Column("source", sa.Text(), nullable=False),
-        sa.Column("expense_bill_id", sa.UUID(), nullable=True),
-        sa.Column("fuel_entry_ref", sa.Text(), nullable=True),
-        sa.Column("litres", sa.Numeric(precision=12, scale=3), nullable=True),
-        sa.Column("rate", sa.Numeric(precision=18, scale=2), nullable=True),
-        sa.Column("amount", sa.Numeric(precision=18, scale=2), nullable=True),
-        sa.Column("bill_number", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("vendor", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("filled_at", sa.DateTime(timezone=True), nullable=True),
-        *_timestamps(updated=False),
-        _check("duty_fuel_links", "source_known", "source in ('expense_bill', 'fuel_entry')"),
-        _check(
-            "duty_fuel_links",
-            "source_named",
-            "(source = 'expense_bill') = (expense_bill_id IS NOT NULL) "
-            "AND (source = 'fuel_entry') = (fuel_entry_ref IS NOT NULL)",
-        ),
-        _check(
-            "duty_fuel_links",
-            "figures_from_the_source",
-            "CASE WHEN source = 'expense_bill' THEN litres IS NULL AND rate IS NULL AND amount IS NULL "
-            "ELSE litres > 0 AND amount > 0 AND (rate IS NULL OR rate > 0) END",
-        ),
-        _tenant_fk("duty_fuel_links", "duty_log_id", "logistics.vehicle_duty_logs"),
-        _tenant_fk("duty_fuel_links", "expense_bill_id", "finance.expense_bills"),
-        *_tenant_keys("duty_fuel_links"),
-        sa.UniqueConstraint(
-            "organization_id",
-            "duty_log_id",
-            "id",
-            name=op.f("uq_duty_fuel_links_organization_id_duty_log_id_id"),
-        ),
-        sa.UniqueConstraint(
-            "organization_id",
-            "expense_bill_id",
-            name=op.f("uq_duty_fuel_links_organization_id_expense_bill_id"),
-        ),
-        sa.UniqueConstraint(
-            "organization_id",
-            "fuel_entry_ref",
-            name=op.f("uq_duty_fuel_links_organization_id_fuel_entry_ref"),
-        ),
-        schema="logistics",
+    op.create_index(
+        "ix_trips_date", "trips", ["organization_id", "trip_date"], unique=False, schema="logistics"
     )
-    _org_index("logistics", "duty_fuel_links")
-
-    # ------------------------------------------------------------------
-    # logistics.trip_diesel
-    # ------------------------------------------------------------------
     op.create_table(
-        "trip_diesel",
-        *_id_and_org(),
-        sa.Column("trip_id", sa.UUID(), nullable=False),
-        sa.Column("position", sa.SmallInteger(), nullable=False),
-        sa.Column("source", sa.Text(), nullable=False),
-        sa.Column("litres", sa.Numeric(precision=12, scale=3), nullable=True),
-        sa.Column("rate", sa.Numeric(precision=18, scale=2), nullable=True),
-        sa.Column("vendor", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("bill_number", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("link_id", sa.UUID(), nullable=True),
-        sa.Column("duty_log_id", sa.UUID(), nullable=True),
-        *_timestamps(),
-        _check("trip_diesel", "source_known", "source in ('typed', 'expense_bill', 'fuel_entry')"),
-        _check(
-            "trip_diesel",
-            "typed_or_linked",
-            "(source = 'typed') = (link_id IS NULL) AND (link_id IS NULL) = (duty_log_id IS NULL)",
+        "party_locations",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("party_id", sa.UUID(), nullable=False),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "char_length(name) BETWEEN 1 AND 120", name=op.f("ck_party_locations_name_length")
         ),
-        _check(
-            "trip_diesel",
-            "figures_typed_once",
-            "CASE WHEN source = 'typed' THEN litres > 0 AND rate > 0 ELSE litres IS NULL AND rate IS NULL END",
-        ),
-        _check("trip_diesel", "position_not_negative", "position >= 0"),
-        _tenant_fk("trip_diesel", "trip_id", "logistics.trips"),
-        # Both through duty_log_id: a link names a fill of the trip's own day.
         sa.ForeignKeyConstraint(
-            ["organization_id", "duty_log_id", "trip_id"],
-            ["logistics.trips.organization_id", "logistics.trips.duty_log_id", "logistics.trips.id"],
-            name=op.f("fk_trip_diesel_organization_id_duty_log_id_trip_id"),
+            ["organization_id", "party_id"],
+            ["master.parties.organization_id", "master.parties.id"],
+            name=op.f("fk_party_locations_organization_id_party_id"),
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["organization_id", "duty_log_id", "link_id"],
-            [
-                "logistics.duty_fuel_links.organization_id",
-                "logistics.duty_fuel_links.duty_log_id",
-                "logistics.duty_fuel_links.id",
-            ],
-            name=op.f("fk_trip_diesel_organization_id_duty_log_id_link_id"),
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_party_locations_organization_id"),
             ondelete="RESTRICT",
         ),
-        *_tenant_keys("trip_diesel"),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_party_locations")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_party_locations_organization_id_id")),
         sa.UniqueConstraint(
             "organization_id",
-            "trip_id",
-            "link_id",
-            name=op.f("uq_trip_diesel_organization_id_trip_id_link_id"),
+            "party_id",
+            "name",
+            name=op.f("uq_party_locations_organization_id_party_id_name"),
         ),
-        schema="logistics",
+        schema="master",
     )
-    _org_index("logistics", "trip_diesel")
-
-    # ------------------------------------------------------------------
-    # logistics.trip_costs
-    # ------------------------------------------------------------------
-    op.create_table(
-        "trip_costs",
-        *_id_and_org(),
-        sa.Column("trip_id", sa.UUID(), nullable=False),
-        sa.Column("position", sa.SmallInteger(), nullable=False),
-        sa.Column("kind", sa.Text(), nullable=False),
-        sa.Column("description", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("amount", sa.Numeric(precision=18, scale=2), nullable=False),
-        *_timestamps(),
-        _check("trip_costs", "kind_known", "kind in ('batta', 'en_route', 'other')"),
-        _check("trip_costs", "amount_positive", "amount > 0"),
-        _check("trip_costs", "position_not_negative", "position >= 0"),
-        _tenant_fk("trip_costs", "trip_id", "logistics.trips"),
-        *_tenant_keys("trip_costs"),
-        schema="logistics",
+    op.create_index(
+        op.f("ix_master_party_locations_organization_id"),
+        "party_locations",
+        ["organization_id"],
+        unique=False,
+        schema="master",
     )
-    _org_index("logistics", "trip_costs")
-
-    # ------------------------------------------------------------------
-    # procurement.trip_purchases, procurement.trip_purchase_files
-    # ------------------------------------------------------------------
-    op.create_table(
-        "trip_purchases",
-        *_id_and_org(),
-        sa.Column("trip_id", sa.UUID(), nullable=False),
-        sa.Column("position", sa.SmallInteger(), nullable=False),
-        sa.Column("vendor_party_id", sa.UUID(), nullable=False),
-        *_line_columns(),
-        sa.Column("invoice_number", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("invoice_date", sa.Date(), nullable=True),
-        *_timestamps(),
-        *_line_checks("trip_purchases"),
-        _tenant_fk("trip_purchases", "trip_id", "logistics.trips"),
-        _tenant_fk("trip_purchases", "vendor_party_id", "master.parties"),
-        _tenant_fk("trip_purchases", "item_id", "master.items"),
-        *_tenant_keys("trip_purchases"),
-        schema="procurement",
-    )
-    _org_index("procurement", "trip_purchases")
-
-    op.create_table(
-        "trip_purchase_files",
-        *_id_and_org(),
-        sa.Column("purchase_id", sa.UUID(), nullable=False),
-        sa.Column("file_id", sa.UUID(), nullable=False),
-        *_timestamps(updated=False),
-        _tenant_fk("trip_purchase_files", "purchase_id", "procurement.trip_purchases"),
-        _tenant_fk("trip_purchase_files", "file_id", "core.files"),
-        *_tenant_keys("trip_purchase_files"),
-        sa.UniqueConstraint(
-            "organization_id", "file_id", name=op.f("uq_trip_purchase_files_organization_id_file_id")
-        ),
-        schema="procurement",
-    )
-    _org_index("procurement", "trip_purchase_files")
-
-    # ------------------------------------------------------------------
-    # sales.trip_sales
-    # ------------------------------------------------------------------
-    op.create_table(
-        "trip_sales",
-        *_id_and_org(),
-        sa.Column("trip_id", sa.UUID(), nullable=False),
-        sa.Column("position", sa.SmallInteger(), nullable=False),
-        sa.Column("customer_party_id", sa.UUID(), nullable=False),
-        sa.Column("purchase_order_id", sa.UUID(), nullable=True),
-        sa.Column("po_ref", sa.Text(), server_default=sa.text("''"), nullable=False),
-        *_line_columns(),
-        sa.Column(
-            "transport_amount", sa.Numeric(precision=18, scale=2), server_default=sa.text("0"), nullable=False
-        ),
-        sa.Column(
-            "transport_gst_rate_pct",
-            sa.Numeric(precision=5, scale=2),
-            server_default=sa.text("0"),
-            nullable=False,
-        ),
-        sa.Column("challan_number", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("invoice_number", sa.Text(), server_default=sa.text("''"), nullable=False),
-        *_timestamps(),
-        *_line_checks("trip_sales"),
-        _check("trip_sales", "transport_not_negative", "transport_amount >= 0"),
-        _check(
-            "trip_sales",
-            "transport_gst_rate_range",
-            "transport_gst_rate_pct >= 0 AND transport_gst_rate_pct <= 100",
-        ),
-        _tenant_fk("trip_sales", "trip_id", "logistics.trips"),
-        _tenant_fk("trip_sales", "customer_party_id", "master.parties"),
-        _tenant_fk("trip_sales", "purchase_order_id", "sales.purchase_orders"),
-        _tenant_fk("trip_sales", "item_id", "master.items"),
-        *_tenant_keys("trip_sales"),
-        schema="sales",
-    )
-    _org_index("sales", "trip_sales")
-
-    # ------------------------------------------------------------------
-    # finance.trip_payments
-    # ------------------------------------------------------------------
     op.create_table(
         "trip_payments",
-        *_id_and_org(),
-        sa.Column("trip_id", sa.UUID(), nullable=False),
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_sheet_id", sa.UUID(), nullable=False),
+        sa.Column("trip_id", sa.UUID(), nullable=True),
         sa.Column("position", sa.SmallInteger(), nullable=False),
         sa.Column("direction", sa.Text(), nullable=False),
         sa.Column("party_id", sa.UUID(), nullable=False),
@@ -549,30 +393,475 @@ def upgrade() -> None:
         sa.Column("amount", sa.Numeric(precision=18, scale=2), nullable=False),
         sa.Column("note", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("recorded_by", sa.UUID(), nullable=False),
-        *_timestamps(),
-        _check("trip_payments", "direction_known", "direction in ('in', 'out')"),
-        _check(
-            "trip_payments", "method_known", "method in ('neft', 'rtgs', 'imps', 'upi', 'cheque', 'cash')"
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint("direction in ('in', 'out')", name=op.f("ck_trip_payments_direction_known")),
+        sa.CheckConstraint(
+            "method in ('neft', 'rtgs', 'imps', 'upi', 'cheque', 'cash')",
+            name=op.f("ck_trip_payments_method_known"),
         ),
-        _check("trip_payments", "amount_positive", "amount > 0"),
-        _check(
-            "trip_payments", "reference_shape", "reference_no IS NULL OR reference_no ~ '^[A-Z0-9/-]{3,40}$'"
+        sa.CheckConstraint(
+            "reference_no IS NULL OR reference_no ~ '^[A-Z0-9/-]{3,40}$'",
+            name=op.f("ck_trip_payments_reference_shape"),
         ),
-        _check("trip_payments", "position_not_negative", "position >= 0"),
-        _tenant_fk("trip_payments", "trip_id", "logistics.trips"),
-        _tenant_fk("trip_payments", "party_id", "master.parties"),
-        _tenant_fk("trip_payments", "recorded_by", "core.users"),
-        *_tenant_keys("trip_payments"),
+        sa.CheckConstraint("amount > 0", name=op.f("ck_trip_payments_amount_positive")),
+        sa.CheckConstraint("position >= 0", name=op.f("ck_trip_payments_position_not_negative")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "party_id"],
+            ["master.parties.organization_id", "master.parties.id"],
+            name=op.f("fk_trip_payments_organization_id_party_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "recorded_by"],
+            ["core.users.organization_id", "core.users.id"],
+            name=op.f("fk_trip_payments_organization_id_recorded_by"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.trip_sheet_id", "logistics.trips.id"],
+            name=op.f("fk_trip_payments_organization_id_trip_sheet_id_trip_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id"],
+            ["logistics.trip_sheets.organization_id", "logistics.trip_sheets.id"],
+            name=op.f("fk_trip_payments_organization_id_trip_sheet_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trip_payments_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trip_payments")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trip_payments_organization_id_id")),
         schema="finance",
     )
-    _org_index("finance", "trip_payments")
     op.create_index(
-        "uq_trip_payments_organization_id_trip_id_reference_no",
+        op.f("ix_finance_trip_payments_organization_id"),
         "trip_payments",
-        ["organization_id", "trip_id", "reference_no"],
+        ["organization_id"],
+        unique=False,
+        schema="finance",
+    )
+    op.create_index(
+        "uq_trip_payments_organization_id_trip_sheet_id_reference_no",
+        "trip_payments",
+        ["organization_id", "trip_sheet_id", "reference_no"],
         unique=True,
         schema="finance",
         postgresql_where=sa.text("reference_no IS NOT NULL"),
+    )
+    op.create_table(
+        "diesel_lines",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_sheet_id", sa.UUID(), nullable=False),
+        sa.Column("trip_id", sa.UUID(), nullable=True),
+        sa.Column("position", sa.SmallInteger(), nullable=False),
+        sa.Column("source", sa.Text(), nullable=False),
+        sa.Column("litres", sa.Numeric(precision=12, scale=3), nullable=True),
+        sa.Column("rate", sa.Numeric(precision=18, scale=2), nullable=True),
+        sa.Column("amount", sa.Numeric(precision=18, scale=2), nullable=True),
+        sa.Column("vendor_party_id", sa.UUID(), nullable=True),
+        sa.Column("vendor", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("bill_number", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("expense_bill_id", sa.UUID(), nullable=True),
+        sa.Column("fuel_entry_ref", sa.Text(), nullable=True),
+        sa.Column("filled_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("file_id", sa.UUID(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "(source = 'expense_bill') = (expense_bill_id IS NOT NULL) AND (source = 'fuel_entry') = (fuel_entry_ref IS NOT NULL)",
+            name=op.f("ck_diesel_lines_source_named"),
+        ),
+        sa.CheckConstraint(
+            "CASE source WHEN 'typed' THEN litres > 0 AND rate > 0 AND amount IS NULL WHEN 'expense_bill' THEN litres IS NULL AND rate IS NULL AND amount IS NULL ELSE litres > 0 AND amount > 0 AND rate IS NULL END",
+            name=op.f("ck_diesel_lines_figures_typed_once"),
+        ),
+        sa.CheckConstraint(
+            "source in ('typed', 'expense_bill', 'fuel_entry')", name=op.f("ck_diesel_lines_source_known")
+        ),
+        sa.CheckConstraint("position >= 0", name=op.f("ck_diesel_lines_position_not_negative")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "expense_bill_id"],
+            ["finance.expense_bills.organization_id", "finance.expense_bills.id"],
+            name=op.f("fk_diesel_lines_organization_id_expense_bill_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "file_id"],
+            ["core.files.organization_id", "core.files.id"],
+            name=op.f("fk_diesel_lines_organization_id_file_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.trip_sheet_id", "logistics.trips.id"],
+            name=op.f("fk_diesel_lines_organization_id_trip_sheet_id_trip_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id"],
+            ["logistics.trip_sheets.organization_id", "logistics.trip_sheets.id"],
+            name=op.f("fk_diesel_lines_organization_id_trip_sheet_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "vendor_party_id"],
+            ["master.parties.organization_id", "master.parties.id"],
+            name=op.f("fk_diesel_lines_organization_id_vendor_party_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_diesel_lines_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_diesel_lines")),
+        sa.UniqueConstraint(
+            "organization_id", "expense_bill_id", name=op.f("uq_diesel_lines_organization_id_expense_bill_id")
+        ),
+        sa.UniqueConstraint(
+            "organization_id", "fuel_entry_ref", name=op.f("uq_diesel_lines_organization_id_fuel_entry_ref")
+        ),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_diesel_lines_organization_id_id")),
+        schema="logistics",
+    )
+    op.create_index(
+        op.f("ix_logistics_diesel_lines_organization_id"),
+        "diesel_lines",
+        ["organization_id"],
+        unique=False,
+        schema="logistics",
+    )
+    op.create_table(
+        "enroute_expenses",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_sheet_id", sa.UUID(), nullable=False),
+        sa.Column("trip_id", sa.UUID(), nullable=True),
+        sa.Column("position", sa.SmallInteger(), nullable=False),
+        sa.Column("kind", sa.Text(), nullable=False),
+        sa.Column("maintenance_kind", sa.Text(), nullable=True),
+        sa.Column("description", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("spent_on", sa.Date(), nullable=True),
+        sa.Column("location", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("reference", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("amount", sa.Numeric(precision=18, scale=2), nullable=False),
+        sa.Column("file_id", sa.UUID(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "(kind = 'maintenance') = (maintenance_kind IS NOT NULL) AND (maintenance_kind IS NULL OR maintenance_kind in ('tyre_rotation', 'wheel_alignment', 'greasing', 'engine_oil', 'coolant', 'misc'))",
+            name=op.f("ck_enroute_expenses_maintenance_kind_known"),
+        ),
+        sa.CheckConstraint(
+            "kind in ('toll', 'police', 'maintenance')", name=op.f("ck_enroute_expenses_kind_known")
+        ),
+        sa.CheckConstraint(
+            "maintenance_kind IS DISTINCT FROM 'misc' OR description <> ''",
+            name=op.f("ck_enroute_expenses_misc_described"),
+        ),
+        sa.CheckConstraint("amount > 0", name=op.f("ck_enroute_expenses_amount_positive")),
+        sa.CheckConstraint("position >= 0", name=op.f("ck_enroute_expenses_position_not_negative")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "file_id"],
+            ["core.files.organization_id", "core.files.id"],
+            name=op.f("fk_enroute_expenses_organization_id_file_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.trip_sheet_id", "logistics.trips.id"],
+            name=op.f("fk_enroute_expenses_organization_id_trip_sheet_id_trip_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id"],
+            ["logistics.trip_sheets.organization_id", "logistics.trip_sheets.id"],
+            name=op.f("fk_enroute_expenses_organization_id_trip_sheet_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_enroute_expenses_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_enroute_expenses")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_enroute_expenses_organization_id_id")),
+        schema="logistics",
+    )
+    op.create_index(
+        op.f("ix_logistics_enroute_expenses_organization_id"),
+        "enroute_expenses",
+        ["organization_id"],
+        unique=False,
+        schema="logistics",
+    )
+    op.create_table(
+        "trip_purchases",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_id", sa.UUID(), nullable=False),
+        sa.Column("position", sa.SmallInteger(), nullable=False),
+        sa.Column("vendor_party_id", sa.UUID(), nullable=False),
+        sa.Column("location", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("item_id", sa.UUID(), nullable=False),
+        sa.Column("hsn_code", sa.Text(), nullable=True),
+        sa.Column("unit", sa.Text(), nullable=False),
+        sa.Column("quantity", sa.Numeric(precision=12, scale=3), nullable=False),
+        sa.Column("rate", sa.Numeric(precision=18, scale=2), nullable=False),
+        sa.Column("gst_billed", sa.Boolean(), nullable=False),
+        sa.Column("gst_rate_pct", sa.Numeric(precision=5, scale=2), nullable=False),
+        sa.Column("vendor_gstin", sa.String(length=15), nullable=True),
+        sa.Column("invoice_number", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("invoice_date", sa.Date(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "hsn_code IS NULL OR hsn_code ~ '^[0-9]{4,8}$'", name=op.f("ck_trip_purchases_hsn_shape")
+        ),
+        sa.CheckConstraint(
+            "vendor_gstin IS NULL OR vendor_gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$'",
+            name=op.f("ck_trip_purchases_vendor_gstin_shape"),
+        ),
+        sa.CheckConstraint(
+            "NOT gst_billed OR vendor_gstin IS NOT NULL", name=op.f("ck_trip_purchases_gst_bill_has_gstin")
+        ),
+        sa.CheckConstraint("char_length(unit) BETWEEN 1 AND 20", name=op.f("ck_trip_purchases_unit_shape")),
+        sa.CheckConstraint(
+            "gst_rate_pct >= 0 AND gst_rate_pct <= 100", name=op.f("ck_trip_purchases_gst_rate_range")
+        ),
+        sa.CheckConstraint("position >= 0", name=op.f("ck_trip_purchases_position_not_negative")),
+        sa.CheckConstraint("quantity > 0", name=op.f("ck_trip_purchases_quantity_positive")),
+        sa.CheckConstraint("rate > 0", name=op.f("ck_trip_purchases_rate_positive")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "item_id"],
+            ["master.items.organization_id", "master.items.id"],
+            name=op.f("fk_trip_purchases_organization_id_item_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.id"],
+            name=op.f("fk_trip_purchases_organization_id_trip_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "vendor_party_id"],
+            ["master.parties.organization_id", "master.parties.id"],
+            name=op.f("fk_trip_purchases_organization_id_vendor_party_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trip_purchases_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trip_purchases")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trip_purchases_organization_id_id")),
+        schema="procurement",
+    )
+    op.create_index(
+        op.f("ix_procurement_trip_purchases_organization_id"),
+        "trip_purchases",
+        ["organization_id"],
+        unique=False,
+        schema="procurement",
+    )
+    op.create_table(
+        "trip_closures",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_id", sa.UUID(), nullable=False),
+        sa.Column("customer_party_id", sa.UUID(), nullable=False),
+        sa.Column("billed", sa.Numeric(precision=18, scale=2), nullable=False),
+        sa.Column("closed_by", sa.UUID(), nullable=False),
+        sa.Column("closed_by_name", sa.Text(), nullable=False),
+        sa.Column("closed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint("billed > 0", name=op.f("ck_trip_closures_billed_positive")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "closed_by"],
+            ["core.users.organization_id", "core.users.id"],
+            name=op.f("fk_trip_closures_organization_id_closed_by"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "customer_party_id"],
+            ["master.parties.organization_id", "master.parties.id"],
+            name=op.f("fk_trip_closures_organization_id_customer_party_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.id"],
+            name=op.f("fk_trip_closures_organization_id_trip_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trip_closures_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trip_closures")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trip_closures_organization_id_id")),
+        sa.UniqueConstraint(
+            "organization_id",
+            "trip_id",
+            "customer_party_id",
+            name=op.f("uq_trip_closures_organization_id_trip_id_customer_party_id"),
+        ),
+        schema="sales",
+    )
+    op.create_index(
+        op.f("ix_sales_trip_closures_organization_id"),
+        "trip_closures",
+        ["organization_id"],
+        unique=False,
+        schema="sales",
+    )
+    op.create_table(
+        "trip_sales",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("trip_id", sa.UUID(), nullable=False),
+        sa.Column("position", sa.SmallInteger(), nullable=False),
+        sa.Column("customer_party_id", sa.UUID(), nullable=False),
+        sa.Column("location", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("purchase_order_id", sa.UUID(), nullable=True),
+        sa.Column("po_ref", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("item_id", sa.UUID(), nullable=False),
+        sa.Column("hsn_code", sa.Text(), nullable=True),
+        sa.Column("unit", sa.Text(), nullable=False),
+        sa.Column("quantity", sa.Numeric(precision=12, scale=3), nullable=False),
+        sa.Column("rate", sa.Numeric(precision=18, scale=2), nullable=False),
+        sa.Column(
+            "transport_amount", sa.Numeric(precision=18, scale=2), server_default=sa.text("0"), nullable=False
+        ),
+        sa.Column("gst_billed", sa.Boolean(), nullable=False),
+        sa.Column("gst_rate_pct", sa.Numeric(precision=5, scale=2), nullable=False),
+        sa.Column("party_gstin", sa.String(length=15), nullable=True),
+        sa.Column("challan_number", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("invoice_number", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("po_file_id", sa.UUID(), nullable=True),
+        sa.Column("dc_file_id", sa.UUID(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "hsn_code IS NULL OR hsn_code ~ '^[0-9]{4,8}$'", name=op.f("ck_trip_sales_hsn_shape")
+        ),
+        sa.CheckConstraint(
+            "party_gstin IS NULL OR party_gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$'",
+            name=op.f("ck_trip_sales_party_gstin_shape"),
+        ),
+        sa.CheckConstraint("char_length(unit) BETWEEN 1 AND 20", name=op.f("ck_trip_sales_unit_shape")),
+        sa.CheckConstraint(
+            "gst_rate_pct >= 0 AND gst_rate_pct <= 100", name=op.f("ck_trip_sales_gst_rate_range")
+        ),
+        sa.CheckConstraint("position >= 0", name=op.f("ck_trip_sales_position_not_negative")),
+        sa.CheckConstraint("quantity > 0", name=op.f("ck_trip_sales_quantity_positive")),
+        sa.CheckConstraint("rate > 0", name=op.f("ck_trip_sales_rate_positive")),
+        sa.CheckConstraint("transport_amount >= 0", name=op.f("ck_trip_sales_transport_not_negative")),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "customer_party_id"],
+            ["master.parties.organization_id", "master.parties.id"],
+            name=op.f("fk_trip_sales_organization_id_customer_party_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "dc_file_id"],
+            ["core.files.organization_id", "core.files.id"],
+            name=op.f("fk_trip_sales_organization_id_dc_file_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "item_id"],
+            ["master.items.organization_id", "master.items.id"],
+            name=op.f("fk_trip_sales_organization_id_item_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "po_file_id"],
+            ["core.files.organization_id", "core.files.id"],
+            name=op.f("fk_trip_sales_organization_id_po_file_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "purchase_order_id"],
+            ["sales.purchase_orders.organization_id", "sales.purchase_orders.id"],
+            name=op.f("fk_trip_sales_organization_id_purchase_order_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.id"],
+            name=op.f("fk_trip_sales_organization_id_trip_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trip_sales_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trip_sales")),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trip_sales_organization_id_id")),
+        schema="sales",
+    )
+    op.create_index(
+        op.f("ix_sales_trip_sales_organization_id"),
+        "trip_sales",
+        ["organization_id"],
+        unique=False,
+        schema="sales",
+    )
+    op.create_table(
+        "trip_purchase_files",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("purchase_id", sa.UUID(), nullable=False),
+        sa.Column("file_id", sa.UUID(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "file_id"],
+            ["core.files.organization_id", "core.files.id"],
+            name=op.f("fk_trip_purchase_files_organization_id_file_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id", "purchase_id"],
+            ["procurement.trip_purchases.organization_id", "procurement.trip_purchases.id"],
+            name=op.f("fk_trip_purchase_files_organization_id_purchase_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["core.organizations.id"],
+            name=op.f("fk_trip_purchase_files_organization_id"),
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_trip_purchase_files")),
+        sa.UniqueConstraint(
+            "organization_id", "file_id", name=op.f("uq_trip_purchase_files_organization_id_file_id")
+        ),
+        sa.UniqueConstraint("organization_id", "id", name=op.f("uq_trip_purchase_files_organization_id_id")),
+        schema="procurement",
+    )
+    op.create_index(
+        op.f("ix_procurement_trip_purchase_files_organization_id"),
+        "trip_purchase_files",
+        ["organization_id"],
+        unique=False,
+        schema="procurement",
     )
 
     # ------------------------------------------------------------------
@@ -605,9 +894,9 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO core.permissions (key, module, description) VALUES
-            ('fleet.trip_pl.read',     'fleet',   'See trips and their profit and loss'),
-            ('fleet.trip_pl.write',    'fleet',   'Add, edit and delete trips with their diesel, purchases, sales, costs and payments'),
-            ('finance.pl_report.read', 'finance', 'See the vehicle-wise and monthly P&L and the money-due lists')
+            ('fleet.trip_pl.read',     'fleet',   'See trip sheets, their trips and their profit and loss'),
+            ('fleet.trip_pl.write',    'fleet',   'Add, edit and delete trip sheets with their trips, diesel, en-route expenses, purchases, sales and payments'),
+            ('finance.pl_report.read', 'finance', 'See the trip-wise, vehicle-wise and monthly P&L and the money-due lists')
         ON CONFLICT (key) DO UPDATE
             SET module = EXCLUDED.module, description = EXCLUDED.description
         """

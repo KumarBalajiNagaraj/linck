@@ -1,4 +1,4 @@
-"""VEHICLE P&L (LIN-22): what one trip of a tipper earned, worked out where it is stored.
+"""VEHICLE P&L (LIN-22), as the owner's workbook lays it out, worked out where it is stored.
 
 A port of packages/domain/src/vehicle-pl.ts (and the exact decimal helpers in
 packages/domain/src/decimal.ts), kept close enough to read side by side. Both
@@ -7,45 +7,58 @@ worked by hand (tests/test_vehicle_pl_domain.py), so a rule changed on one side
 only fails a suite. The screens use the TypeScript to follow the form as it is
 typed; this copy decides what the API stores and reports.
 
-    distance        = end km − start km
-    mileage         = distance ÷ the trip's diesel litres
-    sales           = Σ (qty × selling rate) + transport charges, without GST
-    material cost   = Σ purchase value without GST (GST bill: the tax is input credit)
-                      + Σ full amount (non-GST bill: everything paid is cost)
-    gross profit    = sales − material cost
-    net profit      = gross − diesel − batta − en-route − other costs
-    profit %        = net ÷ sales × 100, none when there are no sales
-    GST to pay      = GST collected on sales − GST credit on purchases (its own line; never profit)
-    money due       = bills with GST − payments, per customer and per vendor
+A trip sheet is one vehicle and driver from a start date to an end date; its
+trips are the loads it carried, each with its purchases and sales. Diesel, km
+readings, batta, en-route expenses and payments may sit on either level. The
+workbook's columns:
 
-The LIN-22 workbook could not be read yet; each rule is one small function, so
-a rule it states differently is a one-function change on each side and a
-fixture update.
+    L   distance        = K end km − J start km
+    O   diesel cost     = M litres × N rate
+    P   mileage         = L ÷ M
+    AB  purchase cost   = Y quantity × AA rate
+    AF  purchase GST    = AB × AE% (nothing on a non-GST bill);  AG = AB + AF  (= BD)
+    AV  selling price   = AO quantity × AQ rate + AR transport (inside the taxable price)
+    AW  sale GST        = AV × AU% (nothing on a non-GST bill);  AX = AV + AW
+    BB  customer due    = AX − BA;   BF vendor due = BD − BE
+    BH  en-route total  = Σ en-route expenses + O diesel + F batta
+    BI  profit          = AV − AB − BH (see `profit`); gross = AV − AB;
+                          profit % = BI ÷ AV; GST to pay = AW − AF, on its own line
+
+What sits on the sheet is shared out to its trips by `spread_sheet_costs`, by
+trip km when every trip has a reading, otherwise evenly; a payment on the sheet
+settles that party's trips oldest first (`settle_sheet_payments`).
 
 Every figure is rounded once, half away from zero (ROUND_HALF_UP, which is what
-the TypeScript's BigInt rounding does), money to the paisa and litres to the
-millilitre. Division and splitting are done on integers, so nothing is rounded
-twice and a shared diesel fill's parts add up to its bill exactly.
+the TypeScript's BigInt rounding does): money to the paisa, litres to the
+millilitre, km to a tenth. Division and splitting are done on integers, so
+nothing is rounded twice and a sheet's trips add up to it exactly.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Any, Literal
 
-#: The rules' version, kept on each vehicle day (the design's allocation_rule_version).
-PL_RULES_VERSION = "km-v1"
+#: The rules' version, kept on each trip sheet.
+PL_RULES_VERSION = "sheet-v1"
 
 DieselSource = Literal["typed", "expense_bill", "fuel_entry"]
-CostKind = Literal["batta", "en_route", "other"]
 PartyRole = Literal["customer", "vendor"]
-MoneyDirection = Literal["in", "out"]
 
-COST_KINDS: tuple[str, ...] = ("batta", "en_route", "other")
 DIESEL_SOURCES: tuple[str, ...] = ("typed", "expense_bill", "fuel_entry")
+#: The workbook's en-route list (column G) and its minor-maintenance sub-list.
+EN_ROUTE_KINDS: tuple[str, ...] = ("toll", "police", "maintenance")
+MAINTENANCE_KINDS: tuple[str, ...] = (
+    "tyre_rotation",
+    "wheel_alignment",
+    "greasing",
+    "engine_oil",
+    "coolant",
+    "misc",
+)
 
 #: Wide enough that adding and multiplying any two stored figures is exact.
 _CTX = Context(prec=80, rounding=ROUND_HALF_UP)
@@ -199,12 +212,11 @@ def allocate(total: Decimal, weights: Sequence[Decimal], places: int) -> list[De
 
 @dataclass(frozen=True)
 class DieselLine:
-    """Typed: litres and rate for this trip alone. Linked: an expense bill or a
-    fuel entry, whose `litres` and `amount` are the WHOLE fill, read from it."""
+    """Typed: M litres × N rate. Linked: an expense bill or fuel entry's own litres and amount."""
 
     id: str
     source: str
-    litres: Num = None
+    litres: Num
     rate: Num = None
     amount: Num = None
     expense_bill_id: str | None = None
@@ -212,6 +224,22 @@ class DieselLine:
     bill_number: str | None = None
     #: A linked bill that was rejected or deleted: it counts nothing.
     void: bool = False
+
+
+@dataclass(frozen=True)
+class EnRoute:
+    id: str
+    kind: str
+    amount: Num
+
+
+@dataclass(frozen=True)
+class Payment:
+    id: str
+    #: in: received from a customer (BA). out: paid to a vendor (BE).
+    direction: str
+    party_id: str | None
+    amount: Num
 
 
 @dataclass(frozen=True)
@@ -233,54 +261,57 @@ class Sale:
     gst_billed: bool
     gst_rate_pct: Num
     transport: Num = None
-    transport_gst_rate_pct: Num = None
 
 
 @dataclass(frozen=True)
-class Cost:
-    id: str
-    kind: str
-    amount: Num
+class Closure:
+    """Accounts confirmed by hand that a customer paid this trip in full, as billed then."""
 
-
-@dataclass(frozen=True)
-class Payment:
-    id: str
-    direction: str
-    party_id: str | None
-    amount: Num
+    party_id: str
+    billed: Num
 
 
 @dataclass(frozen=True)
 class Trip:
     id: str
-    vehicle_id: str
-    #: YYYY-MM-DD.
     date: str
-    start_km: Num
-    end_km: Num
-    diesel: tuple[DieselLine, ...] = ()
     purchases: tuple[Purchase, ...] = ()
     sales: tuple[Sale, ...] = ()
-    costs: tuple[Cost, ...] = ()
-    payments: tuple[Payment, ...] = ()
-    #: Orders the trips that share a fill: the earlier trip takes a leftover paisa.
     trip_number: str | None = None
+    start_km: Num = None
+    end_km: Num = None
+    batta: Num = None
+    diesel: tuple[DieselLine, ...] = ()
+    en_route: tuple[EnRoute, ...] = ()
+    payments: tuple[Payment, ...] = ()
+    closures: tuple[Closure, ...] = ()
 
 
-def trip_from_wire(t: Mapping[str, Any]) -> Trip:
-    """A trip as the fixtures (and the TypeScript) spell it, camelCase."""
-    return Trip(
-        id=str(t["id"]),
-        vehicle_id=str(t["vehicleId"]),
-        date=str(t["date"]),
-        start_km=t.get("startKm"),
-        end_km=t.get("endKm"),
-        trip_number=t.get("tripNumber"),
-        diesel=tuple(
+@dataclass(frozen=True)
+class Sheet:
+    id: str
+    vehicle_id: str
+    start_date: str
+    trips: tuple[Trip, ...] = ()
+    sheet_number: str | None = None
+    end_date: str | None = None
+    start_km: Num = None
+    end_km: Num = None
+    batta: Num = None
+    diesel: tuple[DieselLine, ...] = ()
+    en_route: tuple[EnRoute, ...] = ()
+    payments: tuple[Payment, ...] = ()
+
+
+def _costs_from_wire(w: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "start_km": w.get("startKm"),
+        "end_km": w.get("endKm"),
+        "batta": w.get("batta"),
+        "diesel": tuple(
             DieselLine(
-                id=str(d["id"]),
-                source=str(d["source"]),
+                id=d["id"],
+                source=d["source"],
                 litres=d.get("litres"),
                 rate=d.get("rate"),
                 amount=d.get("amount"),
@@ -289,44 +320,59 @@ def trip_from_wire(t: Mapping[str, Any]) -> Trip:
                 bill_number=d.get("billNumber"),
                 void=bool(d.get("void", False)),
             )
-            for d in t.get("diesel") or []
+            for d in w.get("diesel") or ()
         ),
-        purchases=tuple(
-            Purchase(
-                id=str(p["id"]),
-                vendor_id=p.get("vendorId"),
-                quantity=p.get("quantity"),
-                rate=p.get("rate"),
-                gst_billed=bool(p.get("gstBilled")),
-                gst_rate_pct=p.get("gstRatePct"),
-            )
-            for p in t.get("purchases") or []
+        "en_route": tuple(EnRoute(e["id"], e["kind"], e.get("amount")) for e in w.get("enRoute") or ()),
+        "payments": tuple(
+            Payment(p["id"], p["direction"], p.get("partyId"), p.get("amount"))
+            for p in w.get("payments") or ()
         ),
-        sales=tuple(
-            Sale(
-                id=str(s["id"]),
-                customer_id=s.get("customerId"),
-                quantity=s.get("quantity"),
-                rate=s.get("rate"),
-                gst_billed=bool(s.get("gstBilled")),
-                gst_rate_pct=s.get("gstRatePct"),
-                transport=s.get("transport"),
-                transport_gst_rate_pct=s.get("transportGstRatePct"),
-            )
-            for s in t.get("sales") or []
-        ),
-        costs=tuple(
-            Cost(id=str(c["id"]), kind=str(c["kind"]), amount=c.get("amount")) for c in t.get("costs") or []
-        ),
-        payments=tuple(
-            Payment(
-                id=str(m["id"]),
-                direction=str(m["direction"]),
-                party_id=m.get("partyId"),
-                amount=m.get("amount"),
-            )
-            for m in t.get("payments") or []
-        ),
+    }
+
+
+def sheet_from_wire(s: Mapping[str, Any]) -> Sheet:
+    """A sheet as the fixtures (and the TypeScript) write it, camelCase."""
+    trips = tuple(
+        Trip(
+            id=t["id"],
+            date=t["date"],
+            trip_number=t.get("tripNumber"),
+            purchases=tuple(
+                Purchase(
+                    p["id"],
+                    p.get("vendorId"),
+                    p.get("quantity"),
+                    p.get("rate"),
+                    p["gstBilled"],
+                    p.get("gstRatePct"),
+                )
+                for p in t.get("purchases") or ()
+            ),
+            sales=tuple(
+                Sale(
+                    s_["id"],
+                    s_.get("customerId"),
+                    s_.get("quantity"),
+                    s_.get("rate"),
+                    s_["gstBilled"],
+                    s_.get("gstRatePct"),
+                    s_.get("transport"),
+                )
+                for s_ in t.get("sales") or ()
+            ),
+            closures=tuple(Closure(c["partyId"], c["billed"]) for c in t.get("closures") or ()),
+            **_costs_from_wire(t),
+        )
+        for t in s.get("trips") or ()
+    )
+    return Sheet(
+        id=s["id"],
+        vehicle_id=s["vehicleId"],
+        start_date=s["startDate"],
+        end_date=s.get("endDate"),
+        sheet_number=s.get("sheetNumber"),
+        trips=trips,
+        **_costs_from_wire(s),
     )
 
 
@@ -343,82 +389,98 @@ def _n(value: Decimal | None) -> int | float | None:
 
 @dataclass(frozen=True)
 class PurchaseFigures:
-    amount: Decimal
-    gst_amount: Decimal
-    total: Decimal
-    cost: Decimal
-    input_credit: Decimal
+    amount: Decimal  # AB: the cost the P&L counts
+    gst_amount: Decimal  # AF: input credit
+    total: Decimal  # AG = BD
 
-    def wire(self) -> dict[str, object]:
-        return {
-            "amount": _m(self.amount),
-            "gstAmount": _m(self.gst_amount),
-            "total": _m(self.total),
-            "cost": _m(self.cost),
-            "inputCredit": _m(self.input_credit),
-        }
+    def wire(self) -> dict[str, str]:
+        return {"amount": _m(self.amount), "gstAmount": _m(self.gst_amount), "total": _m(self.total)}
 
 
 @dataclass(frozen=True)
 class SaleFigures:
-    amount: Decimal
-    gst_amount: Decimal
-    transport: Decimal
-    transport_gst: Decimal
-    taxable: Decimal
-    gst_total: Decimal
-    total: Decimal
+    amount: Decimal  # AO × AQ
+    transport: Decimal  # AR
+    taxable: Decimal  # AV: the P&L's income
+    gst_amount: Decimal  # AW
+    total: Decimal  # AX
 
-    def wire(self) -> dict[str, object]:
+    def wire(self) -> dict[str, str]:
         return {
             "amount": _m(self.amount),
-            "gstAmount": _m(self.gst_amount),
             "transport": _m(self.transport),
-            "transportGst": _m(self.transport_gst),
             "taxable": _m(self.taxable),
-            "gstTotal": _m(self.gst_total),
+            "gstAmount": _m(self.gst_amount),
             "total": _m(self.total),
         }
 
 
 @dataclass(frozen=True)
 class DieselFigures:
-    #: Typed: litres × rate. Linked: the whole fill, as on its bill.
-    amount: Decimal
-    share_litres: Decimal
-    share_amount: Decimal
-    #: How many trips the fill is split across (1 for a typed line).
-    shared_by: int
+    litres: Decimal | None  # M
+    rate: Decimal | None  # N
+    amount: Decimal  # O
+    counted: bool
 
-    def wire(self) -> dict[str, object]:
+    def wire(self) -> dict[str, Any]:
         return {
+            "litres": _n(self.litres),
+            "rate": None if self.rate is None else _m(self.rate),
             "amount": _m(self.amount),
-            "shareLitres": to_number(self.share_litres),
-            "shareAmount": _m(self.share_amount),
-            "sharedBy": self.shared_by,
+            "counted": self.counted,
         }
 
 
-#: TripPl's money fields, wire name and attribute, in the TypeScript's order.
-MONEY_FIELDS: tuple[tuple[str, str], ...] = (
+@dataclass(frozen=True)
+class LevelCosts:
+    """What one level wrote down itself; also a trip's share of its sheet's."""
+
+    distance_km: Decimal | None
+    diesel_litres: Decimal
+    diesel: Decimal
+    batta: Decimal
+    en_route: Decimal
+
+    def wire(self) -> dict[str, Any]:
+        return {
+            "distanceKm": _n(self.distance_km),
+            "dieselLitres": to_number(self.diesel_litres),
+            "diesel": _m(self.diesel),
+            "batta": _m(self.batta),
+            "enRoute": _m(self.en_route),
+        }
+
+
+@dataclass(frozen=True)
+class Spread:
+    basis: str  # 'km' | 'even'
+    shares: dict[str, LevelCosts]
+
+    def wire(self) -> dict[str, Any]:
+        return {"basis": self.basis, "shares": {k: v.wire() for k, v in self.shares.items()}}
+
+
+_PL_MONEY = (
     ("sales", "sales"),
-    ("materialCost", "material_cost"),
+    ("material_cost", "materialCost"),
     ("gross", "gross"),
     ("diesel", "diesel"),
     ("batta", "batta"),
-    ("enRoute", "en_route"),
-    ("other", "other"),
+    ("en_route", "enRoute"),
+    ("total_en_route", "totalEnRoute"),
     ("net", "net"),
-    ("outputGst", "output_gst"),
-    ("inputGst", "input_gst"),
-    ("gstToPay", "gst_to_pay"),
-    ("customerBilled", "customer_billed"),
+    ("output_gst", "outputGst"),
+    ("input_gst", "inputGst"),
+    ("gst_to_pay", "gstToPay"),
+    ("customer_billed", "customerBilled"),
     ("received", "received"),
-    ("customerDue", "customer_due"),
-    ("vendorBilled", "vendor_billed"),
+    ("customer_due", "customerDue"),
+    ("vendor_billed", "vendorBilled"),
     ("paid", "paid"),
-    ("vendorDue", "vendor_due"),
+    ("vendor_due", "vendorDue"),
 )
+#: The money figures of a P&L, as the wire names them.
+MONEY_FIELDS: tuple[str, ...] = tuple(wire for _, wire in _PL_MONEY)
 
 
 @dataclass(frozen=True)
@@ -426,34 +488,34 @@ class TripPl:
     distance_km: Decimal | None
     diesel_litres: Decimal
     mileage_kmpl: Decimal | None
-    sales: Decimal
-    material_cost: Decimal
+    sales: Decimal  # Σ AV
+    material_cost: Decimal  # Σ AB
     gross: Decimal
     diesel: Decimal
     batta: Decimal
     en_route: Decimal
-    other: Decimal
-    net: Decimal
+    total_en_route: Decimal  # BH
+    net: Decimal  # BI
     profit_pct: Decimal | None
-    output_gst: Decimal
-    input_gst: Decimal
+    output_gst: Decimal  # Σ AW
+    input_gst: Decimal  # Σ AF
     gst_to_pay: Decimal
-    customer_billed: Decimal
-    received: Decimal
-    customer_due: Decimal
-    vendor_billed: Decimal
-    paid: Decimal
-    vendor_due: Decimal
+    customer_billed: Decimal  # Σ AX
+    received: Decimal  # BA
+    customer_due: Decimal  # BB
+    vendor_billed: Decimal  # BD
+    paid: Decimal  # BE
+    vendor_due: Decimal  # BF
 
-    def wire(self) -> dict[str, object]:
-        out: dict[str, object] = {
+    def wire(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
             "distanceKm": _n(self.distance_km),
             "dieselLitres": to_number(self.diesel_litres),
             "mileageKmpl": _n(self.mileage_kmpl),
+            "profitPct": _n(self.profit_pct),
         }
-        for name, attr in MONEY_FIELDS:
-            out[name] = _m(getattr(self, attr))
-        out["profitPct"] = _n(self.profit_pct)
+        for attr, wire in _PL_MONEY:
+            out[wire] = _m(getattr(self, attr))
         return out
 
 
@@ -463,18 +525,17 @@ class PartyDue:
     role: str
     billed: Decimal
     settled: Decimal
+    due: Decimal
+    status: str
 
-    @property
-    def due(self) -> Decimal:
-        return sub(self.billed, self.settled)
-
-    def wire(self) -> dict[str, object]:
+    def wire(self) -> dict[str, str]:
         return {
             "partyId": self.party_id,
             "role": self.role,
             "billed": _m(self.billed),
             "settled": _m(self.settled),
             "due": _m(self.due),
+            "status": self.status,
         }
 
 
@@ -482,243 +543,477 @@ class PartyDue:
 class TripCalc:
     trip_id: str
     pl: TripPl
+    own: LevelCosts
+    share: LevelCosts | None
     purchases: dict[str, PurchaseFigures]
     sales: dict[str, SaleFigures]
     diesel: dict[str, DieselFigures]
     dues: list[PartyDue]
 
+    def wire(self) -> dict[str, Any]:
+        return {
+            "tripId": self.trip_id,
+            "pl": self.pl.wire(),
+            "own": self.own.wire(),
+            "share": None if self.share is None else self.share.wire(),
+            "purchases": {k: v.wire() for k, v in self.purchases.items()},
+            "sales": {k: v.wire() for k, v in self.sales.items()},
+            "diesel": {k: v.wire() for k, v in self.diesel.items()},
+            "dues": [d.wire() for d in self.dues],
+        }
 
-# ------------------------------------------------------------------- lines
+
+@dataclass(frozen=True)
+class SheetCalc:
+    sheet_id: str
+    #: The sheet's total: its trips added up, or its own costs when it has no trip yet.
+    pl: TripPl
+    own: LevelCosts
+    basis: str | None
+    diesel: dict[str, DieselFigures]
+    dues: list[PartyDue]
+    #: Sheet payments no trip's bill took: an advance, or paid extra.
+    unsettled: list[PartyDue]
+    trips: dict[str, TripCalc] = field(default_factory=dict)
+
+    def wire(self) -> dict[str, Any]:
+        return {
+            "sheetId": self.sheet_id,
+            "pl": self.pl.wire(),
+            "own": self.own.wire(),
+            "basis": self.basis,
+            "diesel": {k: v.wire() for k, v in self.diesel.items()},
+            "dues": [d.wire() for d in self.dues],
+            "unsettled": [d.wire() for d in self.unsettled],
+            "trips": {k: v.wire() for k, v in self.trips.items()},
+        }
+
+
+# ------------------------------------------------------------------- rules
 
 
 def _line_value(quantity: Num, rate: Num) -> Decimal:
     return round_to(mul(dec(quantity), dec(rate)), 2)
 
 
-def trip_distance(start_km: Num, end_km: Num) -> Decimal | None:
-    """Distance = end km − start km. None until both are read, or when the end is below the start."""
+def distance(start_km: Num, end_km: Num) -> Decimal | None:
+    """L = K − J. None until both readings are in, or when the end is below the start."""
     start, end = parse_dec(start_km), parse_dec(end_km)
     if start is None or end is None or end < start:
         return None
     return sub(end, start)
 
 
-def mileage(distance: Decimal | None, litres: Decimal) -> Decimal | None:
-    """Mileage = distance ÷ litres, in km per litre to two places."""
-    if distance is None or litres <= 0:
+def mileage(km: Decimal | None, litres: Decimal) -> Decimal | None:
+    """P = L ÷ M, km per litre to two places."""
+    if km is None or litres <= 0:
         return None
-    return div_to(distance, litres, 2)
+    return div_to(km, litres, 2)
 
 
 def purchase_figures(p: Purchase) -> PurchaseFigures:
+    """AB, AF, AG. A non-GST bill carries no GST, whatever rate was picked."""
     amount = _line_value(p.quantity, p.rate)
     gst = percent_of(amount, dec(p.gst_rate_pct)) if p.gst_billed else ZERO
-    total = add(amount, gst)
-    return PurchaseFigures(
-        amount=amount,
-        gst_amount=gst,
-        total=total,
-        # GST bill: the tax is claimed back, so the cost is the value without it.
-        # Non-GST bill: there is nothing to claim, so everything paid is cost.
-        cost=amount if p.gst_billed else total,
-        input_credit=gst if p.gst_billed else ZERO,
-    )
+    return PurchaseFigures(amount, gst, add(amount, gst))
 
 
 def sale_figures(s: Sale) -> SaleFigures:
+    """AV = AO × AQ + AR, AW, AX: transport is inside the taxable price, at the sale's rate."""
     amount = _line_value(s.quantity, s.rate)
     transport = round_to(dec(s.transport), 2)
-    gst = percent_of(amount, dec(s.gst_rate_pct)) if s.gst_billed else ZERO
-    transport_gst = percent_of(transport, dec(s.transport_gst_rate_pct)) if s.gst_billed else ZERO
     taxable = add(amount, transport)
-    gst_total = add(gst, transport_gst)
-    return SaleFigures(
-        amount=amount,
-        gst_amount=gst,
-        transport=transport,
-        transport_gst=transport_gst,
-        taxable=taxable,
-        gst_total=gst_total,
-        total=add(taxable, gst_total),
-    )
+    gst = percent_of(taxable, dec(s.gst_rate_pct)) if s.gst_billed else ZERO
+    return SaleFigures(amount, transport, taxable, gst, add(taxable, gst))
 
 
-def typed_diesel_amount(litres: Num, rate: Num) -> Decimal:
-    """A typed diesel line: litres × rate, to the paisa."""
-    return _line_value(litres, rate)
+def diesel_figures(line: DieselLine) -> DieselFigures:
+    """O = M × N for a typed line; a linked fill's own amount; nothing for a void bill."""
+    litres = parse_dec(line.litres)
+    if line.source == "typed":
+        rate = parse_dec(line.rate)
+        return DieselFigures(litres, rate, _line_value(line.litres, line.rate), True)
+    amount = round_to(dec(line.amount), 2)
+    rate = div_to(amount, litres, 2) if litres is not None and litres > 0 and amount > 0 else None
+    return DieselFigures(litres, rate, ZERO if line.void else amount, not line.void)
 
 
-def diesel_link_key(line: DieselLine) -> str | None:
-    if line.source == "expense_bill" and line.expense_bill_id:
-        return f"expense_bill:{line.expense_bill_id}"
-    if line.source == "fuel_entry" and line.fuel_entry_id:
-        return f"fuel_entry:{line.fuel_entry_id}"
-    return None
+def profit(selling_price: Decimal, purchase_cost: Decimal, total_en_route: Decimal) -> Decimal:
+    """BI, the profit of a trip or a sheet.
 
-
-# ------------------------------------------------------------ shared diesel
-
-
-@dataclass(frozen=True)
-class DieselShare:
-    litres: Decimal
-    amount: Decimal
-    shared_by: int
-
-
-def diesel_shares(trips: Sequence[Trip]) -> dict[str, dict[str, DieselShare]]:
-    """Each linked fill split across the trips that link it, by km (equally when
-    none has km yet), the trips in trip-number order (then id), so a leftover
-    paisa lands on the earlier trip of the day. Keyed by trip id, then line id."""
-    groups: dict[str, list[tuple[Trip, DieselLine]]] = {}
-    for trip in trips:
-        seen: set[str] = set()
-        for line in trip.diesel:
-            key = diesel_link_key(line)
-            # The same fill twice on one trip is refused when saved; if it
-            # gets here, only its first line takes a part.
-            if key is None or key in seen:
-                continue
-            seen.add(key)
-            groups.setdefault(key, []).append((trip, line))
-    out: dict[str, dict[str, DieselShare]] = {}
-    for group in groups.values():
-        group.sort(key=lambda g: (g[0].trip_number or "", g[0].id))
-        first = group[0][1]
-        voided = any(line.void for _, line in group)
-        total_amount = ZERO if voided else dec(first.amount)
-        total_litres = ZERO if voided else dec(first.litres)
-        weights = [trip_distance(t.start_km, t.end_km) or ZERO for t, _ in group]
-        amounts = allocate(total_amount, weights, 2)
-        litres = allocate(total_litres, weights, 3)
-        for i, (trip, line) in enumerate(group):
-            out.setdefault(trip.id, {})[line.id] = DieselShare(
-                litres=litres[i], amount=amounts[i], shared_by=len(group)
-            )
-    return out
-
-
-# ------------------------------------------------------------------- trips
-
-
-def _dues(trip: Trip, purchases: dict[str, PurchaseFigures], sales: dict[str, SaleFigures]) -> list[PartyDue]:
-    rows: dict[tuple[str, str], list[Decimal]] = {}
-
-    def row(role: str, party_id: str) -> list[Decimal]:
-        return rows.setdefault((role, party_id), [ZERO, ZERO])
-
-    for s in trip.sales:
-        if s.customer_id:
-            r = row("customer", s.customer_id)
-            r[0] = add(r[0], sales[s.id].total)
-    for p in trip.purchases:
-        if p.vendor_id:
-            r = row("vendor", p.vendor_id)
-            r[0] = add(r[0], purchases[p.id].total)
-    for m in trip.payments:
-        if m.party_id:
-            r = row("customer" if m.direction == "in" else "vendor", m.party_id)
-            r[1] = add(r[1], round_to(dec(m.amount), 2))
-    ordered = [k for k in rows if k[0] == "customer"] + [k for k in rows if k[0] == "vendor"]
-    return [
-        PartyDue(party_id=p, role=role, billed=rows[(role, p)][0], settled=rows[(role, p)][1])
-        for role, p in ordered
-    ]
+    The workbook says "Total Selling Price − Total Purchase cost − Total Enroute
+    Expenses", and its Total Selling Price (AX) includes GST. LIN-22 says GST is
+    never profit, so the selling price taken here is AV, without GST, less the
+    purchase cost AB, also without GST, less BH; GST is reported apart as GST to
+    pay (AW − AF). To follow the sheet's wording to the letter, pass AX instead
+    of AV here, and in `profit` of vehicle-pl.ts. tests/test_vehicle_pl_domain.py
+    states the choice with figures.
+    """
+    return sub(sub(selling_price, purchase_cost), total_en_route)
 
 
 def profit_pct(net: Decimal, sales: Decimal) -> Decimal | None:
-    """Profit % = net ÷ sales × 100, to two places. None when nothing was sold."""
-    if sales.is_zero():
+    """Profit % = net ÷ selling price × 100, to two places. None when nothing was sold."""
+    if sales == 0:
         return None
     return div_to(mul(net, Decimal(100)), sales, 2)
 
 
-def calculate_trip(trip: Trip, shares: Mapping[str, DieselShare] | None = None) -> TripCalc:
-    """One trip's P&L. `shares` is its part of each linked fill (diesel_shares over
-    every trip that links one of its fills); left out, the trip is taken alone."""
-    if shares is None:
-        shares = diesel_shares([trip]).get(trip.id, {})
-    purchases = {p.id: purchase_figures(p) for p in trip.purchases}
-    sales = {s.id: sale_figures(s) for s in trip.sales}
+def diesel_link_key(line: DieselLine) -> str | None:
+    if line.source == "expense_bill" and line.expense_bill_id:
+        return f"bill:{line.expense_bill_id}"
+    if line.source == "fuel_entry" and line.fuel_entry_id:
+        return f"fuel:{line.fuel_entry_id}"
+    return None
 
-    diesel: dict[str, DieselFigures] = {}
-    diesel_litres = ZERO
-    diesel_amount = ZERO
-    for line in trip.diesel:
-        if line.source == "typed":
-            whole = amount = _line_value(line.litres, line.rate)
-            litres = round_to(dec(line.litres), 3)
-            shared_by = 1
-        else:
-            share = shares.get(line.id)
-            whole = round_to(dec(line.amount), 2)
-            litres = share.litres if share else ZERO
-            amount = share.amount if share else ZERO
-            shared_by = share.shared_by if share else 0
-        diesel[line.id] = DieselFigures(
-            amount=whole, share_litres=litres, share_amount=amount, shared_by=shared_by
-        )
-        diesel_litres = add(diesel_litres, litres)
-        diesel_amount = add(diesel_amount, amount)
 
-    def cost_of(kind: str) -> Decimal:
-        return dsum(round_to(dec(c.amount), 2) for c in trip.costs if c.kind == kind)
+@dataclass
+class _Costs:
+    km: Decimal | None
+    litres: Decimal
+    diesel: Decimal
+    batta: Decimal
+    en_route: Decimal
+    lines: dict[str, DieselFigures]
 
-    def paid_of(direction: str) -> Decimal:
-        return dsum(round_to(dec(m.amount), 2) for m in trip.payments if m.direction == direction)
 
-    batta, en_route, other = cost_of("batta"), cost_of("en_route"), cost_of("other")
-    sales_total = dsum(s.taxable for s in sales.values())
-    material_cost = dsum(p.cost for p in purchases.values())
-    gross = sub(sales_total, material_cost)
-    net = sub(sub(sub(sub(gross, diesel_amount), batta), en_route), other)
-    output_gst = dsum(s.gst_total for s in sales.values())
-    input_gst = dsum(p.input_credit for p in purchases.values())
-    customer_billed = dsum(s.total for s in sales.values())
-    vendor_billed = dsum(p.total for p in purchases.values())
-    received, paid = paid_of("in"), paid_of("out")
-    distance = trip_distance(trip.start_km, trip.end_km)
-
-    return TripCalc(
-        trip_id=trip.id,
-        purchases=purchases,
-        sales=sales,
+def _costs_of(level: Trip | Sheet) -> _Costs:
+    lines: dict[str, DieselFigures] = {}
+    litres = diesel = ZERO
+    for line in level.diesel:
+        f = diesel_figures(line)
+        lines[line.id] = f
+        if not f.counted:
+            continue
+        litres = add(litres, round_to(dec(line.litres), 3))
+        diesel = add(diesel, f.amount)
+    return _Costs(
+        km=distance(level.start_km, level.end_km),
+        litres=litres,
         diesel=diesel,
-        dues=_dues(trip, purchases, sales),
-        pl=TripPl(
-            distance_km=distance,
-            diesel_litres=round_to(diesel_litres, 3),
-            mileage_kmpl=mileage(distance, diesel_litres),
-            sales=sales_total,
-            material_cost=material_cost,
-            gross=gross,
-            diesel=diesel_amount,
-            batta=batta,
-            en_route=en_route,
-            other=other,
-            net=net,
-            profit_pct=profit_pct(net, sales_total),
-            output_gst=output_gst,
-            input_gst=input_gst,
-            gst_to_pay=sub(output_gst, input_gst),
-            customer_billed=customer_billed,
-            received=received,
-            customer_due=sub(customer_billed, received),
-            vendor_billed=vendor_billed,
-            paid=paid,
-            vendor_due=sub(vendor_billed, paid),
-        ),
+        batta=round_to(dec(level.batta), 2),
+        en_route=dsum(round_to(dec(e.amount), 2) for e in level.en_route),
+        lines=lines,
     )
 
 
-def calculate_trips(trips: Sequence[Trip]) -> dict[str, TripCalc]:
-    """Every trip's P&L, each shared fill split across the trips given (pass every
-    trip of the vehicle days involved, or a fill is split too few ways)."""
-    shares = diesel_shares(trips)
-    return {t.id: calculate_trip(t, shares.get(t.id, {})) for t in trips}
+def _level_out(c: _Costs) -> LevelCosts:
+    return LevelCosts(
+        distance_km=None if c.km is None else round_to(c.km, 1),
+        diesel_litres=round_to(c.litres, 3),
+        diesel=c.diesel,
+        batta=c.batta,
+        en_route=c.en_route,
+    )
 
 
-# ------------------------------------------------------------------ reports
+def trip_order(trips: Iterable[Trip]) -> list[Trip]:
+    """By date, then number, then id: the order a leftover paisa and a sheet payment go in."""
+    return sorted(trips, key=lambda t: (t.date, t.trip_number or "", t.id))
+
+
+def spread_sheet_costs(sheet: Sheet) -> Spread | None:
+    """spreadSheetCosts: share the sheet's own diesel, litres, batta, en-route and km over its trips.
+
+    By each trip's own km when every trip has a reading and they add up to more
+    than nothing, otherwise evenly; each figure split on its own with
+    `allocate`, so the trips add up to the sheet exactly.
+    """
+    trips = trip_order(sheet.trips)
+    if not trips:
+        return None
+    own = _costs_of(sheet)
+    kms = [distance(t.start_km, t.end_km) for t in trips]
+    known = all(k is not None for k in kms) and dsum(k or ZERO for k in kms) > 0
+    weights = [k for k in kms if k is not None] if known else [Decimal(1)] * len(trips)
+    diesel = allocate(own.diesel, weights, 2)
+    litres = allocate(own.litres, weights, 3)
+    batta = allocate(own.batta, weights, 2)
+    en_route = allocate(own.en_route, weights, 2)
+    km = None if own.km is None else allocate(own.km, weights, 1)
+    shares = {
+        t.id: LevelCosts(
+            distance_km=None if km is None else km[i],
+            diesel_litres=litres[i],
+            diesel=diesel[i],
+            batta=batta[i],
+            en_route=en_route[i],
+        )
+        for i, t in enumerate(trips)
+    }
+    return Spread("km" if known else "even", shares)
+
+
+def _role_of(direction: str) -> str:
+    return "customer" if direction == "in" else "vendor"
+
+
+@dataclass
+class _Due:
+    party_id: str
+    role: str
+    billed: Decimal = ZERO
+    settled: Decimal = ZERO
+    closed_all: bool = True
+
+
+def _bills_of(
+    trip: Trip, purchases: dict[str, PurchaseFigures], sales: dict[str, SaleFigures]
+) -> dict[str, _Due]:
+    acc: dict[str, _Due] = {}
+
+    def touch(role: str, party_id: str) -> _Due:
+        return acc.setdefault(f"{role}:{party_id}", _Due(party_id, role))
+
+    for s in trip.sales:
+        if s.customer_id:
+            row = touch("customer", s.customer_id)
+            row.billed = add(row.billed, sales[s.id].total)
+    for p in trip.purchases:
+        if p.vendor_id:
+            row = touch("vendor", p.vendor_id)
+            row.billed = add(row.billed, purchases[p.id].total)
+    for pay in trip.payments:
+        if pay.party_id:
+            row = touch(_role_of(pay.direction), pay.party_id)
+            row.settled = add(row.settled, round_to(dec(pay.amount), 2))
+    return acc
+
+
+def settle_sheet_payments(
+    payments: Sequence[Payment], trips: Sequence[tuple[str, Sequence[tuple[str, str, Decimal, Decimal]]]]
+) -> tuple[dict[str, dict[str, Decimal]], dict[str, Decimal]]:
+    """settleSheetPayments: sheet payments settle each party's trips oldest first.
+
+    `trips` is (trip id, [(party id, role, billed, settled)]) in trip order. A
+    trip takes up to what is still due on it; what no trip takes is left on the
+    sheet. Returns (taken per trip and party key, left per party key).
+    """
+    pool: dict[str, Decimal] = {}
+    for pay in payments:
+        if pay.party_id:
+            key = f"{_role_of(pay.direction)}:{pay.party_id}"
+            pool[key] = add(pool.get(key, ZERO), round_to(dec(pay.amount), 2))
+    taken: dict[str, dict[str, Decimal]] = {}
+    for trip_id, dues in trips:
+        taken[trip_id] = {}
+        for party_id, role, billed, settled in dues:
+            key = f"{role}:{party_id}"
+            left = pool.get(key)
+            if left is None or left <= 0:
+                continue
+            still = sub(billed, settled)
+            if still <= 0:
+                continue
+            take = left if left < still else still
+            taken[trip_id][key] = take
+            pool[key] = sub(left, take)
+    return taken, {k: v for k, v in pool.items() if v > 0}
+
+
+def _customer_status(billed: Decimal, settled: Decimal, closed: bool) -> str:
+    if sub(billed, settled) > 0:
+        return "pending"
+    return "closed" if closed else "paid"
+
+
+def _vendor_status(billed: Decimal, settled: Decimal) -> str:
+    if sub(billed, settled) <= 0:
+        return "completed"
+    return "partial" if settled > 0 else "pending"
+
+
+def _due_out(row: _Due, status: str) -> PartyDue:
+    return PartyDue(row.party_id, row.role, row.billed, row.settled, sub(row.billed, row.settled), status)
+
+
+def _sorted_dues(dues: Iterable[PartyDue]) -> list[PartyDue]:
+    return sorted(dues, key=lambda d: (d.role != "customer", d.party_id))
+
+
+def _pl_of(
+    *,
+    km: Decimal | None,
+    litres: Decimal,
+    sales: Decimal,
+    material: Decimal,
+    diesel: Decimal,
+    batta: Decimal,
+    en_route: Decimal,
+    output_gst: Decimal,
+    input_gst: Decimal,
+    dues: Sequence[PartyDue],
+) -> TripPl:
+    total_en_route = add(add(en_route, diesel), batta)
+    net = profit(sales, material, total_en_route)
+
+    def pick(role: str, attr: str) -> Decimal:
+        return dsum(getattr(d, attr) for d in dues if d.role == role)
+
+    customer_billed, received = pick("customer", "billed"), pick("customer", "settled")
+    vendor_billed, paid = pick("vendor", "billed"), pick("vendor", "settled")
+    return TripPl(
+        distance_km=None if km is None else round_to(km, 1),
+        diesel_litres=round_to(litres, 3),
+        mileage_kmpl=mileage(km, litres),
+        sales=sales,
+        material_cost=material,
+        gross=sub(sales, material),
+        diesel=diesel,
+        batta=batta,
+        en_route=en_route,
+        total_en_route=total_en_route,
+        net=net,
+        profit_pct=profit_pct(net, sales),
+        output_gst=output_gst,
+        input_gst=input_gst,
+        gst_to_pay=sub(output_gst, input_gst),
+        customer_billed=customer_billed,
+        received=received,
+        customer_due=sub(customer_billed, received),
+        vendor_billed=vendor_billed,
+        paid=paid,
+        vendor_due=sub(vendor_billed, paid),
+    )
+
+
+def calculate_sheet(sheet: Sheet) -> SheetCalc:
+    """calculateSheet: each trip with its part of the sheet's costs and payments, and the sheet's total."""
+    own = _costs_of(sheet)
+    spread = spread_sheet_costs(sheet)
+    ordered = trip_order(sheet.trips)
+
+    staged = []
+    for trip in ordered:
+        purchases = {p.id: purchase_figures(p) for p in trip.purchases}
+        sales = {s.id: sale_figures(s) for s in trip.sales}
+        staged.append((trip, purchases, sales, _costs_of(trip), _bills_of(trip, purchases, sales)))
+
+    taken, left = settle_sheet_payments(
+        sheet.payments,
+        [
+            (t.id, [(d.party_id, d.role, d.billed, d.settled) for d in bills.values()])
+            for t, _, _, _, bills in staged
+        ],
+    )
+
+    trips: dict[str, TripCalc] = {}
+    for trip, purchases, sales, costs, bills in staged:
+        share = spread.shares[trip.id] if spread else None
+        took = taken.get(trip.id, {})
+        closures = {c.party_id: round_to(dec(c.billed), 2) for c in trip.closures}
+        dues = []
+        for key, row in bills.items():
+            with_sheet = _Due(row.party_id, row.role, row.billed, add(row.settled, took.get(key, ZERO)))
+            if row.role == "vendor":
+                dues.append(_due_out(with_sheet, _vendor_status(with_sheet.billed, with_sheet.settled)))
+            else:
+                closed = row.party_id in closures and closures[row.party_id] == row.billed
+                dues.append(
+                    _due_out(with_sheet, _customer_status(with_sheet.billed, with_sheet.settled, closed))
+                )
+        dues = _sorted_dues(dues)
+        km = share.distance_km if share is not None and share.distance_km is not None else costs.km
+        trips[trip.id] = TripCalc(
+            trip_id=trip.id,
+            pl=_pl_of(
+                km=km,
+                litres=add(costs.litres, share.diesel_litres if share else ZERO),
+                sales=dsum(f.taxable for f in sales.values()),
+                material=dsum(f.amount for f in purchases.values()),
+                diesel=add(costs.diesel, share.diesel if share else ZERO),
+                batta=add(costs.batta, share.batta if share else ZERO),
+                en_route=add(costs.en_route, share.en_route if share else ZERO),
+                output_gst=dsum(f.gst_amount for f in sales.values()),
+                input_gst=dsum(f.gst_amount for f in purchases.values()),
+                dues=dues,
+            ),
+            own=_level_out(costs),
+            share=share,
+            purchases=purchases,
+            sales=sales,
+            diesel=costs.lines,
+            dues=dues,
+        )
+
+    total: dict[str, _Due] = {}
+    for calc in trips.values():
+        for d in calc.dues:
+            row = total.setdefault(f"{d.role}:{d.party_id}", _Due(d.party_id, d.role))
+            row.billed = add(row.billed, d.billed)
+            row.settled = add(row.settled, d.settled)
+            if d.role == "customer" and d.status != "closed":
+                row.closed_all = False
+    unsettled = []
+    for key, amount in left.items():
+        role, _, party_id = key.partition(":")
+        unsettled.append(
+            _due_out(_Due(party_id, role, ZERO, amount), "completed" if role == "vendor" else "paid")
+        )
+        row = total.setdefault(key, _Due(party_id, role, closed_all=False))
+        row.settled = add(row.settled, amount)
+        if row.role == "customer" and row.billed == 0:
+            row.closed_all = False
+    dues = _sorted_dues(
+        _due_out(r, _vendor_status(r.billed, r.settled))
+        if r.role == "vendor"
+        else _due_out(r, _customer_status(r.billed, r.settled, r.closed_all))
+        for r in total.values()
+    )
+
+    calcs = list(trips.values())
+    trip_kms = [c.own.distance_km for c in calcs]
+    km = own.km
+    if km is None and any(k is not None for k in trip_kms):
+        km = dsum(k or ZERO for k in trip_kms)
+    litres = add(own.litres, dsum(c.own.diesel_litres for c in calcs))
+
+    def pick(attr: str) -> Decimal:
+        return dsum(getattr(c.pl, attr) for c in calcs)
+
+    if not calcs:
+        pl = _pl_of(
+            km=km,
+            litres=litres,
+            sales=ZERO,
+            material=ZERO,
+            diesel=own.diesel,
+            batta=own.batta,
+            en_route=own.en_route,
+            output_gst=ZERO,
+            input_gst=ZERO,
+            dues=dues,
+        )
+    else:
+        pl = _pl_of(
+            km=km,
+            litres=litres,
+            sales=pick("sales"),
+            material=pick("material_cost"),
+            diesel=pick("diesel"),
+            batta=pick("batta"),
+            en_route=pick("en_route"),
+            output_gst=pick("output_gst"),
+            input_gst=pick("input_gst"),
+            dues=dues,
+        )
+    return SheetCalc(
+        sheet_id=sheet.id,
+        pl=pl,
+        own=_level_out(own),
+        basis=spread.basis if spread else None,
+        diesel=own.lines,
+        dues=dues,
+        unsettled=_sorted_dues(unsettled),
+        trips=trips,
+    )
+
+
+def calculate_sheets(sheets: Sequence[Sheet]) -> dict[str, SheetCalc]:
+    return {s.id: calculate_sheet(s) for s in sheets}
+
+
+# ----------------------------------------------------------------- reports
 
 
 @dataclass(frozen=True)
@@ -730,30 +1025,28 @@ class PlTotals:
     money: dict[str, Decimal]
     profit_pct: Decimal | None
 
-    def wire(self) -> dict[str, object]:
-        out: dict[str, object] = {
+    def wire(self) -> dict[str, Any]:
+        return {
             "trips": self.trips,
             "distanceKm": to_number(self.distance_km),
             "dieselLitres": to_number(self.diesel_litres),
             "mileageKmpl": _n(self.mileage_kmpl),
+            **{wire: _m(self.money[attr]) for attr, wire in _PL_MONEY},
+            "profitPct": _n(self.profit_pct),
         }
-        for name, _ in MONEY_FIELDS:
-            out[name] = _m(self.money[name])
-        out["profitPct"] = _n(self.profit_pct)
-        return out
 
 
-def sum_pl(pls: Sequence[TripPl]) -> PlTotals:
-    """Trips added up: money summed, mileage and profit % worked out again from the sums."""
-    money = {name: dsum(getattr(p, attr) for p in pls) for name, attr in MONEY_FIELDS}
+def sum_pl(pls: Sequence[TripPl], trips: int | None = None) -> PlTotals:
+    """sumPl: money summed, mileage and profit % worked out again from the sums."""
+    money = {attr: dsum(getattr(p, attr) for p in pls) for attr, _ in _PL_MONEY}
     measured = [p for p in pls if p.distance_km is not None and p.diesel_litres > 0]
     kmpl = mileage(
         dsum(p.distance_km or ZERO for p in measured) if measured else None,
         dsum(p.diesel_litres for p in measured),
     )
     return PlTotals(
-        trips=len(pls),
-        distance_km=dsum(p.distance_km or ZERO for p in pls),
+        trips=len(pls) if trips is None else trips,
+        distance_km=round_to(dsum(p.distance_km or ZERO for p in pls), 1),
         diesel_litres=round_to(dsum(p.diesel_litres for p in pls), 3),
         mileage_kmpl=kmpl,
         money=money,
@@ -761,27 +1054,79 @@ def sum_pl(pls: Sequence[TripPl]) -> PlTotals:
     )
 
 
-def _grouped(
-    trips: Sequence[Trip], calcs: Mapping[str, TripCalc], key_of: Callable[[Trip], str]
-) -> dict[str, list[TripPl]]:
-    groups: dict[str, list[TripPl]] = {}
-    for trip in trips:
-        calc = calcs.get(trip.id)
-        if calc is not None:
-            groups.setdefault(key_of(trip), []).append(calc.pl)
-    return groups
+@dataclass(frozen=True)
+class PlUnit:
+    """plUnits: a trip on its date; a sheet with no trip on its start date; a sheet's unsettled payments."""
+
+    sheet_id: str
+    trip_id: str | None
+    vehicle_id: str
+    date: str
+    pl: TripPl
+    dues: list[PartyDue]
 
 
-def pl_by_vehicle(trips: Sequence[Trip], calcs: Mapping[str, TripCalc]) -> list[tuple[str, PlTotals]]:
+def _unsettled_pl(dues: Sequence[PartyDue]) -> TripPl:
+    """Money that moved with no trip to take it: no profit or loss, only what was received or paid."""
+    return _pl_of(
+        km=None,
+        litres=ZERO,
+        sales=ZERO,
+        material=ZERO,
+        diesel=ZERO,
+        batta=ZERO,
+        en_route=ZERO,
+        output_gst=ZERO,
+        input_gst=ZERO,
+        dues=dues,
+    )
+
+
+def pl_units(sheets: Sequence[Sheet], calcs: Mapping[str, SheetCalc]) -> list[PlUnit]:
+    units: list[PlUnit] = []
+    for sheet in sheets:
+        calc = calcs.get(sheet.id)
+        if calc is None:
+            continue
+        if not sheet.trips:
+            units.append(PlUnit(sheet.id, None, sheet.vehicle_id, sheet.start_date, calc.pl, calc.dues))
+            continue
+        for trip in trip_order(sheet.trips):
+            t = calc.trips[trip.id]
+            units.append(PlUnit(sheet.id, trip.id, sheet.vehicle_id, trip.date, t.pl, t.dues))
+        if calc.unsettled:
+            units.append(
+                PlUnit(
+                    sheet.id,
+                    None,
+                    sheet.vehicle_id,
+                    sheet.start_date,
+                    _unsettled_pl(calc.unsettled),
+                    calc.unsettled,
+                )
+            )
+    return units
+
+
+def total_pl(units: Sequence[PlUnit]) -> PlTotals:
+    return sum_pl([u.pl for u in units], sum(1 for u in units if u.trip_id is not None))
+
+
+def _grouped(units: Sequence[PlUnit], key_of: Any) -> list[tuple[str, PlTotals]]:
+    groups: dict[str, list[PlUnit]] = {}
+    for u in units:
+        groups.setdefault(key_of(u), []).append(u)
+    return [(k, total_pl(us)) for k, us in groups.items()]
+
+
+def pl_by_vehicle(units: Sequence[PlUnit]) -> list[tuple[str, PlTotals]]:
     """One row per vehicle, the most profitable first."""
-    rows = [(v, sum_pl(pls)) for v, pls in _grouped(trips, calcs, lambda t: t.vehicle_id).items()]
-    return sorted(rows, key=lambda r: (-r[1].money["net"], r[0]))
+    return sorted(_grouped(units, lambda u: u.vehicle_id), key=lambda r: (-r[1].money["net"], r[0]))
 
 
-def pl_by_month(trips: Sequence[Trip], calcs: Mapping[str, TripCalc]) -> list[tuple[str, PlTotals]]:
-    """One row per calendar month of the trip date, oldest first."""
-    rows = [(m, sum_pl(pls)) for m, pls in _grouped(trips, calcs, lambda t: t.date[:7]).items()]
-    return sorted(rows, key=lambda r: r[0])
+def pl_by_month(units: Sequence[PlUnit]) -> list[tuple[str, PlTotals]]:
+    """One row per calendar month of the trip date (YYYY-MM), oldest first."""
+    return sorted(_grouped(units, lambda u: u.date[:7]), key=lambda r: r[0])
 
 
 @dataclass(frozen=True)
@@ -791,14 +1136,12 @@ class OutstandingRow:
     trips: int
     billed: Decimal
     settled: Decimal
+    due: Decimal
+    status: str
     first_date: str
     last_date: str
 
-    @property
-    def due(self) -> Decimal:
-        return sub(self.billed, self.settled)
-
-    def wire(self) -> dict[str, object]:
+    def wire(self) -> dict[str, Any]:
         return {
             "partyId": self.party_id,
             "role": self.role,
@@ -806,47 +1149,53 @@ class OutstandingRow:
             "billed": _m(self.billed),
             "settled": _m(self.settled),
             "due": _m(self.due),
+            "status": self.status,
             "firstDate": self.first_date,
             "lastDate": self.last_date,
         }
 
 
-def outstanding(trips: Sequence[Trip], calcs: Mapping[str, TripCalc], role: str) -> list[OutstandingRow]:
-    """Money due per customer (billed with GST − received) or per vendor (− paid), the most due first."""
-
-    @dataclass
-    class Acc:
-        trips: set[str] = field(default_factory=set)
-        billed: Decimal = ZERO
-        settled: Decimal = ZERO
-        first: str = ""
-        last: str = ""
-
-    rows: dict[str, Acc] = {}
-    for trip in trips:
-        calc = calcs.get(trip.id)
-        if calc is None:
-            continue
-        for d in calc.dues:
+def outstanding(units: Sequence[PlUnit], role: str) -> list[OutstandingRow]:
+    """Money due per customer (AX − BA) or per vendor (BD − BE), the most due first."""
+    rows: dict[str, dict[str, Any]] = {}
+    for unit in units:
+        for d in unit.dues:
             if d.role != role:
                 continue
-            acc = rows.setdefault(d.party_id, Acc(first=trip.date, last=trip.date))
-            acc.trips.add(trip.id)
-            acc.billed = add(acc.billed, d.billed)
-            acc.settled = add(acc.settled, d.settled)
-            acc.first = min(acc.first, trip.date)
-            acc.last = max(acc.last, trip.date)
+            row = rows.setdefault(
+                d.party_id,
+                {
+                    "trips": set(),
+                    "billed": ZERO,
+                    "settled": ZERO,
+                    "closed_all": True,
+                    "first": unit.date,
+                    "last": unit.date,
+                },
+            )
+            if unit.trip_id:
+                row["trips"].add(unit.trip_id)
+            row["billed"] = add(row["billed"], d.billed)
+            row["settled"] = add(row["settled"], d.settled)
+            if d.status != "closed":
+                row["closed_all"] = False
+            row["first"] = min(row["first"], unit.date)
+            row["last"] = max(row["last"], unit.date)
     out = [
         OutstandingRow(
             party_id=party_id,
             role=role,
-            trips=len(a.trips),
-            billed=a.billed,
-            settled=a.settled,
-            first_date=a.first,
-            last_date=a.last,
+            trips=len(r["trips"]),
+            billed=r["billed"],
+            settled=r["settled"],
+            due=sub(r["billed"], r["settled"]),
+            status=_vendor_status(r["billed"], r["settled"])
+            if role == "vendor"
+            else _customer_status(r["billed"], r["settled"], r["closed_all"]),
+            first_date=r["first"],
+            last_date=r["last"],
         )
-        for party_id, a in rows.items()
+        for party_id, r in rows.items()
     ]
     return sorted(out, key=lambda r: (-r.due, r.party_id))
 
@@ -857,7 +1206,7 @@ _NOT_ALNUM = re.compile(r"[^A-Z0-9]")
 
 
 def bill_key(bill_number: str | None) -> str:
-    """A bill number as people write it: 'BK/4471', 'bk 4471' and 'BK-4471' are one bill."""
+    """billKey: "BK/4471", "bk 4471" and "BK-4471" are one bill."""
     return _NOT_ALNUM.sub("", (bill_number or "").upper())
 
 
@@ -869,26 +1218,30 @@ class KnownDieselBill:
 
 
 @dataclass(frozen=True)
-class OtherTripDiesel:
-    trip_id: str
-    trip_number: str
+class OtherSheetDiesel:
+    sheet_id: str
+    sheet_number: str
     vehicle_id: str
     bill_numbers: tuple[str, ...]
 
 
+def sheet_diesel_lines(sheet: Sheet) -> list[tuple[str | None, DieselLine]]:
+    """Every diesel line of a sheet: its own first, then each trip's in trip order."""
+    return [(None, line) for line in sheet.diesel] + [
+        (t.id, line) for t in trip_order(sheet.trips) for line in t.diesel
+    ]
+
+
 def find_double_counts(
-    trip: Trip,
-    bills: Sequence[KnownDieselBill] = (),
-    other_trips: Sequence[OtherTripDiesel] = (),
+    sheet: Sheet, bills: Sequence[KnownDieselBill] = (), other_sheets: Sequence[OtherSheetDiesel] = ()
 ) -> list[dict[str, str]]:
-    """findDoubleCounts: every way this trip's diesel would count a fill twice, as problems
-    the web words — the same fill linked twice, two lines with one bill number, a
-    typed line repeating a diesel bill already in Linck, or one on another trip."""
+    """findDoubleCounts, the same problems in the same order, as wire dicts."""
     problems: list[dict[str, str]] = []
     links: set[str] = set()
     numbers: set[str] = set()
-    linked_bills = {line.expense_bill_id for line in trip.diesel if line.source == "expense_bill"}
-    for line in trip.diesel:
+    lines = [line for _, line in sheet_diesel_lines(sheet)]
+    linked_bills = {line.expense_bill_id for line in lines if line.source == "expense_bill"}
+    for line in lines:
         link = diesel_link_key(line)
         if link is not None:
             if link in links:
@@ -911,7 +1264,7 @@ def find_double_counts(
                 b
                 for b in bills
                 if bill_key(b.bill_number) == key
-                and (b.vehicle_id is None or b.vehicle_id == trip.vehicle_id)
+                and (b.vehicle_id is None or b.vehicle_id == sheet.vehicle_id)
                 and b.id not in linked_bills
             ),
             None,
@@ -929,9 +1282,9 @@ def find_double_counts(
         other = next(
             (
                 o
-                for o in other_trips
-                if o.trip_id != trip.id
-                and o.vehicle_id == trip.vehicle_id
+                for o in other_sheets
+                if o.sheet_id != sheet.id
+                and o.vehicle_id == sheet.vehicle_id
                 and any(bill_key(n) == key for n in o.bill_numbers)
             ),
             None,
@@ -939,10 +1292,10 @@ def find_double_counts(
         if other is not None:
             problems.append(
                 {
-                    "code": "diesel-bill-on-trip",
+                    "code": "diesel-bill-on-sheet",
                     "lineId": line.id,
                     "billNumber": line.bill_number or "",
-                    "tripNumber": other.trip_number,
+                    "sheetNumber": other.sheet_number,
                 }
             )
     return problems

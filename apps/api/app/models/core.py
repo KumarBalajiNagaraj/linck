@@ -513,9 +513,10 @@ class WhatsAppMessage(Base):
 #: What may be stored: what a phone camera, a scanner or WhatsApp produces for
 #: a paper bill. Anything else is refused at upload, and the column says so too.
 FILE_MIME_TYPES = ("image/jpeg", "image/png", "image/webp", "application/pdf")
-#: What an upload is for: a scanned expense bill, or a vendor's invoice for
-#: material bought on a trip (LIN-22). It decides whose read key reaches it.
-FILE_PURPOSES = ("expense_bill", "purchase_invoice")
+#: What an upload is for: a scanned expense bill, or a paper of a trip sheet
+#: (LIN-22): a vendor's bill, a customer's PO or signed DC, a diesel, toll,
+#: police or maintenance bill. It decides whose read key reaches it.
+FILE_PURPOSES = ("expense_bill", "trip_document")
 
 
 class File(Base):

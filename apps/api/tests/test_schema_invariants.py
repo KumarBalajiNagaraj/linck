@@ -41,14 +41,16 @@ LIN20_TABLES = {
 # And the tables LIN-22 added, two of them in schemas nothing used before.
 LIN22_TABLES = {
     "master.items",
-    "logistics.vehicle_duty_logs",
+    "master.party_locations",
+    "master.gst_rates",
+    "logistics.trip_sheets",
     "logistics.trips",
-    "logistics.duty_fuel_links",
-    "logistics.trip_diesel",
-    "logistics.trip_costs",
+    "logistics.diesel_lines",
+    "logistics.enroute_expenses",
     "procurement.trip_purchases",
     "procurement.trip_purchase_files",
     "sales.trip_sales",
+    "sales.trip_closures",
     "finance.trip_payments",
 }
 

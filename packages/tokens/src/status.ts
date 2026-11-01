@@ -33,7 +33,11 @@ export interface StatusSpec {
   /** CSS custom property holding the family's ink colour. */
   colorVar: string;
   tintVar: string | null;
-  /** What this family means, in the words an operator would use. */
+  /**
+   * What this family means — a design note for whoever builds a screen, so
+   * the right family is picked. Never shown to the reader: a screen says the
+   * status in its own words, in the reader's language.
+   */
   meaning: string;
 }
 
@@ -111,6 +115,9 @@ export const STATUS: Record<StatusFamily, StatusSpec> = {
  * Scan forty rows and you can see where every number came from without one
  * pixel of colour being spent on it. The XLSX the CA receives carries a
  * Source column with the same four words.
+ *
+ * `PROVENANCE_LABEL` is that export's English. On screen the rail's hover
+ * says it in the reader's language, from `UiWords.provenance` in @linck/ui.
  */
 export type Provenance =
   | 'human'       /* someone typed it */

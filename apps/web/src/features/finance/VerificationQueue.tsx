@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { businessDate, formatDate, formatDateTime, formatINR, formatINRCompact } from '@linck/domain';
+import { businessDate, formatDate, formatDateTime, formatINR } from '@linck/domain';
 import {
   INVOICES,
   INVOICE_STATUS_FAMILY,
@@ -38,6 +38,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { verifyWords, type MatchReason } from './words.js';
 
@@ -214,6 +215,7 @@ interface VerifiedRow {
 export function VerificationQueue() {
   const { persona, density } = useApp();
   const t = useWords(verifyWords);
+  const inr = useInrCompact();
   const [verifiedNow, setVerifiedNow] = useState<Record<string, true>>({});
   const [filter, setFilter] = useState<'all' | 'utr' | 'cash' | 'blocked' | 'stale'>('all');
   const [stripDismissed, setStripDismissed] = useState(false);
@@ -346,7 +348,7 @@ export function VerificationQueue() {
       width: 140,
       // Reported, not confirmed. The hatch is the ledger's position on it.
       render: (r) => (
-        <Provisional>
+        <Provisional by="person">
           <MoneyCell value={r.amount} />
         </Provisional>
       ),
@@ -411,7 +413,7 @@ export function VerificationQueue() {
       width: 140,
       // Confirmed: the hatch dissolves, the rule goes solid. That is the whole event.
       render: (v) => (
-        <Provisional confirmed>
+        <Provisional confirmed by="person">
           <MoneyCell value={v.receipt.amount} />
         </Provisional>
       ),
@@ -452,21 +454,18 @@ export function VerificationQueue() {
       <TileRow className="mt-4 grid-cols-1 [&>*]:border-[var(--border-subtle)] max-md:[&>*]:border-b max-md:[&>*]:px-6 max-md:[&>*:last-child]:border-b-0 md:grid-cols-3 md:[&>*]:border-r">
         <KpiTile
           eyebrow={t.tiles.waiting}
-          value={formatINRCompact(queueTotal)}
+          value={inr(queueTotal)}
           // None of this counts as collected anywhere until it is checked.
           delta={{ text: t.payments(queue.length), tone: 'attention' }}
-          asOf={AS_OF}
-          source={t.source}
-          freshness="materialised"
+          asOfInHeader
         />
         <KpiTile
           eyebrow={t.tiles.checkedToday}
-          value={formatINRCompact(sum(verifiedToday.map((v) => v.receipt)))}
+          value={inr(sum(verifiedToday.map((v) => v.receipt)))}
           delta={{
             text: checkedByYou > 0 ? t.paymentsByYou(verifiedToday.length, checkedByYou) : t.payments(verifiedToday.length),
           }}
-          asOf={AS_OF}
-          source={t.source}
+          asOfInHeader
         />
         {/* The age counter, not the blocked button, is the actual control.
             A queue nobody clears is the failure mode this rule invites. */}
@@ -477,23 +476,21 @@ export function VerificationQueue() {
             text: oldest === null ? t.tiles.noneWaiting : `${oldest.customerName} · ${t.method[oldest.method]}`,
             tone: oldest !== null && ageDays(oldest.date) > STALE_DAYS ? 'critical' : 'neutral',
           }}
-          asOf={AS_OF}
-          source={t.source}
-          freshness="materialised"
+          asOfInHeader
         />
       </TileRow>
 
       <div className="grid grid-cols-1 gap-x-8 px-6 pt-2 xl:grid-cols-2">
         <Section title={t.age.title}>
           <AgeingBar
-            summary={t.age.summary(formatINRCompact(queueTotal), formatINRCompact(ageingBuckets[3]?.value ?? 0), STALE_DAYS)}
+            summary={t.age.summary(inr(queueTotal), inr(ageingBuckets[3]?.value ?? 0), STALE_DAYS)}
             buckets={ageingBuckets}
-            format={(v) => formatINRCompact(v)}
+            format={inr}
           />
           <NarrowLegend
             items={ageingBuckets.map((b, i) => ({
               label: b.label,
-              value: formatINRCompact(b.value),
+              value: inr(b.value),
               tone: `var(--chart-${Math.min(5, i + 1)})`,
             }))}
           />
@@ -503,9 +500,9 @@ export function VerificationQueue() {
         </Section>
 
         <Section title={t.how.title}>
-          <ProportionBar summary={t.how.summary(cashSharePct, formatINRCompact(queueTotal))} segments={methodSegments} />
+          <ProportionBar summary={t.how.summary(cashSharePct, inr(queueTotal))} segments={methodSegments} />
           <NarrowLegend
-            items={methodSegments.map((s) => ({ label: s.label, value: formatINRCompact(s.value), tone: s.tone }))}
+            items={methodSegments.map((s) => ({ label: s.label, value: inr(s.value), tone: s.tone }))}
           />
           {/* Every banked method leaves a UTR or a cheque number a second
               person can match. Cash leaves nothing — which is why it is the one
@@ -710,7 +707,7 @@ function ReceiptDetail({ receipt, verifier }: { receipt: Receipt; verifier: stri
             {formatDate(receipt.date)} · {t.ago(ageDays(receipt.date))}
           </Detail>
           <Detail label={t.sheet.amount}>
-            <Provisional confirmed={verifier !== null}>
+            <Provisional confirmed={verifier !== null} by="person">
               <MoneyCell value={receipt.amount} accounting={false} />
             </Provisional>
           </Detail>

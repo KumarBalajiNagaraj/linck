@@ -75,6 +75,10 @@ export const WORKSPACES: Workspace[] = [
     module: null,
     items: [
       { key: 'exec', label: 'Dashboard', ta: 'டாஷ்போர்டு', route: '/overview', permission: 'executive.dashboard.read' },
+      // LIN-7: the dashboard's own key — a new one would need an API migration.
+      { key: 'sales-trends', label: 'Sales trends', ta: 'விற்பனைப் போக்கு', route: '/overview/sales', permission: 'executive.dashboard.read' },
+      // LIN-9: next month and the heads-ups, beside the trends they are read from.
+      { key: 'sales-ahead', label: "What's coming", ta: 'வரப்போவது', route: '/overview/sales/ahead', permission: 'executive.dashboard.read' },
       { key: 'expense-approvals', label: 'Approve bills', ta: 'பில் அனுமதி', route: '/overview/expenses', permission: 'finance.expense.approve', badge: 'awaiting_director' },
       { key: 'industry-news', label: 'Industry news', ta: 'தொழில் செய்திகள்', route: '/overview/industry', permission: 'executive.dashboard.read' },
     ],

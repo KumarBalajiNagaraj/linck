@@ -1,4 +1,4 @@
-import { PRODUCTS, VEHICLES } from './data.js';
+import { VEHICLES } from './data.js';
 import { between, makeRng, NOW } from './seed.js';
 
 /**
@@ -107,15 +107,10 @@ export function mileageFor(vehicleId: string): MileagePoint[] {
   return MILEAGE.filter((m) => m.vehicleId === vehicleId);
 }
 
-/**
- * Product mix over the last 30 days, in trade units — what the business
- * actually sold, not what it produced.
+/*
+ * The product mix ("What sold") is read from the sales history now, in
+ * sales-history.ts, so the dashboard and Sales trends name the same top seller.
  */
-export const PRODUCT_MIX: { code: string; label: string; units: number }[] = PRODUCTS.map((p, i) => ({
-  code: p.code,
-  label: p.label,
-  units: Math.round(between(rng, i < 3 ? 900 : 200, i < 3 ? 2600 : 900, 0)),
-})).sort((a, b) => b.units - a.units);
 
 /**
  * Driver attendance, 28 days × the first 14 drivers — enough to show the shape

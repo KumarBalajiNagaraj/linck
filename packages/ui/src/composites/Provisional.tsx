@@ -31,11 +31,20 @@ export interface ProvisionalProps {
   overridden?: boolean | undefined;
   /** The machine's original reading, revealed on hover after an override. */
   originalValue?: string | undefined;
+  /**
+   * Who produced the value, for the hover text. `linck` (the default) is a
+   * machine reading — an OCR'd litre count. `person` is a value somebody
+   * typed — a gate rate, a keyed weighbridge reading, a reported payment, a
+   * vehicle number — and the hover then says only whether it is checked,
+   * rather than claiming Linck read it.
+   */
+  by?: 'linck' | 'person' | undefined;
   className?: string | undefined;
 }
 
-export function Provisional({ children, confirmed, overridden, originalValue, className }: ProvisionalProps) {
-  const words = useUiWords();
+export function Provisional({ children, confirmed, overridden, originalValue, by = 'linck', className }: ProvisionalProps) {
+  const ui = useUiWords();
+  const words = by === 'person' ? ui.provisional.typed : ui.provisional;
   return (
     <span
       className={cn('relative inline-flex items-center gap-1.5 px-1 transition-[background,border-color]', className)}
@@ -46,11 +55,7 @@ export function Provisional({ children, confirmed, overridden, originalValue, cl
         transitionTimingFunction: 'var(--ease)',
       }}
       title={
-        overridden && originalValue
-          ? words.provisional.corrected(originalValue)
-          : confirmed
-            ? words.provisional.confirmed
-            : words.provisional.unconfirmed
+        overridden && originalValue ? words.corrected(originalValue) : confirmed ? words.confirmed : words.unconfirmed
       }
     >
       {children}
@@ -91,7 +96,9 @@ export function ConfidenceMeter({ level, className }: { level: 1 | 2 | 3; classN
     <span
       className={cn('inline-flex items-center gap-[2px]', className)}
       title={words.confidence(level)}
-      aria-label={`Extraction confidence ${level} of 3`}
+      // `img`, so the label is read aloud: on a bare span it is not.
+      role="img"
+      aria-label={words.confidenceOutOf(level)}
     >
       {([1, 2, 3] as const).map((seg) => (
         <span

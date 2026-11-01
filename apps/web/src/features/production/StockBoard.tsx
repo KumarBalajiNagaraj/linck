@@ -33,6 +33,7 @@ import {
   type Column,
 } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
+import { useDayMonth } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { stockWords, unitWords } from './words.js';
@@ -108,15 +109,11 @@ interface StockRow {
   family: 'ready' | 'attention' | 'critical';
 }
 
-/** `19-10` — an axis label in the screen's own date shape, with no month names. */
-function dayMonth(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}-${isoDate.slice(5, 7)}`;
-}
-
 export function StockBoard() {
   const { persona, siteScope, density } = useApp();
   const t = useWords(stockWords);
   const u = useWords(unitWords);
+  const dayMonth = useDayMonth();
   /**
    * Four filter chips do not fit beside the title on a narrow screen — the
    * header is a single flex row and the chips are the widest thing on it, wider
@@ -310,18 +307,14 @@ export function StockBoard() {
           eyebrow={t.tiles.made}
           value={u.units(formatQty(trade.producedUnits, 1))}
           delta={{ text: t.tiles.madeNote }}
-          asOf="14:42"
-          source="v_production_daily"
-          freshness="materialised"
+          asOfInHeader
         />
         <div className="relative">
           <KpiTile
             eyebrow={t.tiles.sent}
             value={u.units(formatQty(trade.dispatchedUnits, 1))}
             delta={{ text: t.tiles.trips(trade.activeTrips) }}
-            asOf="14:42"
-            source="v_dispatch_daily"
-            freshness="materialised"
+            asOfInHeader
           />
           {/* Fourteen days of dispatch behind today's figure, so "160 units" is
               read as high or low rather than as a bare number. */}
@@ -340,8 +333,7 @@ export function StockBoard() {
             text: trade.gapUnits > 0 ? t.tiles.up : trade.gapUnits < 0 ? t.tiles.down : t.tiles.even,
             tone: trade.gapUnits < 0 ? 'critical' : Math.abs(trade.gapUnits) > 40 ? 'attention' : 'neutral',
           }}
-          asOf="14:42"
-          source="v_produced_dispatched_invoiced"
+          asOfInHeader
         />
         {/* Unexplained since the last physical count. */}
         <KpiTile
@@ -739,7 +731,7 @@ function StockDetail({ row, t, u }: { row: StockRow; t: Words; u: Units }) {
             {row.promisedUnits === 0 ? (
               <QuantityCell value={0} decimals={1} uom={u.unit} />
             ) : (
-              <Provisional>
+              <Provisional by="person">
                 <QuantityCell value={row.promisedUnits} decimals={1} uom={u.unit} />
               </Provisional>
             )}
@@ -899,7 +891,7 @@ function buildColumns(showSite: boolean, t: Words, u: Units): Column<StockRow>[]
       render: (r) =>
         r.promisedUnits === 0
           ? tinted('var(--text-tertiary)', <QuantityCell value={0} decimals={1} />)
-          : <Provisional><QuantityCell value={r.promisedUnits} decimals={1} /></Provisional>,
+          : <Provisional by="person"><QuantityCell value={r.promisedUnits} decimals={1} /></Provisional>,
     },
     {
       key: 'cover', header: t.columns.daysLeft, type: 'num', width: 90,

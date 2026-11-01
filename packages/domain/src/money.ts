@@ -37,6 +37,19 @@ export function formatINR(value: MoneyInput, opts?: { decimals?: 0 | 2 }): strin
 }
 
 /**
+ * The words a compact figure ends in. The domain does not know languages: the
+ * screen passes the reader's own (ஆயிரம் / லட்சம் / கோடி for a Tamil reader),
+ * and anything that does not pass them gets the English abbreviations.
+ */
+export interface CompactUnits {
+  thousand: string;
+  lakh: string;
+  crore: string;
+}
+
+export const ENGLISH_COMPACT_UNITS: CompactUnits = { thousand: 'K', lakh: 'L', crore: 'Cr' };
+
+/**
  * `₹1.23 Cr` / `₹4.50 L` / `₹85.0 K`.
  *
  * Hand-implemented against explicit thresholds rather than trusting ICU's
@@ -44,16 +57,19 @@ export function formatINR(value: MoneyInput, opts?: { decimals?: 0 | 2 }): strin
  * runtimes — and an executive dashboard that renders "₹1.2Cr" in Chrome and
  * "₹12000000" in a Samsung browser is not a dashboard.
  *
+ * Only the unit word changes with `units`; the thresholds and the rounding
+ * are the same in every language, so two readers never see different money.
+ *
  * Always pair with a `title` carrying the full-precision value.
  */
-export function formatINRCompact(value: MoneyInput): string {
+export function formatINRCompact(value: MoneyInput, units: CompactUnits = ENGLISH_COMPACT_UNITS): string {
   const n = toNumber(value);
   if (!Number.isFinite(n)) return '–';
   const abs = Math.abs(n);
   const sign = n < 0 ? '-' : '';
-  if (abs >= 1_00_00_000) return `${sign}₹${(abs / 1_00_00_000).toFixed(2)} Cr`;
-  if (abs >= 1_00_000) return `${sign}₹${(abs / 1_00_000).toFixed(2)} L`;
-  if (abs >= 1_000) return `${sign}₹${(abs / 1_000).toFixed(1)} K`;
+  if (abs >= 1_00_00_000) return `${sign}₹${(abs / 1_00_00_000).toFixed(2)} ${units.crore}`;
+  if (abs >= 1_00_000) return `${sign}₹${(abs / 1_00_000).toFixed(2)} ${units.lakh}`;
+  if (abs >= 1_000) return `${sign}₹${(abs / 1_000).toFixed(1)} ${units.thousand}`;
   return `${sign}₹${abs.toFixed(0)}`;
 }
 

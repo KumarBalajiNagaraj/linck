@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { can, formatINR, formatINRCompact, formatQty } from '@linck/domain';
+import { can, formatDateTime, formatINR, formatINRCompact, formatQty } from '@linck/domain';
 import { indentsForSite, isIndentOpen, NOW, SITES, type Indent } from '@linck/mock';
 import {
   AgeingBar,
@@ -25,26 +25,29 @@ import {
   SideSheet,
   Stacked,
   StatusStamp,
-  TargetGauge,
   TileRow,
+  useIsPhone,
   useIsTouch,
   type Column,
 } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { CATEGORY_CODES, indentWords, type CategoryCode } from './words.js';
 
 const INDENT_VIEWS = ['open', 'fleet', 'all', 'breakdown', 'below_reorder'] as const;
 
 /**
- * The Indent Queue.
+ * Material requests (the stores "indent queue").
  *
  * Stores is the smallest team and the one most likely to abandon a system that
  * asks too much, so this screen deliberately does one thing: show what has
  * been asked for, what it will cost, and whether the plant is standing still
  * waiting for it.
  *
- * The ordering rule is the whole design. A breakdown indent is not a more
- * urgent routine indent — it means a crusher or a tipper is stopped RIGHT NOW
+ * The ordering rule is the whole design. A breakdown request is not a more
+ * urgent routine request — it means a crusher or a tipper is stopped RIGHT NOW
  * and every hour it sits in this queue is production that does not happen. So
  * urgency sorts above age, and a breakdown line says what is stopped rather
  * than just saying "urgent".
@@ -53,9 +56,18 @@ const INDENT_VIEWS = ['open', 'fleet', 'all', 'breakdown', 'below_reorder'] as c
  * plant been waiting on us", which is the only question this desk is actually
  * judged on. The spend bar answers the finance question sitting underneath it —
  * what has already been committed, and how much more is queued behind it.
+ *
+ * LIN-23: every word is in ./words.ts, in English and Tamil, and kept short.
+ * The reasoning that used to be printed under the charts lives in these
+ * comments instead: a routine request ageing past a day is a purchasing habit;
+ * a breakdown request in that last bucket is a day of crushing the group never
+ * gets back; a short spend bar with a long dashed tick is a desk that has
+ * stopped deciding, not a site that has stopped spending.
  */
 
 type Stage = Indent['status'];
+type Words = (typeof indentWords)['en'];
+type StageWords = (typeof statusWords)['en']['indent'];
 
 const URGENCY_RANK: Record<Indent['urgency'], number> = { breakdown: 0, urgent: 1, routine: 2 };
 
@@ -66,19 +78,6 @@ const STAGE_FAMILY = {
   rejected: 'dormant',
 } as const;
 
-const STAGE_LABEL: Record<Stage, string> = {
-  submitted: 'Awaiting approval',
-  approved: 'Approved',
-  issued: 'Issued',
-  rejected: 'Rejected',
-};
-
-const URGENCY_LABEL: Record<Indent['urgency'], string> = {
-  breakdown: 'Breakdown',
-  urgent: 'Urgent',
-  routine: 'Routine',
-};
-
 const URGENCY_FAMILY = {
   breakdown: 'critical',
   urgent: 'attention',
@@ -88,16 +87,12 @@ const URGENCY_FAMILY = {
 /**
  * Item code prefixes carry the stores category. There is no category column in
  * the source, and inventing one would be a lie — but the coding scheme is real
- * and the storekeeper reads it that way every day.
+ * and the storekeeper reads it that way every day. The code, not its word, is
+ * the group key, so a chosen bar survives a switch of language.
  */
-const CATEGORY_LABEL: Record<string, string> = {
-  SP: 'Plant spares',
-  CN: 'Consumables',
-  TY: 'Tyres and tubes',
-};
-
-function categoryOf(itemCode: string): string {
-  return CATEGORY_LABEL[itemCode.slice(0, 2)] ?? 'Other stores';
+function categoryOf(itemCode: string): CategoryCode {
+  const prefix = itemCode.slice(0, 2);
+  return (CATEGORY_CODES as readonly string[]).includes(prefix) ? (prefix as CategoryCode) : 'other';
 }
 
 function siteName(siteId: string): string {
@@ -109,19 +104,17 @@ function waitedHours(indent: Indent): number {
   return (NOW.getTime() - Date.parse(indent.raisedOn)) / 3_600_000;
 }
 
-function formatWait(hours: number): string {
-  if (hours < 1) return 'under an hour';
-  if (hours < 24) return `${Math.round(hours)} hours`;
-  return `${formatQty(hours / 24, 1)} days`;
+/** `08-08 12:42` — the sheet's corner line, where the year is implied. */
+function shortDateTime(iso: string): string {
+  const full = formatDateTime(iso);
+  return `${full.slice(0, 5)} ${full.slice(11)}`;
 }
 
-/** Ordered, and the later ones are the ones that cost money. */
-const WAIT_BUCKETS: { label: string; upto: number }[] = [
-  { label: 'Under 4 h', upto: 4 },
-  { label: '4 – 12 h', upto: 12 },
-  { label: '12 – 24 h', upto: 24 },
-  { label: 'Over a day', upto: Number.POSITIVE_INFINITY },
-];
+/**
+ * Upper edges of the waiting-time buckets, in hours. Ordered, and the later
+ * ones are the ones that cost money. Their words are in ./words.ts, by position.
+ */
+const WAIT_BUCKET_UPTO = [4, 12, 24, Number.POSITIVE_INFINITY] as const;
 
 type Lens = 'all' | Indent['urgency'];
 type GroupBy = 'site' | 'category';
@@ -143,12 +136,24 @@ interface SpendGroup {
   stopped: boolean;
 }
 
+/** The permission behind Approve. Kept on hover for the admin, never printed. */
+const APPROVE_PERMISSION = 'stores.indent.approve';
+
 export function IndentQueue() {
   const { persona, siteScope, density } = useApp();
+  const t = useWords(indentWords);
+  const stageWord = useWords(statusWords).indent;
   // Bar rows are 22px on a mouse — a deliberate density choice — and 22px is
   // not a thumb target. Keyed to the pointer, not the screen: a weighbridge
   // terminal is a wide display that still gets fingers.
   const touch = useIsTouch();
+  /**
+   * The Tamil "waiting approval" stamp is about 220px wide. A sheet header on a
+   * phone gives it the title's room, and a phone card's half-width cell is
+   * narrower than it, so on a phone the stage moves to where it has the full
+   * width: the top of the sheet body, and under the request number on a card.
+   */
+  const phone = useIsPhone();
   const [overrides, setOverrides] = useState<Record<string, Stage>>({});
   const [filter, setFilter] = useViewParam(INDENT_VIEWS, 'open');
   const [selected, setSelected] = useState<string | undefined>(undefined);
@@ -157,7 +162,7 @@ export function IndentQueue() {
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
   const [confirmReject, setConfirmReject] = useState<string | null>(null);
 
-  const mayApprove = can(persona.grants, 'stores.indent.approve', { siteId: siteScope });
+  const mayApprove = can(persona.grants, APPROVE_PERMISSION, { siteId: siteScope });
 
   const rows = useMemo<Row[]>(() => {
     // Shared with the fleet board's count: a fleet requisition also shows at
@@ -175,7 +180,7 @@ export function IndentQueue() {
   const isOpen = (r: Row) => r.stage === 'submitted' || r.stage === 'approved';
   /** Same rule as the fleet board's "Open store requests" card, on the live stage. */
   const isFleetOpen = (r: Row) => r.requestedFor === 'fleet' && isIndentOpen({ ...r, status: r.stage });
-  const groupKeyOf = (r: Row, by: GroupBy) => (by === 'site' ? r.siteId : categoryOf(r.itemCode));
+  const groupKeyOf = (r: Row, by: GroupBy): string => (by === 'site' ? r.siteId : categoryOf(r.itemCode));
 
   const visible = useMemo(() => {
     const byStage =
@@ -209,11 +214,11 @@ export function IndentQueue() {
 
   const ageingBuckets = useMemo(
     () =>
-      WAIT_BUCKETS.map((b, i) => {
-        const floor = i === 0 ? 0 : (WAIT_BUCKETS[i - 1]?.upto ?? 0);
-        return { label: b.label, value: ageingRows.filter((r) => r.waited >= floor && r.waited < b.upto).length };
+      WAIT_BUCKET_UPTO.map((upto, i) => {
+        const floor = i === 0 ? 0 : (WAIT_BUCKET_UPTO[i - 1] ?? 0);
+        return { label: t.ageing.buckets[i] ?? '', value: ageingRows.filter((r) => r.waited >= floor && r.waited < upto).length };
       }),
-    [ageingRows],
+    [ageingRows, t],
   );
 
   const overADay = ageingBuckets[3]?.value ?? 0;
@@ -234,7 +239,7 @@ export function IndentQueue() {
     const map = new Map<string, SpendGroup>();
     for (const r of rows) {
       const key = groupKeyOf(r, groupBy);
-      const label = groupBy === 'site' ? siteName(r.siteId) : key;
+      const label = groupBy === 'site' ? siteName(r.siteId) : t.category[key as CategoryCode];
       const g = map.get(key) ?? { key, label, display: label, committed: 0, awaiting: 0, stopped: false };
       const value = Number.parseFloat(r.estimatedValue);
       if (r.stage === 'approved' || r.stage === 'issued') g.committed += value;
@@ -245,9 +250,9 @@ export function IndentQueue() {
       map.set(key, g);
     }
     return [...map.values()]
-      .map((g) => ({ ...g, display: g.stopped ? `${g.label} · stopped` : g.label }))
+      .map((g) => ({ ...g, display: g.stopped ? t.spend.stopped(g.label) : g.label }))
       .sort((a, b) => b.committed - a.committed || b.awaiting - a.awaiting);
-  }, [rows, groupBy]);
+  }, [rows, groupBy, t]);
 
   const spendBars = groups.map((g) => ({
     label: g.display,
@@ -259,9 +264,11 @@ export function IndentQueue() {
   const topGroup = groups[0];
   const stoppedGroups = groups.filter((g) => g.stopped);
 
+  const columns = useMemo(() => buildColumns(t, stageWord, phone), [t, stageWord, phone]);
+
   /* --- Selection, and the two things that mutate it --------------------- */
 
-  // Read from `rows`, not `visible` — otherwise approving an indent under the
+  // Read from `rows`, not `visible` — otherwise approving a request under the
   // "Open" filter would snatch the sheet away mid-decision.
   const selectedRow = rows.find((r) => r.id === selected);
   const rejectRow = rows.find((r) => r.id === confirmReject);
@@ -285,29 +292,32 @@ export function IndentQueue() {
   const groupFilterLabel = groups.find((g) => g.key === groupFilter)?.label ?? null;
 
   /*
-   * The two chip rows are declared once and placed twice.
+   * Chip rows and section headers.
    *
-   * A section header on a phone cannot hold "Committed spend, and what is
-   * queued behind it" and a pair of chips on the same line — the header is a
-   * `justify-between` flex, so the chips either squash the title or push off
-   * the right edge. So below `sm` the chips leave the header and ride above
-   * the chart as their own scrolling strip. Exactly one of the two placements
-   * is ever rendered — the other is `display: none`, so nothing is focusable
-   * twice and no state is duplicated.
+   * A section header on a phone cannot hold its title and a row of chips on
+   * the same line — the header is a `justify-between` flex, so the chips
+   * either squash the title or push off the right edge. So the two grouping
+   * chips are declared once and placed twice: in the header from `sm` up, and
+   * below it as their own scrolling strip on a phone. Exactly one of the two
+   * placements is ever rendered — the other is `display: none`, so nothing is
+   * focusable twice and no state is duplicated.
+   *
+   * The four waiting-time chips are wider than half a desk in Tamil, so they
+   * always ride in a strip under their title.
    */
   const lensChips = (
     <>
       <Chip active={lens === 'all'} onClick={() => setLens('all')}>
-        All
+        {t.ageing.all}
       </Chip>
       <Chip active={lens === 'breakdown'} onClick={() => setLens('breakdown')}>
-        Breakdown
+        {t.urgency.breakdown}
       </Chip>
       <Chip active={lens === 'urgent'} onClick={() => setLens('urgent')}>
-        Urgent
+        {t.urgency.urgent}
       </Chip>
       <Chip active={lens === 'routine'} onClick={() => setLens('routine')}>
-        Routine
+        {t.urgency.routine}
       </Chip>
     </>
   );
@@ -315,40 +325,48 @@ export function IndentQueue() {
   const groupChips = (
     <>
       <Chip active={groupBy === 'site'} onClick={() => changeGroupBy('site')}>
-        By site
+        {t.spend.bySite}
       </Chip>
       <Chip active={groupBy === 'category'} onClick={() => changeGroupBy('category')}>
-        By category
+        {t.spend.byType}
       </Chip>
     </>
   );
 
+  /** The stage as the sheet shows it; a waiting request carries its hours. */
+  const stageStamp = (row: Row) => ({
+    family: STAGE_FAMILY[row.stage],
+    label: stageWord[row.stage],
+    ...(row.stage === 'submitted' ? { severity: t.sheet.waited(Math.round(row.waited)) } : {}),
+  });
+  const sheetStamp = selectedRow ? stageStamp(selectedRow) : undefined;
+
   /** Chips in a strip that scrolls rather than squashing. */
   const stripClass = 'flex gap-2 overflow-x-auto px-6 pb-3 sm:hidden [&>button]:shrink-0';
+  const wideStripClass = 'flex gap-2 overflow-x-auto px-6 pb-3 [&>button]:shrink-0';
 
   return (
     <>
       <PageHeader
-        eyebrow="Stores"
-        title="Indent queue"
+        eyebrow={t.eyebrow}
+        title={t.title}
         meta={<AsOfStamp asOf="14:42" source="v_indent_queue" freshness="live" />}
-        actions={<Button variant="primary">Raise an indent</Button>}
+        actions={<Button variant="primary">{t.ask}</Button>}
       />
 
       {/*
-        Two tiles across a phone leaves ~130px of measure, and these deltas are
-        sentences — "A plant or a tipper is stopped until these are approved"
-        wraps to six lines and the number stops being the thing you read. One
-        tile per row below `sm`; the separating hairline turns from a right edge
-        into a bottom one so the stack still reads as a ruled panel.
+        One tile per row below `sm`: two tiles across a phone leaves ~130px of
+        measure, and a Tamil delta wraps to four lines in that. The separating
+        hairline turns from a right edge into a bottom one so the stack still
+        reads as a ruled panel.
       */}
       <TileRow className="grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 [&>*]:border-b [&>*]:border-[var(--border-subtle)] [&>*:last-child]:border-b-0 sm:[&>*]:border-b-0 sm:[&>*]:border-r">
         <KpiTile
-          eyebrow="Awaiting approval"
+          eyebrow={t.tiles.waiting}
           hero
           value={String(awaiting.length)}
           delta={{
-            text: `${formatINRCompact(awaitingValue)} of spend not yet committed`,
+            text: t.tiles.worth(formatINRCompact(awaitingValue)),
             ...(breakdownWaiting.length > 0 ? { tone: 'critical' as const } : {}),
           }}
           asOf="14:42"
@@ -356,36 +374,32 @@ export function IndentQueue() {
         />
         {/*
           The number that should make somebody get up from their desk. A
-          breakdown indent sitting in a queue is a stopped crusher, and the
-          hours are the cost.
+          breakdown request sitting in a queue is a stopped crusher or tipper,
+          and the hours are the cost.
         */}
         <KpiTile
-          eyebrow="Breakdown indents waiting"
+          eyebrow={t.tiles.breakdown}
           value={String(breakdownWaiting.length)}
           delta={{
-            text:
-              breakdownWaiting.length > 0
-                ? 'A plant or a tipper is stopped until these are approved'
-                : 'Nothing is stopped waiting on stores',
+            text: breakdownWaiting.length > 0 ? t.tiles.stopped : t.tiles.nothingStopped,
             ...(breakdownWaiting.length > 0 ? { tone: 'critical' as const } : {}),
           }}
           asOf="14:42"
           source="v_indent_queue"
         />
+        {/* Ageing is the control on this desk, not a blocked button — so past a
+            day the tile says so, in the attention colour. */}
         <KpiTile
-          eyebrow="Oldest in queue"
-          value={oldestHours >= 24 ? `${formatQty(oldestHours / 24, 1)} days` : `${Math.round(oldestHours)} hours`}
-          delta={{
-            text: 'Ageing is the control here, not a blocked button',
-            ...(oldestHours > 24 ? { tone: 'attention' as const } : {}),
-          }}
+          eyebrow={t.tiles.oldest}
+          value={t.age(oldestHours)}
+          delta={oldestHours > 24 ? { text: t.tiles.late, tone: 'attention' } : undefined}
           asOf="14:42"
           source="v_indent_queue"
         />
         <KpiTile
-          eyebrow="Committed spend"
+          eyebrow={t.tiles.approved}
           value={formatINRCompact(committed)}
-          delta={{ text: 'Approved or already issued this period' }}
+          delta={{ text: t.tiles.approvedNote }}
           asOf="14:42"
           source="v_procurement_commitment"
         />
@@ -398,26 +412,21 @@ export function IndentQueue() {
         line with every other rule on the page.
       */}
       <div className="grid grid-cols-1 gap-x-8 px-0 pt-6 sm:px-6 xl:grid-cols-2">
-        <Section
-          caption="Open indents, by how long they have waited"
-          title="The clock on this desk"
-          actions={<div className="hidden items-center gap-2 sm:flex">{lensChips}</div>}
-        >
-          <div className={stripClass}>{lensChips}</div>
+        <Section caption={t.ageing.caption} title={t.ageing.title}>
+          <div className={wideStripClass}>{lensChips}</div>
           <div className="px-6">
             {ageingRows.length === 0 ? (
               <p className="font-serif py-6 text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                Nothing open at this urgency. Try another split.
+                {t.ageing.none}
               </p>
             ) : (
               <>
+                {/* Darker is older: later buckets sit later in the ramp. */}
                 <AgeingBar
                   height={64}
-                  summary={`${ageingRows.length} open ${lens === 'all' ? '' : `${URGENCY_LABEL[lens].toLowerCase()} `}indent${
-                    ageingRows.length === 1 ? '' : 's'
-                  }, of which ${overADay} ${overADay === 1 ? 'has' : 'have'} waited more than a day.`}
+                  summary={t.ageing.summary(ageingRows.length, overADay)}
                   buckets={ageingBuckets}
-                  format={(v) => (v === 1 ? '1 indent' : `${Math.round(v)} indents`)}
+                  format={(v) => t.ageing.count(Math.round(v))}
                 />
                 {/*
                   On a 327px bar a thin segment loses its caption, so the phone
@@ -427,7 +436,7 @@ export function IndentQueue() {
                   the bar already drew.
                 */}
                 {unlabelledBuckets.length > 0 ? (
-                  <dl className="mt-2 grid grid-cols-2 gap-x-5 sm:hidden">
+                  <dl className="mt-2 grid grid-cols-1 sm:hidden">
                     {unlabelledBuckets.map((b) => (
                       <div
                         key={b.label}
@@ -438,7 +447,7 @@ export function IndentQueue() {
                           {b.label}
                         </dt>
                         <dd className="num text-[12px] tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          {b.value === 1 ? '1 indent' : `${b.value} indents`}
+                          {t.ageing.count(b.value)}
                         </dd>
                       </div>
                     ))}
@@ -446,18 +455,10 @@ export function IndentQueue() {
                 ) : null}
               </>
             )}
-            <ChartCaption>
-              Darker is older. A routine indent ageing past a day is a purchasing habit; a breakdown indent in
-              that last bucket is a day of crushing the group never gets back.
-            </ChartCaption>
           </div>
         </Section>
 
-        <Section
-          caption={groupBy === 'site' ? 'By requesting site' : 'By stores category'}
-          title="Committed spend, and what is queued behind it"
-          actions={<div className="hidden items-center gap-2 sm:flex">{groupChips}</div>}
-        >
+        <Section title={t.spend.title} actions={<div className="hidden items-center gap-2 sm:flex">{groupChips}</div>}>
           <div className={stripClass}>{groupChips}</div>
           <div className="px-6">
             {/*
@@ -469,26 +470,24 @@ export function IndentQueue() {
             */}
             <div className="overflow-x-auto sm:overflow-x-visible">
               {/*
-                The 12px inset is the overrun allowance. "Karapakkam Crusher ·
-                stopped" measures 176px against a 166px label budget, so it
-                reaches ten pixels left of where the chart starts. On a desk it
-                bleeds harmlessly into the section gutter; inside a scroll box
-                it would be shaved, and a site would silently lose the word that
-                says it is stopped.
+                The 32px inset is the overrun allowance. "Karapakkam Crusher ·
+                நிற்கிறது" measures about 195px against a 166px label budget, so
+                it reaches thirty pixels left of where the chart starts. On a
+                desk it bleeds harmlessly into the section gutter; inside a
+                scroll box it would be shaved, and a site would silently lose
+                the word that says it is stopped.
               */}
-              <div className="min-w-[520px] pl-3 sm:min-w-0 sm:pl-0">
+              <div className="min-w-[520px] pl-8 sm:min-w-0 sm:pl-0">
                 <BarChart
                   barHeight={touch ? 40 : 22}
                   summary={
                     topGroup
-                      ? `${topGroup.label} carries the most committed spend at ${formatINRCompact(topGroup.committed)}${
-                          stoppedGroups.length > 0
-                            ? `. ${stoppedGroups.map((g) => g.label).join(' and ')} ${
-                                stoppedGroups.length === 1 ? 'has' : 'have'
-                              } a breakdown indent still unapproved.`
-                            : '.'
-                        }`
-                      : 'No indents in scope.'
+                      ? t.spend.summary(
+                          topGroup.label,
+                          formatINRCompact(topGroup.committed),
+                          stoppedGroups.map((g) => g.label),
+                        )
+                      : t.spend.none
                   }
                   data={spendBars}
                   format={(v) => formatINRCompact(v)}
@@ -497,35 +496,33 @@ export function IndentQueue() {
                 />
               </div>
             </div>
-            <ChartCaption>
-              The bar is money already approved or issued; the dashed tick is what is still sitting unapproved
-              behind it. A short bar with a long tick is a desk that has stopped deciding, not a site that has
-              stopped spending. Pick a bar to filter the queue below.
-            </ChartCaption>
+            <ChartCaption>{t.spend.legend}</ChartCaption>
           </div>
         </Section>
       </div>
 
       <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={filter === 'open'} onClick={() => setFilter('open')} count={rows.filter(isOpen).length}>
-          Open
+          {t.filters.open}
         </Chip>
         <Chip active={filter === 'fleet'} onClick={() => setFilter('fleet')} count={rows.filter(isFleetOpen).length}>
-          Open store requests — fleet
+          {t.filters.fleet}
         </Chip>
         <Chip active={filter === 'breakdown'} onClick={() => setFilter('breakdown')} count={rows.filter((r) => r.urgency === 'breakdown').length}>
-          Breakdown
+          {t.filters.breakdown}
         </Chip>
         <Chip active={filter === 'below_reorder'} onClick={() => setFilter('below_reorder')} count={rows.filter((r) => r.stockOnHand < r.reorderLevel).length}>
-          Below reorder level
+          {t.filters.low}
         </Chip>
         <Chip active={filter === 'all'} onClick={() => setFilter('all')} count={rows.length}>
-          Everything
+          {t.filters.all}
         </Chip>
 
         {groupFilterLabel ? (
           <Chip active onClick={() => setGroupFilter(null)}>
-            {groupFilterLabel} — clear
+            {groupFilterLabel}
+            <span aria-hidden="true">✕</span>
+            <span className="sr-only">{t.filters.clear}</span>
           </Chip>
         ) : null}
 
@@ -535,8 +532,9 @@ export function IndentQueue() {
           <span
             className="font-serif w-full text-[13px] italic sm:ml-auto sm:w-auto"
             style={{ color: 'var(--text-tertiary)' }}
+            title={APPROVE_PERMISSION}
           >
-            You can read this queue but not approve from it — {persona.roleLabel} does not hold stores.indent.approve.
+            {t.viewOnly}
           </span>
         ) : null}
       </div>
@@ -556,16 +554,11 @@ export function IndentQueue() {
           empty={
             groupFilterLabel ? (
               <EmptyState
-                fact={`Nothing matches ${groupFilterLabel} under this filter.`}
-                because="The bar you clicked has indents, but none of them are in the stage you are looking at."
-                action={{ label: 'Clear the site filter', onClick: () => setGroupFilter(null) }}
+                fact={t.empty.group(groupFilterLabel)}
+                action={{ label: groupBy === 'site' ? t.empty.allSites : t.empty.allTypes, onClick: () => setGroupFilter(null) }}
               />
             ) : (
-              <EmptyState
-                fact="Nothing is waiting in this queue."
-                because="Every indent raised for this site has been approved, issued or closed."
-                action={{ label: 'Show everything', onClick: () => setFilter('all') }}
-              />
+              <EmptyState fact={t.empty.nothing} action={{ label: t.empty.showAll, onClick: () => setFilter('all') }} />
             )
           }
         />
@@ -578,81 +571,68 @@ export function IndentQueue() {
         onClose={() => setSelected(undefined)}
         title={selectedRow?.itemName ?? ''}
         identifier={selectedRow?.number}
-        {...(selectedRow
-          ? {
-              status: {
-                family: STAGE_FAMILY[selectedRow.stage],
-                label: STAGE_LABEL[selectedRow.stage],
-                ...(selectedRow.stage === 'submitted'
-                  ? { severity: `+${Math.round(selectedRow.waited)}h` }
-                  : {}),
-              },
-            }
-          : {})}
-        revision={
-          selectedRow
-            ? `RAISED ${selectedRow.raisedOn.slice(8, 10)}-${selectedRow.raisedOn.slice(5, 7)} ${selectedRow.raisedOn.slice(11, 16)}`
-            : undefined
-        }
+        status={phone ? undefined : sheetStamp}
+        revision={selectedRow && !phone ? t.sheet.asked(shortDateTime(selectedRow.raisedOn)) : undefined}
         footer={
           selectedRow ? (
             mayApprove ? (
               /*
-                The sheet footer is one fixed-height row that does not wrap. On
-                a 375px panel "Mark issued from stores" plus its aside ran off
-                the right edge, so the buttons are pinned at their natural width
-                and the aside is allowed to shrink and set on two lines inside
-                the same 56px band — the sentence stays, it just sets tighter.
+                The sheet footer is one fixed-height row that does not wrap, so
+                the buttons are pinned at their natural width and the aside is
+                allowed to shrink and set on two lines inside the same 56px band.
               */
               selectedRow.stage === 'submitted' ? (
                 <>
                   <Button className="shrink-0" variant="primary" onClick={() => setStage(selectedRow.id, 'approved')}>
-                    Approve
+                    {t.sheet.approve}
                   </Button>
                   <Button className="shrink-0" variant="destructive" onClick={() => setConfirmReject(selectedRow.id)}>
-                    Reject
+                    {t.sheet.reject}
                   </Button>
                   <span
                     className="font-serif ml-auto min-w-0 text-right text-[12px] italic leading-snug"
                     style={{ color: 'var(--text-tertiary)' }}
                   >
-                    Waiting {formatWait(selectedRow.waited)}
+                    {t.sheet.waiting(t.wait(selectedRow.waited))}
                   </span>
                 </>
               ) : selectedRow.stage === 'approved' ? (
-                <>
-                  <Button className="shrink-0" variant="primary" onClick={() => setStage(selectedRow.id, 'issued')}>
-                    Mark issued from stores
-                  </Button>
-                  <span
-                    className="font-serif ml-auto min-w-0 text-right text-[12px] italic leading-snug"
-                    style={{ color: 'var(--text-tertiary)' }}
-                  >
-                    Approved — the gate is the counter now
-                  </span>
-                </>
+                // Approved: the gate is the counter now, so the one thing left
+                // to do here is record that stores handed it over.
+                <Button className="shrink-0" variant="primary" onClick={() => setStage(selectedRow.id, 'issued')}>
+                  {t.sheet.markGiven}
+                </Button>
               ) : (
                 <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  {STAGE_LABEL[selectedRow.stage]} — nothing further to do here.
+                  {t.sheet.done(stageWord[selectedRow.stage])}
                 </span>
               )
             ) : (
-              <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                Read-only — {persona.roleLabel} does not hold stores.indent.approve.
+              <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }} title={APPROVE_PERMISSION}>
+                {t.sheet.viewOnly}
               </span>
             )
           ) : null
         }
       >
-        {selectedRow ? <IndentDetail row={selectedRow} siblings={siblings} /> : null}
+        {selectedRow ? (
+          <>
+            {phone && sheetStamp ? (
+              <p className="mb-4">
+                <StatusStamp status={sheetStamp.family} label={sheetStamp.label} severity={sheetStamp.severity} />
+              </p>
+            ) : null}
+            <IndentDetail row={selectedRow} siblings={siblings} t={t} stageWord={stageWord} />
+          </>
+        ) : null}
       </SideSheet>
 
       {/*
         Reject is the only irreversible move on this screen, and the consequence
         is not "a record changes state" — it is that a named crusher stays off
-        until somebody re-raises the paperwork. On a breakdown line the operator
-        types the indent number out, because that is a decision that should cost
-        ten seconds of attention rather than one stray click.
+        until somebody asks again. On a breakdown line the operator types the
+        request number out, because that is a decision that should cost ten
+        seconds of attention rather than one stray click.
       */}
       <ConfirmModal
         open={rejectRow !== undefined}
@@ -660,21 +640,31 @@ export function IndentQueue() {
         onConfirm={() => {
           if (rejectRow) setStage(rejectRow.id, 'rejected');
         }}
-        title="Reject this indent"
+        title={t.reject.title}
         destructive
-        confirmLabel="Reject the indent"
+        confirmLabel={t.reject.confirm}
         {...(rejectRow?.urgency === 'breakdown' ? { confirmPhrase: rejectRow.number } : {})}
         consequence={
           rejectRow ? (
             <>
-              {rejectRow.raisedBy} asked for {formatQty(rejectRow.quantity, 0)} {rejectRow.uom} of{' '}
-              {rejectRow.itemName} against {rejectRow.forAsset ?? 'general stores'}, worth about{' '}
-              {formatINR(rejectRow.estimatedValue)}.{' '}
-              {rejectRow.urgency === 'breakdown'
-                ? `${rejectRow.forAsset ?? 'The plant'} is stopped now and stays stopped — rejecting this does not restart it, it only takes it off your list. It has already been waiting ${formatWait(rejectRow.waited)}.`
-                : rejectRow.stockOnHand === 0
-                  ? `Nothing is on hand, so ${rejectRow.forAsset ?? 'the job'} waits until somebody raises this again.`
-                  : `${formatQty(rejectRow.stockOnHand, 0)} ${rejectRow.uom} remain on hand, so nothing stops today — but the reorder level of ${formatQty(rejectRow.reorderLevel, 0)} stays breached.`}
+              <p>
+                {t.reject.asked(
+                  rejectRow.raisedBy,
+                  formatQty(rejectRow.quantity, 0),
+                  rejectRow.uom,
+                  rejectRow.itemName,
+                  formatINR(rejectRow.estimatedValue, { decimals: 0 }),
+                )}
+              </p>
+              {/* Rejecting a breakdown request does not restart anything; it
+                  only takes the stoppage off this list. */}
+              <p className="mt-2">
+                {rejectRow.urgency === 'breakdown'
+                  ? t.reject.stopped(rejectRow.forAsset)
+                  : rejectRow.stockOnHand === 0
+                    ? t.reject.noStock
+                    : t.reject.inStock(formatQty(rejectRow.stockOnHand, 0), rejectRow.uom)}
+              </p>
             </>
           ) : null
         }
@@ -684,228 +674,219 @@ export function IndentQueue() {
 }
 
 /**
- * The sheet. Everything the row could not say: who asked and how long ago, the
- * unit rate implied by the estimate, the stock position drawn against the
- * reorder level, and the plain consequence of leaving it alone.
+ * The sheet. Everything the row could not say: who asked and when, the unit
+ * rate implied by the estimate, and the stock against its minimum with the one
+ * line that makes a storekeeper act rather than acknowledge.
  */
-function IndentDetail({ row, siblings }: { row: Row; siblings: Row[] }) {
+function IndentDetail({ row, siblings, t, stageWord }: { row: Row; siblings: Row[]; t: Words; stageWord: StageWords }) {
   const estimate = Number.parseFloat(row.estimatedValue);
   const unitRate = row.quantity > 0 ? estimate / row.quantity : null;
+  // Zero in stock against a breakdown request is the whole story of the row.
+  const stockColor =
+    row.stockOnHand === 0 ? 'var(--status-critical)' : row.stockOnHand < row.reorderLevel ? 'var(--status-attention)' : undefined;
 
   return (
     <>
-      <SheetSection caption="The request">
+      <SheetSection caption={t.sheet.request}>
         <DetailGrid>
-          <Detail label="Urgency">
-            <StatusStamp status={URGENCY_FAMILY[row.urgency]} label={URGENCY_LABEL[row.urgency]} />
+          <Detail label={t.sheet.urgency}>
+            <StatusStamp status={URGENCY_FAMILY[row.urgency]} label={t.urgency[row.urgency]} />
           </Detail>
-          <Detail label="Raised by">{row.raisedBy}</Detail>
-          <Detail label="Raised">
-            {row.raisedOn.slice(8, 10)}-{row.raisedOn.slice(5, 7)} at {row.raisedOn.slice(11, 16)}
+          <Detail label={t.sheet.askedBy}>{row.raisedBy}</Detail>
+          <Detail label={t.sheet.askedOn}>
+            <span className="num tabular-nums">{formatDateTime(row.raisedOn)}</span>
           </Detail>
-          <Detail label="Waiting">{formatWait(row.waited)}</Detail>
-          <Detail label="Site">{siteName(row.siteId)}</Detail>
-          <Detail label="Stores category">{categoryOf(row.itemCode)}</Detail>
-          <Detail label="Against" wide>
-            {row.forAsset ?? 'General stores — not booked to an asset'}
+          <Detail label={t.sheet.waitingFor}>{t.wait(row.waited)}</Detail>
+          <Detail label={t.sheet.site}>{siteName(row.siteId)}</Detail>
+          <Detail label={t.sheet.type}>{t.category[categoryOf(row.itemCode)]}</Detail>
+          <Detail label={t.sheet.for} wide>
+            {row.forAsset ?? t.sheet.general}
           </Detail>
         </DetailGrid>
       </SheetSection>
 
-      <SheetSection caption="Item and value">
+      <SheetSection caption={t.sheet.item}>
         <DetailGrid>
-          <Detail label="Item code">
+          <Detail label={t.sheet.itemCode}>
             <IdCell>{row.itemCode}</IdCell>
           </Detail>
-          <Detail label="Quantity wanted">
+          <Detail label={t.sheet.wanted}>
             <QuantityCell value={row.quantity} decimals={0} uom={row.uom} />
           </Detail>
-          {/* An indent estimate is a storekeeper's guess against the last rate
-              paid, not a quotation. It must never read as a committed price. */}
-          <Detail label="Estimated value">
+          {/* A request's estimate is a storekeeper's guess against the last
+              rate paid, not a quotation. It must never read as a committed price. */}
+          <Detail label={t.sheet.estimate}>
             <Provisional>
               <MoneyCell value={row.estimatedValue} accounting={false} />
             </Provisional>
           </Detail>
-          <Detail label={`Implied rate per ${row.uom}`}>
+          <Detail label={t.sheet.rate(row.uom)}>
             {unitRate === null ? '–' : <MoneyCell value={unitRate} accounting={false} decimals={0} />}
           </Detail>
         </DetailGrid>
       </SheetSection>
 
-      <SheetSection caption="Stock against the reorder level">
-        <TargetGauge
-          value={row.stockOnHand}
-          target={row.reorderLevel}
-          height={52}
-          label="On hand"
-          format={(v) => `${formatQty(v, 0)} ${row.uom}`}
-          summary={
-            row.stockOnHand === 0
-              ? `Nothing on hand against a reorder level of ${formatQty(row.reorderLevel, 0)} ${row.uom}.`
-              : row.stockOnHand < row.reorderLevel
-                ? `${formatQty(row.stockOnHand, 0)} ${row.uom} on hand against a reorder level of ${formatQty(row.reorderLevel, 0)} — short by ${formatQty(row.shortBy, 0)}.`
-                : `${formatQty(row.stockOnHand, 0)} ${row.uom} on hand, above the reorder level of ${formatQty(row.reorderLevel, 0)}.`
-          }
-        />
-        <ChartCaption>
-          The upright mark is the reorder level, not a maximum. Stock sitting on it is already late — the level
-          exists to be re-ordered at, not run down to.
-        </ChartCaption>
-
-        {/* Preserved verbatim from the old inline panel: the sentence that
-            makes a storekeeper act rather than acknowledge. */}
-        <div className="mt-3">
+      {/* The minimum is the reorder level, not a maximum: stock sitting on it is
+          already late, because the level exists to be re-ordered at, not run
+          down to. Figures rather than a gauge — the counts say it plainly. */}
+      <SheetSection caption={t.sheet.stock}>
+        <DetailGrid>
+          <Detail label={t.sheet.inStock}>
+            <span style={stockColor ? { color: stockColor } : undefined}>
+              <QuantityCell value={row.stockOnHand} decimals={0} uom={row.uom} />
+            </span>
+          </Detail>
+          <Detail label={t.sheet.minimum}>
+            <QuantityCell value={row.reorderLevel} decimals={0} uom={row.uom} />
+          </Detail>
+          {row.shortBy > 0 ? (
+            <Detail label={t.sheet.shortBy}>
+              <span style={{ color: 'var(--status-attention)' }}>
+                <QuantityCell value={row.shortBy} decimals={0} uom={row.uom} />
+              </span>
+            </Detail>
+          ) : null}
+        </DetailGrid>
+        <div className="mt-2">
           <Note>
             {row.stockOnHand === 0
-              ? `Nothing on hand. ${row.forAsset ?? 'The plant'} stays down until this is issued.`
+              ? t.sheet.noStock(row.forAsset)
               : row.stockOnHand < row.reorderLevel
-                ? `${formatQty(row.stockOnHand, 0)} ${row.uom} on hand against a reorder level of ${formatQty(row.reorderLevel, 0)} — short by ${formatQty(row.shortBy, 0)}.`
-                : `${formatQty(row.stockOnHand, 0)} ${row.uom} on hand, above the reorder level. This one can wait for a consolidated order.`}
+                ? t.sheet.lowStock
+                : t.sheet.enough}
           </Note>
         </div>
       </SheetSection>
 
-      <SheetSection caption={`Also queued against this asset (${siblings.length})`}>
-        {row.forAsset === null ? (
-          <Note>Not booked to an asset, so there is nothing to consolidate it with.</Note>
-        ) : siblings.length === 0 ? (
-          <Note>This is the only indent standing against {row.forAsset}. Nothing to combine into one order.</Note>
-        ) : (
-          <ul className="text-[13px]">
-            {siblings.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-3 py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                <span className="min-w-0">
-                  <span className="font-id text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-                    {s.number}
+      {/* Other requests for the same machine or vehicle, so they can go out as
+          one order. A request booked to no asset has nothing to combine with. */}
+      {row.forAsset !== null ? (
+        <SheetSection caption={t.sheet.alsoFor(row.forAsset)}>
+          {siblings.length === 0 ? (
+            <Note>{t.sheet.noOthers}</Note>
+          ) : (
+            <ul className="text-[13px]">
+              {siblings.map((s) => (
+                // Stacked on a narrow sheet: the Tamil "waiting approval" stamp
+                // alone is two thirds of a phone's width.
+                <li
+                  key={s.id}
+                  className="flex flex-col items-start gap-1 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+                  style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                >
+                  <span className="min-w-0 max-w-full">
+                    <span className="font-id text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+                      {s.number}
+                    </span>
+                    <span className="block truncate" style={{ color: 'var(--text-primary)' }}>
+                      {s.itemName}
+                    </span>
                   </span>
-                  <span className="block truncate" style={{ color: 'var(--text-primary)' }}>
-                    {s.itemName}
+                  <span className="shrink-0">
+                    <StatusStamp status={STAGE_FAMILY[s.stage]} label={stageWord[s.stage]} />
                   </span>
-                </span>
-                <span className="shrink-0">
-                  <StatusStamp status={STAGE_FAMILY[s.stage]} label={STAGE_LABEL[s.stage]} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </SheetSection>
-
-      <SheetSection caption="Where it stands">
-        <Detail label="Stage">
-          <StatusStamp status={STAGE_FAMILY[row.stage]} label={STAGE_LABEL[row.stage]} />
-        </Detail>
-        <Note>
-          {row.stage === 'submitted'
-            ? `Approval is the only thing between this line and the counter. It has been ${formatWait(row.waited)}.`
-            : row.stage === 'approved'
-              ? 'Approved. Nothing moves until stores physically issues it and books the movement against the asset.'
-              : row.stage === 'issued'
-                ? 'Issued from stores and booked against the asset. The cost lands in this month.'
-                : 'Rejected. Nothing was issued, and the shortfall above is still a shortfall.'}
-        </Note>
-      </SheetSection>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SheetSection>
+      ) : null}
     </>
   );
 }
 
-const columns: Column<Row>[] = [
-  {
-    key: 'number',
-    header: 'Indent',
-    type: 'id',
-    sticky: true,
-    width: 170,
-    group: 'Request',
-    render: (r) => <Stacked primary={<IdCell>{r.number}</IdCell>} secondary={r.raisedBy} />,
-  },
-  {
-    key: 'urgency',
-    header: 'Urgency',
-    type: 'status',
-    width: 140,
-    group: 'Request',
-    render: (r) =>
-      r.urgency === 'breakdown' ? (
-        <StatusStamp status="critical" label="Breakdown" />
-      ) : r.urgency === 'urgent' ? (
-        <StatusStamp status="attention" label="Urgent" />
-      ) : (
-        <StatusStamp status="pending" label="Routine" />
+/**
+ * The queue's columns.
+ *
+ * The stage sits beside the urgency, so a desk that cannot fit ten columns
+ * still shows what is waiting without a sideways scroll; the minimum stock
+ * rides under the stock figure it is read against, and the machine or vehicle
+ * name may wrap. On a phone the row becomes a card whose corner stamp is the
+ * urgency, and the stage goes under the request number, where it has the
+ * card's full width (see `phone` in IndentQueue).
+ */
+function buildColumns(t: Words, stageWord: StageWords, phone: boolean): Column<Row>[] {
+  const stage = (r: Row) => <StatusStamp status={STAGE_FAMILY[r.stage]} label={stageWord[r.stage]} />;
+  return [
+    {
+      key: 'number',
+      header: t.columns.request,
+      type: 'id',
+      sticky: true,
+      width: 150,
+      render: (r) =>
+        phone ? (
+          <>
+            <Stacked primary={<IdCell>{r.number}</IdCell>} secondary={r.raisedBy} />
+            <span className="mt-1.5 block font-sans">{stage(r)}</span>
+          </>
+        ) : (
+          <Stacked primary={<IdCell>{r.number}</IdCell>} secondary={r.raisedBy} />
+        ),
+    },
+    {
+      key: 'urgency',
+      header: t.columns.urgency,
+      type: 'status',
+      render: (r) => <StatusStamp status={URGENCY_FAMILY[r.urgency]} label={t.urgency[r.urgency]} />,
+    },
+    {
+      key: 'stage',
+      header: t.columns.status,
+      type: 'status',
+      // Null on a phone card: the stage is already under the request number.
+      render: (r) => (phone ? null : stage(r)),
+    },
+    {
+      key: 'waited',
+      header: t.columns.waiting,
+      render: (r) => (
+        <span style={{ color: r.waited > 24 && r.stage === 'submitted' ? 'var(--status-attention)' : undefined }}>
+          {t.wait(r.waited)}
+        </span>
       ),
-  },
-  {
-    key: 'waited',
-    header: 'Waiting',
-    width: 110,
-    group: 'Request',
-    render: (r) => (
-      <span style={{ color: r.waited > 24 && r.stage === 'submitted' ? 'var(--status-attention)' : undefined }}>
-        {formatWait(r.waited)}
-      </span>
-    ),
-  },
-  {
-    key: 'item',
-    header: 'Item',
-    group: 'Item',
-    render: (r) => <Stacked primary={r.itemName} secondary={r.itemCode} />,
-  },
-  {
-    key: 'for',
-    header: 'Against',
-    group: 'Item',
-    render: (r) => r.forAsset,
-  },
-  {
-    key: 'qty',
-    header: 'Wanted',
-    type: 'num',
-    width: 110,
-    group: 'Quantity',
-    render: (r) => <QuantityCell value={r.quantity} decimals={0} uom={r.uom} />,
-  },
-  {
-    key: 'onhand',
-    header: 'On hand',
-    type: 'num',
-    width: 110,
-    group: 'Quantity',
-    render: (r) => (
-      // Zero on hand against a breakdown indent is the whole story of the row.
-      <span style={{ color: r.stockOnHand === 0 ? 'var(--status-critical)' : r.stockOnHand < r.reorderLevel ? 'var(--status-attention)' : undefined }}>
-        <QuantityCell value={r.stockOnHand} decimals={0} />
-      </span>
-    ),
-  },
-  {
-    key: 'reorder',
-    header: 'Reorder at',
-    type: 'num',
-    width: 110,
-    group: 'Quantity',
-    render: (r) => (
-      <span style={{ color: 'var(--text-tertiary)' }}>
-        <QuantityCell value={r.reorderLevel} decimals={0} />
-      </span>
-    ),
-  },
-  {
-    key: 'value',
-    header: 'Estimated',
-    unit: '₹',
-    type: 'money',
-    width: 130,
-    group: 'Money',
-    render: (r) => <MoneyCell value={r.estimatedValue} />,
-  },
-  {
-    key: 'stage',
-    header: 'Stage',
-    type: 'status',
-    width: 170,
-    group: 'Standing',
-    render: (r) => <StatusStamp status={STAGE_FAMILY[r.stage]} label={STAGE_LABEL[r.stage]} />,
-  },
-];
+    },
+    {
+      key: 'item',
+      header: t.columns.item,
+      render: (r) => <Stacked primary={r.itemName} secondary={r.itemCode} />,
+    },
+    {
+      key: 'for',
+      header: t.columns.for,
+      render: (r) => (r.forAsset ? <span className="inline-block min-w-[110px] whitespace-normal leading-tight">{r.forAsset}</span> : null),
+    },
+    {
+      key: 'qty',
+      header: t.columns.wanted,
+      type: 'num',
+      width: 90,
+      render: (r) => <QuantityCell value={r.quantity} decimals={0} uom={r.uom} />,
+    },
+    {
+      key: 'onhand',
+      header: t.columns.inStock,
+      type: 'num',
+      width: 120,
+      render: (r) => (
+        <Stacked
+          primary={
+            // Zero in stock against a breakdown request is the whole story of the row.
+            <span style={{ color: r.stockOnHand === 0 ? 'var(--status-critical)' : r.stockOnHand < r.reorderLevel ? 'var(--status-attention)' : undefined }}>
+              <QuantityCell value={r.stockOnHand} decimals={0} />
+            </span>
+          }
+          secondary={<span className="num tabular-nums">{t.columns.min(formatQty(r.reorderLevel, 0))}</span>}
+        />
+      ),
+    },
+    {
+      key: 'value',
+      header: t.columns.amount,
+      unit: '₹',
+      type: 'money',
+      width: 120,
+      render: (r) => <MoneyCell value={r.estimatedValue} />,
+    },
+  ];
+}

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { businessDate, formatDate, formatDayMonth, formatQty, PRODUCT_DENSITIES, tonnesToUnits } from '@linck/domain';
+import { businessDate, formatDate, formatQty, PRODUCT_DENSITIES, tonnesToUnits } from '@linck/domain';
 import { NOW, PRODUCTION_RUNS, PRODUCTS, SITES, type ProductionRun } from '@linck/mock';
 import {
   AsOfStamp,
@@ -27,7 +27,9 @@ import {
   type Column,
   type FlowOutput,
 } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
+import { DOWNTIME_REASONS, shiftWords, unitWords, type DowntimeReason } from './words.js';
 
 /**
  * SHIFT PRODUCTION ENTRY.
@@ -44,6 +46,11 @@ import { useApp } from '../../shell/store.js';
  * paper — and the operator is told exactly that, in those words, without the
  * form refusing to save. A blocked save at 11pm produces a fabricated number,
  * not a corrected one.
+ *
+ * LIN-23: this screen is filled in by crusher operators, so it says as little
+ * as it can, in English or Tamil (./words.ts): "Stone in", "Product out", and
+ * a gap that is either "Missing" or "Extra" — never a signed percentage they
+ * have to interpret.
  */
 
 /** The mix this plant normally runs, as a share of boulder fed in. */
@@ -58,14 +65,14 @@ const USUAL_SHARE_PCT: Record<string, number> = {
 
 const BAND_PCT = 8;
 
-const DOWNTIME_REASONS = [
-  'Belt slip',
-  'Power outage — TNEB',
-  'Jaw plate change',
-  'Feeder jam',
-  'Cone liner wear',
-  'No boulder at feed hopper',
-];
+/** Tonnes on one tipper, for saying a gap in loads. */
+const TONNES_PER_LOAD = 20;
+
+/** Boulder this plant feeds in an hour — how a stoppage is said in tonnes. */
+const USUAL_TONNES_PER_HOUR = 25;
+
+type Words = (typeof shiftWords)['en'];
+type Units = (typeof unitWords)['en'];
 
 interface OutputRow {
   key: string;
@@ -93,25 +100,35 @@ function productLabel(code: string): string {
   return PRODUCTS.find((p) => p.code === code)?.label ?? PRODUCT_DENSITIES[code]?.label ?? code;
 }
 
+/** `08-08` — a chart label in the screen's own date shape, with no month names. */
+function dayMonth(iso: string): string {
+  return formatDate(iso).slice(0, 5);
+}
+
+/** A stop reason in the reader's language; one typed some other way stays as typed. */
+function reasonLabel(raw: string, t: Words): string {
+  return (DOWNTIME_REASONS as readonly string[]).includes(raw) ? t.reasons[raw as DowntimeReason] : raw;
+}
+
 /**
- * Ribbons for the yield flow. `expectedPct` is spread conditionally rather than
- * passed as `undefined` — a co-product this plant has no usual share for (GSB
- * blended off the fines, say) must show no drift at all, which is a different
- * statement from "drift of nothing".
+ * Ribbons for the yield flow.
+ *
+ * The flow can print each ribbon's drift against the usual mix ("+6.2 vs
+ * usual"), which says the screen deck or the cone setting moved — dust
+ * climbing while M-Sand falls is a worn VSI rotor tip, days before anyone opens
+ * the machine. That drift is not passed here: the chart prints it in English
+ * only, and the same "usually 28%" already sits on each product line beside
+ * it. A co-product this plant has no usual share for (GSB blended off the
+ * fines, say) shows no usual share at all.
  */
 function flowOutputs(entries: { productCode: string; tonnes: number }[]): FlowOutput[] {
-  return entries.map((o) => {
-    const expected = USUAL_SHARE_PCT[o.productCode];
-    return {
-      label: productLabel(o.productCode),
-      value: o.tonnes,
-      ...(expected === undefined ? {} : { expectedPct: expected }),
-    };
-  });
+  return entries.map((o) => ({ label: productLabel(o.productCode), value: o.tonnes }));
 }
 
 export function ProductionRunEntry() {
   const { siteScope, density } = useApp();
+  const t = useWords(shiftWords);
+  const u = useWords(unitWords);
   // The sheet footer is a fixed 56px row that does not wrap. On a phone the
   // caveat sentence cannot share it with the button, so it moves into the body
   // — still the last thing read before the thumb reaches the action.
@@ -146,6 +163,8 @@ export function ProductionRunEntry() {
   const outOfBand = inTonnes > 0 && Math.abs(diffPct) > BAND_PCT;
 
   const downtime = num(downtimeHours);
+  // Hours the plant stood still need a cause, or the utilisation report cannot
+  // explain itself.
   const reasonMissing = downtime > 0 && downtimeReason.trim() === '';
   const canRecord = inTonnes > 0 && outTonnes > 0 && !reasonMissing;
   const offerMix = inTonnes > 0 && outTonnes === 0 && !mixDismissed;
@@ -160,17 +179,20 @@ export function ProductionRunEntry() {
   const liveFlow = useMemo<FlowOutput[]>(() => {
     const byCode = new Map<string, number>();
     for (const o of outputs) {
-      const t = num(o.tonnes);
-      if (t <= 0) continue;
-      byCode.set(o.productCode, (byCode.get(o.productCode) ?? 0) + t);
+      const tonnes = num(o.tonnes);
+      if (tonnes <= 0) continue;
+      byCode.set(o.productCode, (byCode.get(o.productCode) ?? 0) + tonnes);
     }
     return flowOutputs([...byCode].map(([productCode, tonnes]) => ({ productCode, tonnes })));
   }, [outputs]);
+
+  const columns = useMemo(() => buildColumns(t, u), [t, u]);
 
   function editTonnes(key: string, value: string) {
     setOutputs((rs) => rs.map((r) => (r.key === key ? { ...r, tonnes: value, suggested: false } : r)));
   }
 
+  /** Filled figures stay marked as unconfirmed until each is corrected or accepted. */
   function applyUsualMix() {
     setOutputs((rs) =>
       rs.map((r) => {
@@ -230,8 +252,9 @@ export function ProductionRunEntry() {
 
   /**
    * The save path. An off-band shift is NOT refused — it is read back to the
-   * operator in tonnes and then written exactly as keyed. Blocking here just
-   * teaches people to fudge the boulder figure until the form goes quiet.
+   * operator in tonnes and then written exactly as keyed, and flagged for the
+   * plant manager. Nothing is corrected for them. Blocking here just teaches
+   * people to fudge the boulder figure until the form goes quiet.
    */
   function attemptRecord() {
     if (outOfBand) {
@@ -251,67 +274,69 @@ export function ProductionRunEntry() {
     .slice(0, 14)
     .reverse()
     .map((r) => ({
-      label: `${formatDayMonth(r.date)} ${r.shift === 'day' ? 'D' : 'N'}`,
+      label: `${dayMonth(r.date)} ${r.shift === 'day' ? t.dayMark : t.nightMark}`,
       value: r.massBalancePct,
     }));
+
+  const gapTonnes = Math.abs(diffTonnes);
+  const gapPct = Math.abs(diffPct);
 
   return (
     <>
       <PageHeader
-        eyebrow="Production"
-        title="Shift production entry"
+        eyebrow={t.eyebrow}
+        title={t.title}
         meta={<AsOfStamp asOf="14:42" source="v_production_runs" freshness="live" />}
         actions={
           // The header does not wrap and does not shrink its actions, so two
-          // 44px buttons beside the title leave the h1 about 80px — narrow
-          // enough that "production" overflows the page. They stack instead
-          // until there is room for both on one line.
+          // 44px buttons beside the title leave the h1 too little room. They
+          // stack instead until there is room for both on one line.
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button onClick={() => setOutputs(seedOutputs())}>Reset outputs</Button>
+            <Button onClick={() => setOutputs(seedOutputs())}>{t.clear}</Button>
             <Button variant="primary" disabled={!canRecord} onClick={attemptRecord}>
-              Record shift
+              {t.save}
             </Button>
           </div>
         }
       />
 
-      <Section caption="One heap in, six piles out" title="The shift">
+      <Section title={t.shift}>
         <div className="grid gap-x-6 gap-y-4 px-6 md:grid-cols-3 xl:grid-cols-4">
-          <Field label="Date">
+          <Field label={t.date}>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={INPUT_CLASS} style={INPUT_STYLE} />
           </Field>
           {/* Not a <label> — a label wrapping buttons would fire the first chip. */}
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
-              Shift
+            <span className={LABEL_CLASS} style={{ color: 'var(--text-tertiary)' }}>
+              {t.shift}
             </span>
             {/* Two twelve-hour chips are wider than a phone. They wrap rather
-                than shrink — a half-legible "Night · 18:00–" is worse than two
+                than shrink — a half-legible "Night · 6 pm –" is worse than two
                 lines. */}
-            <span className="flex min-h-11 flex-wrap items-center gap-2 [@media(hover:hover)]:min-h-[34px]">
+            <span className="flex min-h-11 flex-wrap items-center gap-2 [@media(hover:hover)]:min-h-[38px]">
               <Chip active={shift === 'day'} onClick={() => setShift('day')}>
-                Day · 06:00–18:00
+                {t.dayHours}
               </Chip>
               <Chip active={shift === 'night'} onClick={() => setShift('night')}>
-                Night · 18:00–06:00
+                {t.nightHours}
               </Chip>
             </span>
           </div>
-          <Field label="Crusher">
+          <Field label={t.crusher}>
             <select value={crusherValue} onChange={(e) => setCrusher(e.target.value)} className={INPUT_CLASS} style={INPUT_STYLE}>
               {crushers.map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
           </Field>
-          <Field label="Operator">
+          <Field label={t.operator}>
             <select value={operator} onChange={(e) => setOperator(e.target.value)} className={INPUT_CLASS} style={INPUT_STYLE}>
               {operators.map((o) => (
                 <option key={o}>{o}</option>
               ))}
             </select>
           </Field>
-          <Field label="Run hours" unit="h">
+          <Field label={t.hoursRun}>
             <input
               type="number"
               inputMode="decimal"
@@ -322,7 +347,7 @@ export function ProductionRunEntry() {
               style={INPUT_STYLE}
             />
           </Field>
-          <Field label="Downtime" unit="h">
+          <Field label={t.hoursStopped}>
             <input
               type="number"
               inputMode="decimal"
@@ -333,10 +358,8 @@ export function ProductionRunEntry() {
               style={INPUT_STYLE}
             />
           </Field>
-          <Field
-            label="Downtime reason"
-            help={reasonMissing ? 'Hours the plant stood still need a cause, or the utilisation report cannot explain itself.' : undefined}
-          >
+          <Field label={t.whyStopped} help={reasonMissing ? t.chooseWhy : undefined}>
+            {/* The stored value is the English code; only its words change. */}
             <select
               value={downtimeReason}
               onChange={(e) => setDowntimeReason(e.target.value)}
@@ -344,13 +367,16 @@ export function ProductionRunEntry() {
               className={INPUT_CLASS}
               style={{ ...INPUT_STYLE, ...(reasonMissing ? { boxShadow: 'inset 0 0 0 1px var(--status-attention)' } : {}) }}
             >
-              <option value="">{downtime === 0 ? 'No downtime' : 'Choose a reason'}</option>
+              <option value="">{downtime === 0 ? t.didNotStop : t.choose}</option>
               {DOWNTIME_REASONS.map((r) => (
-                <option key={r}>{r}</option>
+                <option key={r} value={r}>
+                  {t.reasons[r]}
+                </option>
               ))}
             </select>
           </Field>
-          <Field label="Boulder fed in" unit="MT" help="Weighbridge tickets for the shift, added up.">
+          {/* The weighbridge tickets for the shift, added up. */}
+          <Field label={t.stoneIn} unit={u.tonne} help={t.stoneHelp}>
             <input
               type="number"
               inputMode="decimal"
@@ -366,39 +392,37 @@ export function ProductionRunEntry() {
       </Section>
 
       <Section
-        caption="Joint production — every co-product comes off the same boulder"
-        title="What the shift made"
+        title={t.productOut}
         actions={
           <button
             type="button"
             onClick={() => setOutputs((rows2) => [...rows2, { key: `out-${Date.now()}`, productCode: 'GSB', tonnes: '', suggested: false }])}
-            className={`${TEXT_BUTTON_CLASS} text-[13px] font-medium`}
+            className={`${TEXT_BUTTON_CLASS} text-[14px] font-medium`}
             style={{ color: 'var(--brand)' }}
           >
-            Add a co-product
+            + {t.addProduct}
           </button>
         }
       >
         {offerMix ? (
           <div className="px-6 pb-3">
-            <SuggestionStrip onApply={applyUsualMix} onDismiss={() => setMixDismissed(true)} applyLabel="Fill from the usual mix">
-              This crusher normally splits {formatQty(inTonnes, 1)} MT of boulder into 28% M-sand, 19% 20mm, 16% dust, 14% 10mm,
-              11% P-sand and 8% 6mm. Filled figures stay marked as unconfirmed until you correct or accept each one.
+            <SuggestionStrip onApply={applyUsualMix} onDismiss={() => setMixDismissed(true)} applyLabel={t.fill}>
+              {t.fillOffer(formatQty(inTonnes, 1))}
             </SuggestionStrip>
           </div>
         ) : null}
 
         <div className="px-6">
           {outputs.map((row) => {
-            const t = num(row.tonnes);
-            const units = PRODUCT_DENSITIES[row.productCode] && t > 0 ? tonnesToUnits(t, row.productCode) : null;
-            const share = inTonnes > 0 ? (t / inTonnes) * 100 : null;
+            const tonnes = num(row.tonnes);
+            const units = PRODUCT_DENSITIES[row.productCode] && tonnes > 0 ? tonnesToUnits(tonnes, row.productCode) : null;
+            const share = inTonnes > 0 ? (tonnes / inTonnes) * 100 : null;
             const usual = USUAL_SHARE_PCT[row.productCode];
             const derived = (
               <span className="num text-[13px] tabular-nums" style={{ color: 'var(--text-primary)' }}>
                 {units === null ? <span style={{ color: 'var(--text-tertiary)' }}>–</span> : formatQty(units, 2)}
                 <span className="ml-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                  units
+                  {u.unit}
                 </span>
               </span>
             );
@@ -416,6 +440,7 @@ export function ProductionRunEntry() {
               >
                 <select
                   value={row.productCode}
+                  aria-label={t.product}
                   onChange={(e) =>
                     setOutputs((rows2) => rows2.map((r) => (r.key === row.key ? { ...r, productCode: e.target.value } : r)))
                   }
@@ -434,40 +459,32 @@ export function ProductionRunEntry() {
                     inputMode="decimal"
                     step="0.1"
                     placeholder="0.0"
+                    aria-label={`${productLabel(row.productCode)} — ${u.tonne}`}
                     value={row.tonnes}
                     onChange={(e) => editTonnes(row.key, e.target.value)}
                     className={`${INPUT_CLASS} num flex-1 text-right tabular-nums sm:w-[120px] sm:flex-none`}
                     style={INPUT_STYLE}
                   />
-                  <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
-                    MT
+                  <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+                    {u.tonne}
                   </span>
                 </span>
 
-                {/* The right margin: everything here is derived, never keyed. */}
+                {/* The right margin: everything here is derived, never keyed. The
+                    share appears once stone in is typed; before that the line
+                    stays quiet rather than repeating a hint six times. */}
                 <span className="flex flex-wrap items-center gap-x-6 gap-y-1 sm:ml-auto sm:flex-nowrap">
-                  <span className="w-full text-[12px] sm:w-[150px] sm:text-right" style={{ color: 'var(--text-secondary)' }}>
-                    {share === null ? (
-                      <span className="font-serif italic" style={{ color: 'var(--text-tertiary)' }}>
-                        share shows once boulder is keyed
-                      </span>
-                    ) : (
-                      <>
-                        <span className="num tabular-nums">{formatQty(share, 1)}%</span> of input
-                        <span className="ml-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                          {usual === undefined ? '· no usual share' : `· usually ${usual}%`}
-                        </span>
-                      </>
-                    )}
+                  <span className="num w-full text-[12px] tabular-nums sm:w-[150px] sm:text-right" style={{ color: 'var(--text-secondary)' }}>
+                    {share === null ? null : t.share(formatQty(share, 1), usual)}
                   </span>
                   <span className="sm:w-[120px] sm:text-right">{row.suggested ? <Provisional>{derived}</Provisional> : derived}</span>
                   <button
                     type="button"
                     onClick={() => setOutputs((rows2) => rows2.filter((r) => r.key !== row.key))}
-                    className={`${TEXT_BUTTON_CLASS} ml-auto text-[12px] sm:ml-0`}
+                    className={`${TEXT_BUTTON_CLASS} ml-auto px-1 text-[13px] sm:ml-0`}
                     style={{ color: 'var(--text-tertiary)' }}
                   >
-                    Remove
+                    {t.delete}
                   </button>
                 </span>
               </div>
@@ -480,42 +497,29 @@ export function ProductionRunEntry() {
             only fact that matters, which is that they all came off one heap. */}
         <div className="mt-5 px-6">
           {inTonnes > 0 && liveFlow.length > 0 ? (
-            <>
-              {/* A flow needs a trunk, a run of ribbon and a label gutter. Below
-                  520px the ribbons collapse to a 13px stub and the diagram
-                  stops saying anything, so on a phone it keeps its width and
-                  scrolls inside itself rather than squashing. The left padding
-                  is the room the input label needs — a scroll box clips at its
-                  padding edge, and "Boulder fed in" sits outside the plot. */}
-              <div className="overflow-x-auto pl-4 sm:overflow-visible sm:pl-0">
-                <div className="min-w-[520px] sm:min-w-0">
-                  <YieldFlow
-                    inputLabel="Boulder fed in"
-                    inputValue={inTonnes}
-                    outputs={liveFlow}
-                    lossLabel="Unaccounted"
-                    unit="MT"
-                    height={Math.max(220, 46 * (liveFlow.length + 1))}
-                    format={(v) => formatQty(v, 1)}
-                    summary={`${formatQty(inTonnes, 1)} MT of boulder splitting into ${liveFlow.length} co-product${
-                      liveFlow.length === 1 ? '' : 's'
-                    } totalling ${formatQty(outTonnes, 1)} MT, leaving ${formatQty(Math.abs(diffTonnes), 1)} MT (${formatQty(
-                      Math.abs(diffPct),
-                      1,
-                    )}%) unaccounted for.`}
-                  />
-                </div>
+            /* A flow needs a trunk, a run of ribbon and a label gutter. Below
+               520px the ribbons collapse to a 13px stub and the diagram stops
+               saying anything, so on a phone it keeps its width and scrolls
+               inside itself rather than squashing. The left padding is the room
+               the input label needs — a scroll box clips at its padding edge,
+               and "Stone in" sits outside the plot. */
+            <div className="overflow-x-auto pl-4 sm:overflow-visible sm:pl-0">
+              <div className="min-w-[520px] sm:min-w-0">
+                <YieldFlow
+                  inputLabel={t.stoneIn}
+                  inputValue={inTonnes}
+                  outputs={liveFlow}
+                  lossLabel={t.missing}
+                  unit={u.tonne}
+                  height={Math.max(220, 46 * (liveFlow.length + 1))}
+                  format={(v) => formatQty(v, 1)}
+                  summary={t.flowSummary(formatQty(inTonnes, 1), formatQty(outTonnes, 1), formatQty(diffTonnes, 1), formatQty(diffPct, 1))}
+                />
               </div>
-              <ChartCaption>
-                Drift is measured against the mix this crusher normally runs, so a ribbon reading
-                &ldquo;+6.2 vs usual&rdquo; means the screen deck or the cone setting moved, not that the shift was
-                good or bad. Watch M-Sand and dust together — dust climbing while M-Sand falls is a worn VSI rotor
-                tip, and it shows here days before anyone opens the machine.
-              </ChartCaption>
-            </>
+            </div>
           ) : (
             <p className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              The split draws itself once boulder in and at least one pile are keyed.
+              {t.flowHint}
             </p>
           )}
         </div>
@@ -526,7 +530,12 @@ export function ProductionRunEntry() {
             third of the viewport parked on top of the fields being keyed — and
             it would land exactly where the fixed tab bar already is. Unpinned
             it still sits directly under the outputs, which on a phone is the
-            only place the eye is anyway. */}
+            only place the eye is anyway.
+
+            Moisture, dust and fines explain a gap inside the band; outside it,
+            material went in and did not land in any pile — or, the other way,
+            a weighbridge ticket is missing or yesterday's stockpile got counted
+            into tonight. */}
         <div
           className="static z-10 mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3 md:sticky md:bottom-0 md:gap-x-10"
           style={{
@@ -535,37 +544,39 @@ export function ProductionRunEntry() {
             borderBottom: '1px solid var(--border-strong)',
           }}
         >
-          <Figure label="Boulder in" value={inTonnes > 0 ? formatQty(inTonnes, 1) : '–'} />
-          <Figure label="Product out" value={outTonnes > 0 ? formatQty(outTonnes, 1) : '–'} />
+          <Figure label={t.stoneIn} unit={u.tonne} value={inTonnes > 0 ? formatQty(inTonnes, 1) : '–'} />
+          <Figure label={t.productOut} unit={u.tonne} value={outTonnes > 0 ? formatQty(outTonnes, 1) : '–'} />
           <Figure
-            label="Unaccounted"
-            value={inTonnes > 0 ? formatQty(diffTonnes, 1) : '–'}
-            suffix={inTonnes > 0 ? `${formatQty(diffPct, 1)}%` : undefined}
+            label={diffTonnes < 0 ? t.extra : t.missing}
+            unit={u.tonne}
+            value={inTonnes > 0 ? formatQty(gapTonnes, 1) : '–'}
+            suffix={inTonnes > 0 ? `${formatQty(gapPct, 1)}%` : undefined}
             emphasis={outOfBand}
             tone={outOfBand ? 'var(--status-attention)' : undefined}
           />
           <span className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 md:w-auto md:flex-1">
             {inTonnes === 0 ? null : (
-              <StatusStamp
-                status={outOfBand ? 'attention' : 'ready'}
-                label={outOfBand ? 'Off band' : 'In band'}
-                severity={`±${BAND_PCT}%`}
-              />
+              <StatusStamp status={outOfBand ? 'attention' : 'ready'} label={outOfBand ? t.notOk : t.ok} severity={`±${BAND_PCT}%`} />
             )}
             <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-secondary)' }}>
               {inTonnes === 0
-                ? 'Key the boulder weight and the balance runs itself.'
+                ? t.typeStoneFirst
                 : !outOfBand
-                  ? 'Moisture, dust and fines explain a gap this size. Nothing to chase.'
+                  ? t.normal
                   : diffPct > 0
-                    ? `${formatQty(Math.abs(diffTonnes), 1)} MT went in and has not landed in any pile — about ${formatQty(Math.abs(diffTonnes) / 20, 1)} tipper loads with no paper against them.`
-                    : `Output exceeds boulder fed in. Either a weighbridge ticket for the shift is missing, or yesterday's stockpile got counted into tonight.`}
+                    ? t.missingLine(formatQty(gapTonnes, 1), formatQty(gapTonnes / TONNES_PER_LOAD, 1))
+                    : t.moreOut}
             </span>
           </span>
         </div>
       </Section>
 
-      <Section caption="Fourteen shifts" title="Has the plant been balancing?">
+      {/* The shaded band is the tolerance moisture and fines can honestly
+          explain. One shift outside it is a bad weighbridge ticket; a run of
+          them drifting the same way is material leaving the yard, and the shift
+          that broke the pattern is the one to open first. Night shifts drifting
+          alone usually means the gate weighman went home. */}
+      <Section title={t.trend.title}>
         <div className="px-6">
           {/* Fourteen day/night labels and a 96px direct-label gutter do not
               fit in 327px. The chart keeps its measure and scrolls sideways
@@ -576,13 +587,18 @@ export function ProductionRunEntry() {
                 data={balanceSeries}
                 summary={
                   offBandRows.length === 0
-                    ? `Mass balance stayed inside ±${BAND_PCT}% across all ${balanceSeries.length} recent shifts.`
-                    : `${offBandRows.length} of ${rows.length} shifts fell outside ±${BAND_PCT}%, the worst at ${formatQty(
-                        offBandRows.reduce((w, r) => (Math.abs(r.massBalancePct) > Math.abs(w) ? r.massBalancePct : w), 0),
-                        1,
-                      )}%.`
+                    ? t.trend.allIn(balanceSeries.length, BAND_PCT)
+                    : t.trend.someOut(
+                        offBandRows.length,
+                        rows.length,
+                        BAND_PCT,
+                        formatQty(
+                          offBandRows.reduce((w, r) => (Math.abs(r.massBalancePct) > Math.abs(w) ? r.massBalancePct : w), 0),
+                          1,
+                        ),
+                      )
                 }
-                seriesLabel="Unaccounted"
+                seriesLabel={t.trend.series}
                 band={{ from: -BAND_PCT, to: BAND_PCT }}
                 flagBelow={-BAND_PCT}
                 flagAbove={BAND_PCT}
@@ -591,33 +607,29 @@ export function ProductionRunEntry() {
               />
             </div>
           </div>
-          <ChartCaption>
-            The shaded band is the tolerance moisture and fines can honestly explain. One shift outside it is a bad
-            weighbridge ticket; a run of them drifting the same way is material leaving the yard, and the shift that
-            broke the pattern is the one to open first. D and N mark day and night — night shifts drifting alone
-            usually means the gate weighman went home.
-          </ChartCaption>
+          <ChartCaption>{t.trend.note(BAND_PCT)}</ChartCaption>
         </div>
       </Section>
 
       <Section
-        caption="Every shift already logged at this plant"
-        title="Recent runs"
+        title={t.past.title}
         actions={
           // One wrapping child rather than three rigid siblings: the section
           // header does not wrap, so two chips and a stamp would push the page
           // sideways on a phone.
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Chip active={!offBandOnly} onClick={() => setOffBandOnly(false)}>
-              All {rows.length}
+            <Chip active={!offBandOnly} onClick={() => setOffBandOnly(false)} count={rows.length}>
+              {t.past.all}
             </Chip>
-            <Chip active={offBandOnly} onClick={() => setOffBandOnly(true)}>
-              Off band {offBandRows.length}
+            <Chip active={offBandOnly} onClick={() => setOffBandOnly(true)} count={offBandRows.length}>
+              {t.notOk}
             </Chip>
             <AsOfStamp asOf="14:42" source="v_production_runs" freshness="materialised" />
           </div>
         }
       >
+        {/* Crushing is logged per plant — the quarry and the workshop have no
+            runs of their own, so they show the empty state. */}
         <DataTable
           density={density}
           columns={columns}
@@ -629,19 +641,7 @@ export function ProductionRunEntry() {
             provenance: r.provenance,
             ...(Math.abs(r.massBalancePct) > BAND_PCT ? { status: 'attention' as const } : {}),
           })}
-          empty={
-            offBandOnly ? (
-              <EmptyState
-                fact="No shift here is outside the band."
-                because="Every run logged at this plant balances within ±8%, so there is nothing to chase."
-              />
-            ) : (
-              <EmptyState
-                fact="No shifts recorded at this site."
-                because="Crushing is logged per plant — the quarry and the workshop have no runs of their own."
-              />
-            )
-          }
+          empty={offBandOnly ? <EmptyState fact={t.past.allOk} /> : <EmptyState fact={t.past.none} />}
         />
       </Section>
 
@@ -651,26 +651,27 @@ export function ProductionRunEntry() {
         open={selected !== null}
         onClose={() => setSelected(null)}
         width="form"
-        title={selected ? `${selected.shift === 'day' ? 'Day' : 'Night'} shift · ${formatDate(selected.date)}` : ''}
+        title={selected ? t.sheet.title(selected.shift === 'day' ? t.day : t.night, formatDate(selected.date)) : ''}
         identifier={selected?.id.toUpperCase()}
         {...(selected
           ? {
               status: {
                 family: Math.abs(selected.massBalancePct) > BAND_PCT ? ('attention' as const) : ('ready' as const),
-                label: Math.abs(selected.massBalancePct) > BAND_PCT ? 'Off band' : 'In band',
+                label: Math.abs(selected.massBalancePct) > BAND_PCT ? t.notOk : t.ok,
                 severity: `${formatQty(selected.massBalancePct, 1)}%`,
                 ...(selected.provenance === 'proposed' ? { provisional: true } : {}),
               },
             }
           : {})}
-        revision={selected ? `${selected.operator.toUpperCase()} · ${formatDayMonth(selected.date)}` : undefined}
+        revision={selected ? `${selected.operator.toUpperCase()} · ${dayMonth(selected.date)}` : undefined}
         footer={
           selected ? (
             <>
-              <Button onClick={() => adoptRun(selected)}>Copy this split into the form</Button>
+              <Button onClick={() => adoptRun(selected)}>{t.sheet.use}</Button>
+              {/* The copied figures land unconfirmed until each is corrected or accepted. */}
               {phone ? null : (
                 <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                  Lands unconfirmed until each figure is corrected or accepted.
+                  {t.sheet.checkAfter}
                 </span>
               )}
             </>
@@ -679,10 +680,10 @@ export function ProductionRunEntry() {
       >
         {selected ? (
           <>
-            <RunDetail run={selected} />
+            <RunDetail run={selected} t={t} u={u} />
             {phone ? (
               <p className="mt-5 font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                Lands unconfirmed until each figure is corrected or accepted.
+                {t.sheet.checkAfter}
               </p>
             ) : null}
           </>
@@ -693,24 +694,18 @@ export function ProductionRunEntry() {
         open={confirmOffBand}
         onClose={() => setConfirmOffBand(false)}
         onConfirm={record}
-        title="This shift does not balance"
-        confirmLabel="Record it as keyed"
+        title={t.confirm.title}
+        confirmLabel={t.confirm.save}
         consequence={
-          diffTonnes > 0 ? (
-            <>
-              {formatQty(inTonnes, 1)} MT of boulder went in and {formatQty(outTonnes, 1)} MT came out as product.{' '}
-              {formatQty(Math.abs(diffTonnes), 1)} MT — roughly {formatQty(Math.abs(diffTonnes) / 20, 1)} tipper loads —
-              is not in any pile. That is {formatQty(Math.abs(diffPct), 1)}% against a band of ±{BAND_PCT}%. The shift
-              will be saved exactly as you keyed it and flagged for the plant manager. Nothing is corrected for you.
-            </>
-          ) : (
-            <>
-              {formatQty(outTonnes, 1)} MT of product came out of {formatQty(inTonnes, 1)} MT of boulder —{' '}
-              {formatQty(Math.abs(diffTonnes), 1)} MT more than went in, or {formatQty(Math.abs(diffPct), 1)}% against a
-              band of ±{BAND_PCT}%. Either a weighbridge ticket for the shift is missing, or yesterday's stockpile has
-              been counted into tonight. The shift will be saved exactly as you keyed it and flagged.
-            </>
-          )
+          <>
+            <p>{t.confirm.inOut(formatQty(inTonnes, 1), formatQty(outTonnes, 1))}</p>
+            <p className="mt-2">
+              {diffTonnes > 0
+                ? t.confirm.missing(formatQty(gapTonnes, 1), formatQty(gapPct, 1), formatQty(gapTonnes / TONNES_PER_LOAD, 1))
+                : t.confirm.extra(formatQty(gapTonnes, 1), formatQty(gapPct, 1))}
+            </p>
+            <p className="mt-2">{t.confirm.kept}</p>
+          </>
         }
       />
     </>
@@ -724,7 +719,7 @@ export function ProductionRunEntry() {
  * ran thin. That is the reason this sheet exists — the same yield flow the
  * operator watched while keying, redrawn for a shift that is already history.
  */
-function RunDetail({ run }: { run: ProductionRun }) {
+function RunDetail({ run, t, u }: { run: ProductionRun; t: Words; u: Units }) {
   const outTotal = Math.round(run.outputs.reduce((s, o) => s + o.tonnes, 0) * 10) / 10;
   const diff = Math.round((run.boulderInTonnes - outTotal) * 10) / 10;
   const offBand = Math.abs(run.massBalancePct) > BAND_PCT;
@@ -733,70 +728,73 @@ function RunDetail({ run }: { run: ProductionRun }) {
 
   return (
     <>
-      <SheetSection caption="The shift">
+      {/* How the record was made. A proposed run is an estimate the system
+          offered from the usual mix, which is why its figures carry the
+          unconfirmed mark; it counts towards nothing in stock or costing until
+          someone at the plant accepts it. A typed run came off the weighbridge
+          tickets, and its units are derived from the density table, never keyed. */}
+      <SheetSection caption={t.sheet.shift}>
         <DetailGrid>
-          <Detail label="Date">{formatDate(run.date)}</Detail>
-          <Detail label="Shift">{run.shift === 'day' ? 'Day · 06:00–18:00' : 'Night · 18:00–06:00'}</Detail>
-          <Detail label="Crusher">{run.crusher}</Detail>
-          <Detail label="Operator">{run.operator}</Detail>
-          <Detail label="Plant">{site?.name ?? run.siteId}</Detail>
-          <Detail label="Recorded by">{run.provenance === 'proposed' ? 'Suggested, unconfirmed' : 'Keyed by hand'}</Detail>
+          <Detail label={t.date}>{formatDate(run.date)}</Detail>
+          <Detail label={t.shift}>{run.shift === 'day' ? t.dayHours : t.nightHours}</Detail>
+          <Detail label={t.crusher}>{run.crusher}</Detail>
+          <Detail label={t.operator}>{run.operator}</Detail>
+          <Detail label={t.sheet.site}>{site?.name ?? run.siteId}</Detail>
+          <Detail label={t.sheet.entered}>{run.provenance === 'proposed' ? t.sheet.suggested : t.sheet.typed}</Detail>
         </DetailGrid>
+        {run.provenance === 'proposed' ? <Note>{t.sheet.suggestedNote}</Note> : null}
       </SheetSection>
 
-      <SheetSection caption="Hours">
+      <SheetSection caption={t.sheet.hours}>
         <DetailGrid>
-          <Detail label="Ran">
-            <QuantityCell value={run.runHours} decimals={1} uom="h" />
+          <Detail label={t.sheet.ran}>
+            <QuantityCell value={run.runHours} decimals={1} uom={u.hour} />
           </Detail>
-          <Detail label="Stood still">
-            <QuantityCell value={run.downtimeHours} decimals={1} uom="h" />
+          <Detail label={t.sheet.stopped}>
+            <QuantityCell value={run.downtimeHours} decimals={1} uom={u.hour} />
           </Detail>
-          <Detail label="Because" wide>
-            {run.downtimeReason ?? (run.downtimeHours > 0 ? 'Not stated' : 'Ran clean all shift')}
+          <Detail label={t.whyStopped} wide>
+            {run.downtimeReason ? reasonLabel(run.downtimeReason, t) : run.downtimeHours > 0 ? t.sheet.notGiven : t.didNotStop}
           </Detail>
         </DetailGrid>
-        <Note>
-          {run.downtimeHours === 0
-            ? 'No stoppage logged, so every hour of this shift is answerable to the tonnage above.'
-            : `${formatQty((run.downtimeHours / utilisation) * 100, 0)}% of the shift stood still. At this plant's usual rate that is about ${formatQty(
-                run.downtimeHours * 25,
-                0,
-              )} MT of boulder never fed.`}
-        </Note>
+        {run.downtimeHours > 0 ? (
+          <Note>
+            {t.sheet.stoppedNote(
+              formatQty((run.downtimeHours / utilisation) * 100, 0),
+              formatQty(run.downtimeHours * USUAL_TONNES_PER_HOUR, 0),
+            )}
+          </Note>
+        ) : null}
       </SheetSection>
 
-      <SheetSection caption="What one heap became">
+      <SheetSection caption={t.sheet.split}>
         {/* The sheet is 640px on a desk and the full screen on a phone. The
             flow keeps one measure and scrolls inside itself at the narrow end. */}
         <div className="overflow-x-auto pl-3 sm:overflow-visible sm:pl-0">
           <div className="min-w-[500px] sm:min-w-0">
             <YieldFlow
-              inputLabel="Boulder in"
+              inputLabel={t.stoneIn}
               inputValue={run.boulderInTonnes}
               outputs={flowOutputs(run.outputs)}
-              lossLabel="Unaccounted"
-              unit="MT"
+              lossLabel={t.missing}
+              unit={u.tonne}
               height={Math.max(220, 44 * (run.outputs.length + 1))}
               format={(v) => formatQty(v, 1)}
-              summary={`${formatQty(run.boulderInTonnes, 1)} MT of boulder became ${formatQty(
-                outTotal,
-                1,
-              )} MT across ${run.outputs.length} co-products, with ${formatQty(Math.abs(diff), 1)} MT unaccounted.`}
+              summary={t.flowSummary(formatQty(run.boulderInTonnes, 1), formatQty(outTotal, 1), formatQty(diff, 1), formatQty(run.massBalancePct, 1))}
             />
           </div>
         </div>
       </SheetSection>
 
-      <SheetSection caption={`Every pile off this boulder (${run.outputs.length})`}>
+      <SheetSection caption={t.sheet.products(run.outputs.length)}>
         <ul className="text-[13px]">
           {run.outputs.map((o) => {
             const share = (o.tonnes / run.boulderInTonnes) * 100;
             const usual = USUAL_SHARE_PCT[o.productCode];
             const drift = usual === undefined ? null : share - usual;
-            const tonnesCell = <QuantityCell value={o.tonnes} decimals={1} uom="MT" />;
+            const tonnesCell = <QuantityCell value={o.tonnes} decimals={1} uom={u.tonne} />;
             return (
-              // Pile, units, tonnes and drift are 420px of line in a 335px
+              // Pile, units, tonnes and share are 420px of line in a 335px
               // sheet. On a phone the pile name takes its own line and the
               // three figures sit under it, spread across the width.
               <li
@@ -807,21 +805,20 @@ function RunDetail({ run }: { run: ProductionRun }) {
                 <span style={{ color: 'var(--text-primary)' }}>{productLabel(o.productCode)}</span>
                 <span className="flex items-baseline justify-between gap-4 sm:justify-end">
                   <span style={{ color: 'var(--text-secondary)' }}>
-                    <QuantityCell value={o.units} decimals={1} uom="units" />
+                    <QuantityCell value={o.units} decimals={1} uom={u.unit} />
                   </span>
                   <span style={{ color: 'var(--text-primary)' }}>
                     {run.provenance === 'proposed' ? <Provisional>{tonnesCell}</Provisional> : tonnesCell}
                   </span>
+                  {/* More than three points off the usual share is a setting
+                      that moved, so it takes the attention colour. */}
                   <span
-                    className="num text-right tabular-nums text-[12px] sm:w-[132px]"
+                    className="num text-right tabular-nums text-[12px] sm:w-[150px]"
                     style={{
                       color: drift !== null && Math.abs(drift) > 3 ? 'var(--status-attention)' : 'var(--text-tertiary)',
                     }}
                   >
-                    {formatQty(share, 1)}%
-                    {drift === null
-                      ? ' · no usual share'
-                      : ` · ${drift >= 0 ? '+' : ''}${formatQty(drift, 1)} vs usual`}
+                    {t.sheet.share(formatQty(share, 1), usual)}
                   </span>
                 </span>
               </li>
@@ -831,59 +828,32 @@ function RunDetail({ run }: { run: ProductionRun }) {
       </SheetSection>
 
       <SheetSection
-        caption="Mass balance"
-        actions={
-          <StatusStamp
-            status={offBand ? 'attention' : 'ready'}
-            label={offBand ? 'Off band' : 'In band'}
-            severity={`±${BAND_PCT}%`}
-          />
-        }
+        caption={t.sheet.balance}
+        actions={<StatusStamp status={offBand ? 'attention' : 'ready'} label={offBand ? t.notOk : t.ok} severity={`±${BAND_PCT}%`} />}
       >
         <DetailGrid>
-          <Detail label="Boulder in">
-            <QuantityCell value={run.boulderInTonnes} decimals={1} uom="MT" />
+          <Detail label={t.stoneIn}>
+            <QuantityCell value={run.boulderInTonnes} decimals={1} uom={u.tonne} />
           </Detail>
-          <Detail label="Product out">
-            <QuantityCell value={outTotal} decimals={1} uom="MT" />
+          <Detail label={t.productOut}>
+            <QuantityCell value={outTotal} decimals={1} uom={u.tonne} />
           </Detail>
-          <Detail label="Unaccounted">
-            <QuantityCell value={diff} decimals={1} uom="MT" />
-          </Detail>
-          <Detail label="As a share of input">
+          <Detail label={diff < 0 ? t.extra : t.missing}>
             <span className="num tabular-nums" style={{ color: offBand ? 'var(--status-attention)' : undefined }}>
-              {formatQty(run.massBalancePct, 1)}%
+              <QuantityCell value={Math.abs(diff)} decimals={1} uom={u.tonne} /> · {formatQty(Math.abs(run.massBalancePct), 1)}%
             </span>
           </Detail>
         </DetailGrid>
+        {/* Off band and short: start with the gate register for this shift,
+            not with the operator. Off band and over: a weighbridge ticket for
+            the feed is missing, or an old stockpile was counted into this shift. */}
         <Note>
           {!offBand
-            ? 'Moisture leaving the pile, fines off the belt and an unsquare last bucket explain a gap this size. Nothing to chase.'
+            ? t.normal
             : diff > 0
-              ? `${formatQty(Math.abs(diff), 1)} MT left the yard without paper against it — about ${formatQty(
-                  Math.abs(diff) / 20,
-                  1,
-                )} tipper loads. Start with the gate register for this shift, not with the operator.`
-              : 'More product than boulder. A weighbridge ticket for the feed is missing, or an old stockpile was counted into this shift.'}
+              ? t.sheet.missingNote(formatQty(Math.abs(diff), 1), formatQty(Math.abs(diff) / TONNES_PER_LOAD, 1))
+              : t.moreOut}
         </Note>
-      </SheetSection>
-
-      <SheetSection caption="Provenance">
-        <Detail label="How this record was made" wide>
-          {run.provenance === 'proposed'
-            ? 'Proposed from the usual mix and never confirmed by the operator'
-            : 'Keyed by the shift operator from weighbridge tickets'}
-        </Detail>
-        {run.provenance === 'proposed' ? (
-          <Note>
-            Every tonnage here is an estimate the system offered, which is why the figures carry the unconfirmed mark.
-            It counts towards nothing in stock or costing until someone at the plant accepts it.
-          </Note>
-        ) : (
-          <Note>
-            Tonnages came off weighbridge tickets for the shift. Units are derived from the density table, never keyed.
-          </Note>
-        )}
       </SheetSection>
     </>
   );
@@ -892,17 +862,20 @@ function RunDetail({ run }: { run: ProductionRun }) {
 /**
  * One control measure for every field on this screen.
  *
- * 44px and 16px on a touch pointer, 34px and 13px on a desk — keyed to hover
- * rather than width, because a weighbridge terminal is a wide screen a wet
- * thumb still has to hit. The 16px is not decoration: iOS zooms the whole page
- * when a field under 16px takes focus, which on this form throws the operator
- * out of the mass-balance strip mid-entry.
+ * 44px and 16px on a touch pointer, 38px and 14px on a desk — the same height
+ * as the buttons, keyed to hover rather than width, because a weighbridge
+ * terminal is a wide screen a wet thumb still has to hit. The 16px is not
+ * decoration: iOS zooms the whole page when a field under 16px takes focus,
+ * which on this form throws the operator out of the balance strip mid-entry.
  */
 const INPUT_CLASS =
-  'h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[13px]';
+  'h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[38px] [@media(hover:hover)]:text-[14px]';
+
+/** Field labels: a size up from the table headers, because this form is read in a crusher cabin. */
+const LABEL_CLASS = 'text-[12px] uppercase tracking-[0.04em]';
 
 /** A text button that still clears 44px where there is no mouse. */
-const TEXT_BUTTON_CLASS = 'inline-flex min-h-11 items-center [@media(hover:hover)]:min-h-0';
+const TEXT_BUTTON_CLASS = 'inline-flex min-h-11 items-center [@media(hover:hover)]:min-h-[38px]';
 const INPUT_STYLE: React.CSSProperties = {
   background: 'var(--surface)',
   color: 'var(--text-primary)',
@@ -923,7 +896,7 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
+      <span className={LABEL_CLASS} style={{ color: 'var(--text-tertiary)' }}>
         {label}
         {unit ? <span className="ml-1 normal-case">{unit}</span> : null}
       </span>
@@ -944,12 +917,14 @@ function Field({
  */
 function Figure({
   label,
+  unit,
   value,
   suffix,
   emphasis,
   tone,
 }: {
   label: string;
+  unit: string;
   value: string;
   suffix?: string | undefined;
   emphasis?: boolean;
@@ -959,7 +934,7 @@ function Figure({
     <span className="flex flex-col gap-1">
       <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
         {label}
-        <span className="ml-1 not-italic">MT</span>
+        <span className="ml-1 not-italic">{unit}</span>
       </span>
       <span
         className="num leading-none tabular-nums"
@@ -972,79 +947,72 @@ function Figure({
   );
 }
 
-const columns: Column<ProductionRun>[] = [
-  {
-    key: 'date',
-    header: 'Date',
-    sticky: true,
-    width: 118,
-    group: 'Shift',
-    render: (r) => formatDate(r.date),
-  },
-  { key: 'shift', header: 'Shift', width: 74, group: 'Shift', render: (r) => (r.shift === 'day' ? 'Day' : 'Night') },
-  { key: 'crusher', header: 'Crusher', group: 'Shift', render: (r) => r.crusher },
-  { key: 'operator', header: 'Operator', group: 'Shift', render: (r) => r.operator },
-  {
-    key: 'runHours',
-    header: 'Run',
-    unit: 'h',
-    type: 'num',
-    width: 82,
-    group: 'Hours',
-    render: (r) => <QuantityCell value={r.runHours} decimals={1} />,
-  },
-  {
-    key: 'downtime',
-    header: 'Stood still',
-    unit: 'h',
-    type: 'num',
-    width: 104,
-    group: 'Downtime',
-    render: (r) => (
-      <span style={{ color: r.downtimeHours > 1.5 ? 'var(--status-attention)' : undefined }}>
-        <QuantityCell value={r.downtimeHours} decimals={1} />
-      </span>
-    ),
-  },
-  {
-    key: 'reason',
-    header: 'Because',
-    width: 180,
-    group: 'Downtime',
-    // A cause is a fact about the shift, so it sets in the data face like any
-    // other. No reason at all renders an en dash — "stood still for nothing
-    // stated" and "never stood still" are not the same record.
-    render: (r) => (r.downtimeReason ? <span style={{ color: 'var(--text-secondary)' }}>{r.downtimeReason}</span> : <Dash />),
-  },
-  {
-    key: 'in',
-    header: 'Boulder in',
-    unit: 'MT',
-    type: 'num',
-    width: 116,
-    group: 'Mass balance',
-    render: (r) => <QuantityCell value={r.boulderInTonnes} decimals={1} />,
-  },
-  {
-    key: 'out',
-    header: 'Product out',
-    unit: 'MT',
-    type: 'num',
-    width: 120,
-    group: 'Mass balance',
-    render: (r) => <QuantityCell value={r.outputs.reduce((s, o) => s + o.tonnes, 0)} decimals={1} />,
-  },
-  {
-    key: 'balance',
-    header: 'Unaccounted',
-    unit: '%',
-    type: 'num',
-    width: 128,
-    group: 'Mass balance',
-    render: (r) => (
-      <span style={{ color: Math.abs(r.massBalancePct) > BAND_PCT ? 'var(--status-attention)' : undefined }}>
-        <QuantityCell value={r.massBalancePct} decimals={1} />
-      </span>
-    ),
-  },
-];
+function buildColumns(t: Words, u: Units): Column<ProductionRun>[] {
+  return [
+    {
+      key: 'date',
+      header: t.columns.date,
+      sticky: true,
+      width: 118,
+      render: (r) => formatDate(r.date),
+    },
+    { key: 'shift', header: t.columns.shift, width: 80, render: (r) => (r.shift === 'day' ? t.day : t.night) },
+    { key: 'crusher', header: t.columns.crusher, render: (r) => r.crusher },
+    { key: 'operator', header: t.columns.operator, render: (r) => r.operator },
+    {
+      key: 'runHours',
+      header: t.columns.ran,
+      type: 'num',
+      width: 100,
+      render: (r) => <QuantityCell value={r.runHours} decimals={1} />,
+    },
+    {
+      key: 'downtime',
+      header: t.columns.stopped,
+      type: 'num',
+      width: 116,
+      render: (r) => (
+        <span style={{ color: r.downtimeHours > 1.5 ? 'var(--status-attention)' : undefined }}>
+          <QuantityCell value={r.downtimeHours} decimals={1} />
+        </span>
+      ),
+    },
+    {
+      key: 'reason',
+      header: t.columns.why,
+      width: 180,
+      // A cause is a fact about the shift, so it sets in the data face like any
+      // other. No reason at all renders an en dash — "stood still for nothing
+      // stated" and "never stood still" are not the same record.
+      render: (r) => (r.downtimeReason ? <span style={{ color: 'var(--text-secondary)' }}>{reasonLabel(r.downtimeReason, t)}</span> : <Dash />),
+    },
+    {
+      key: 'in',
+      header: t.columns.stoneIn,
+      unit: u.tonne,
+      type: 'num',
+      width: 128,
+      render: (r) => <QuantityCell value={r.boulderInTonnes} decimals={1} />,
+    },
+    {
+      key: 'out',
+      header: t.columns.productOut,
+      unit: u.tonne,
+      type: 'num',
+      width: 136,
+      render: (r) => <QuantityCell value={r.outputs.reduce((s, o) => s + o.tonnes, 0)} decimals={1} />,
+    },
+    {
+      key: 'balance',
+      header: t.columns.gap,
+      unit: '%',
+      type: 'num',
+      width: 120,
+      render: (r) => (
+        <span style={{ color: Math.abs(r.massBalancePct) > BAND_PCT ? 'var(--status-attention)' : undefined }}>
+          <QuantityCell value={r.massBalancePct} decimals={1} />
+        </span>
+      ),
+    },
+  ];
+}

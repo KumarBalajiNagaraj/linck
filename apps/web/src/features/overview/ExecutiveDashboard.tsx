@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatDate, formatINR, formatINRCompact, formatQty } from '@linck/domain';
+import { formatDate, formatINR, formatQty } from '@linck/domain';
 import {
   DOWNTIME_CAUSES,
   documentExposure,
@@ -39,13 +39,13 @@ import {
   StatusStamp,
   TileRow,
   TrendChart,
-  useIsPhone,
   WaterfallChart,
   type Column,
 } from '@linck/ui';
 import { useLang } from '../../i18n/lang.js';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useDayMonth, useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { dashboardWords, type DowntimeCause } from './dashboardWords.js';
 
@@ -132,7 +132,8 @@ export function ExecutiveDashboard() {
   const t = useWords(dashboardWords);
   const status = useWords(statusWords);
   const lang = useLang((s) => s.lang);
-  const phone = useIsPhone();
+  const inr = useInrCompact();
+  const dayMonth = useDayMonth();
   const [range, setRange] = useState<'today' | 'fy'>('today');
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [stock, setStock] = useState<StockPosition | null>(null);
@@ -142,15 +143,13 @@ export function ExecutiveDashboard() {
   const ar = receivables();
   const docs = documentExposure(siteScope);
 
-  /** `26 Jul` / `26 ஜூலை` — the axis speaks the reader's language too. */
-  const dayMonth = (iso: string) => `${iso.slice(8, 10)} ${t.months[Number(iso.slice(5, 7)) - 1] ?? ''}`;
-
+  // `26 Jul` / `26 ஜூலை` — the axis speaks the reader's language too.
   const revenueSeries = LAST_14.map((d) => ({ label: dayMonth(d.date), value: d.revenue }));
   const marginPctSeries = LAST_14.map((d) => ({
     label: dayMonth(d.date),
     value: Math.round((d.margin / d.revenue) * 1000) / 10,
   }));
-  const uptimeSeries = LAST_14.map((d) => ({ label: d.label, value: d.uptimePct }));
+  const uptimeSeries = LAST_14.map((d) => ({ label: dayMonth(d.date), value: d.uptimePct }));
 
   const openInvoices = useMemo(
     () => INVOICES.filter((i) => i.status !== 'closed' && i.status !== 'draft'),
@@ -214,21 +213,19 @@ export function ExecutiveDashboard() {
         <KpiTile
           eyebrow={t.tiles.cash}
           hero
-          value={formatINRCompact(CASH_POSITION)}
-          delta={{ text: t.tiles.cashUp(formatINRCompact(CASH_UP_ON_LAST_WEEK)) }}
-          asOf={AS_OF}
-          source={t.source.bank}
+          value={inr(CASH_POSITION)}
+          delta={{ text: t.tiles.cashUp(inr(CASH_UP_ON_LAST_WEEK)) }}
           title={formatINR(CASH_POSITION)}
+          asOfInHeader
         />
         <KpiTile
           eyebrow={t.tiles.due}
-          value={formatINRCompact(ar.outstanding)}
+          value={inr(ar.outstanding)}
           delta={{
-            text: t.tiles.overdue(ar.overdueCount, formatINRCompact(ar.overdueAmount)),
+            text: t.tiles.overdue(ar.overdueCount, inr(ar.overdueAmount)),
             tone: ar.overdueCount > 0 ? 'critical' : 'neutral',
           }}
-          asOf={AS_OF}
-          source={t.source.invoices}
+          asOfInHeader
         />
         {/* The owner's hard rule, as a number on the MD's screen: money someone
             says arrived that a second person has not confirmed. It is counted
@@ -236,10 +233,9 @@ export function ExecutiveDashboard() {
             it sums, so the tile and the stamps in the list below agree. */}
         <KpiTile
           eyebrow={status.invoice.payment_reported}
-          value={formatINRCompact(ar.reportedUnverified)}
+          value={inr(ar.reportedUnverified)}
           delta={{ text: t.tiles.toCheck(ar.reportedUnverifiedCount), tone: 'attention' }}
-          asOf={AS_OF}
-          source={t.source.payments}
+          asOfInHeader
         />
         <div className="relative">
           {/* Uptime: the share of vehicles working or able to work. A planned
@@ -256,9 +252,7 @@ export function ExecutiveDashboard() {
               text: t.tiles.vehiclesBreakup(fleet.breakdown, fleet.idle, fleet.underService),
               tone: fleet.breakdown > 0 ? 'critical' : 'neutral',
             }}
-            asOf={AS_OF}
-            source={t.source.vehicles}
-            freshness="live"
+            asOfInHeader
           />
           {/*
             Parked in the tile's top-right corner on a wide screen, where there
@@ -279,10 +273,10 @@ export function ExecutiveDashboard() {
           <div className="px-0">
             <TrendChart
               data={revenueSeries}
-              summary={t.sales.summary(formatINRCompact(revenueSeries.reduce((s, p) => s + p.value, 0) / revenueSeries.length))}
+              summary={t.sales.summary(inr(revenueSeries.reduce((s, p) => s + p.value, 0) / revenueSeries.length))}
               seriesLabel={t.sales.series}
               height={170}
-              format={(v) => formatINRCompact(v)}
+              format={inr}
             />
             {/* Sundays fall to about a quarter: the plant runs a half shift
                 and most lorries stand. A weekday dip is the one to ask about. */}
@@ -372,12 +366,12 @@ export function ExecutiveDashboard() {
       <div className="grid grid-cols-1 gap-x-8 px-6 pt-2 xl:grid-cols-2">
         <Section caption={t.due.caption} title={t.due.title}>
           <AgeingBar
-            summary={t.due.summary(formatINRCompact(ar.outstanding), formatINRCompact(ar.overdueAmount))}
+            summary={t.due.summary(inr(ar.outstanding), inr(ar.overdueAmount))}
             buckets={dueBuckets}
-            format={(v) => formatINRCompact(v)}
+            format={inr}
           />
           <NarrowLegend
-            items={dueBuckets.map((b, i) => ({ label: b.label, value: formatINRCompact(b.value), tone: rampTone(i) }))}
+            items={dueBuckets.map((b, i) => ({ label: b.label, value: inr(b.value), tone: rampTone(i) }))}
           />
           {/* Nothing here is red — an age bucket is a fact about time, and
               spending an alert colour on it would leave nothing for the
@@ -471,17 +465,14 @@ export function ExecutiveDashboard() {
 
       <div className="h-10" />
 
-      {/* On a phone the status moves out of the header and into the sheet.
-          The header gives it a column beside the title that it never gives
-          back, and the longest invoice status in Tamil ("பணம் வந்ததாக,
-          சரிபார்க்கவில்லை") left the customer's name about 60px — one word
-          a line, under the stamp. */}
+      {/* On a phone the sheet header sets the status on its own row under the
+          customer's name, so the name keeps the full width. */}
       <SideSheet
         open={invoice !== null}
         onClose={() => setInvoice(null)}
         title={invoice?.customerName ?? ''}
         identifier={invoice?.number}
-        {...(invoice && !phone
+        {...(invoice
           ? {
               status: {
                 family: INVOICE_STATUS_FAMILY[invoice.status],
@@ -493,7 +484,7 @@ export function ExecutiveDashboard() {
           : {})}
         revision={invoice ? t.invoiceSheet.dated(formatDate(invoice.date)) : undefined}
       >
-        {invoice ? <InvoiceDetail invoice={invoice} statusInBody={phone} /> : null}
+        {invoice ? <InvoiceDetail invoice={invoice} /> : null}
       </SideSheet>
 
       {/* The product's name is the title; its stock code means nothing to the
@@ -618,7 +609,7 @@ function ExposureCard({
   );
 }
 
-function InvoiceDetail({ invoice, statusInBody }: { invoice: Invoice; statusInBody: boolean }) {
+function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const t = useWords(dashboardWords);
   const status = useWords(statusWords);
   const verified = Number.parseFloat(invoice.receivedVerified);
@@ -627,11 +618,6 @@ function InvoiceDetail({ invoice, statusInBody }: { invoice: Invoice; statusInBo
 
   return (
     <>
-      {statusInBody ? (
-        <div className="pb-1">
-          <InvoiceStamp invoice={invoice} />
-        </div>
-      ) : null}
       <SheetSection caption={t.invoiceSheet.amount}>
         <DetailGrid>
           <Detail label={t.invoiceSheet.withoutGst}>

@@ -21,6 +21,7 @@ from starlette.responses import Response
 from app.api.breakdowns import router as breakdowns_router
 from app.api.customers import router as customers_router
 from app.api.expenses import router as expenses_router
+from app.api.insights import router as insights_router
 from app.api.me import router as me_router
 from app.api.purchase_orders import router as purchase_orders_router
 from app.api.whatsapp import router as whatsapp_router
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
     app.include_router(purchase_orders_router)
     app.include_router(breakdowns_router)
     app.include_router(expenses_router)
+    app.include_router(insights_router)
 
     return app
 

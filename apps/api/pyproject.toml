@@ -19,6 +19,7 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     # The S3-compatible file store (DigitalOcean Spaces), see app/core/storage.py.
     "boto3>=1.40.0",
+    "defusedxml>=0.7.1",
 ]
 
 [dependency-groups]

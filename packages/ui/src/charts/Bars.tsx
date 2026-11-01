@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChartFrame, GridLines, linearScale, niceDomain, ReferenceLine, ticks } from './core.js';
+// Aliased: BarChart has a `labelWidth` prop of its own (the name gutter).
+import { ChartFrame, GridLines, labelWidth as textWidth, linearScale, niceDomain, ReferenceLine, ticks } from './core.js';
 
 export interface BarDatum {
   label: string;
@@ -41,9 +42,12 @@ export function BarChart({
   const values = data.flatMap((d) => [d.value, d.marker ?? d.value]);
   const domain = niceDomain(values);
   const height = data.length * barHeight + 26;
+  // Room on the right for the widest figure printed beside its bar (12px), so
+  // "₹7.16 லட்சம்" stays inside the chart rather than running off its edge.
+  const valueGutter = Math.max(64, Math.ceil(Math.max(0, ...data.map((d) => textWidth(format(d.value), 5.6)))) + 10);
 
   return (
-    <ChartFrame summary={summary} height={height} padLeft={labelWidth} padRight={64} padTop={4} padBottom={22}>
+    <ChartFrame summary={summary} height={height} padLeft={labelWidth} padRight={valueGutter} padTop={4} padBottom={22}>
       {(box) => {
         const x = linearScale(domain, [box.x0, box.x1]);
         const grid = ticks(domain, 4);
@@ -105,12 +109,26 @@ export function BarChart({
               );
             })}
 
+            {/* A tick label that would touch the last one drawn is dropped,
+                the rule AxisLabels uses: "₹2.00 லட்சம்" is twice the width
+                of "₹2.00 L", and five of them ran into one string on a phone.
+                The gridline stays, so the scale still reads. */}
             <g aria-hidden="true">
-              {grid.map((v) => (
-                <text key={v} x={x(v)} y={box.y1 + 14} textAnchor="middle" fontSize={11} fill="var(--text-tertiary)" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {format(v)}
-                </text>
-              ))}
+              {(() => {
+                let lastRight = -Infinity;
+                return grid.map((v) => {
+                  const text = format(v);
+                  const w = textWidth(text);
+                  const left = x(v) - w / 2;
+                  if (left < lastRight + 8) return null;
+                  lastRight = left + w;
+                  return (
+                    <text key={v} x={x(v)} y={box.y1 + 14} textAnchor="middle" fontSize={11} fill="var(--text-tertiary)" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {text}
+                    </text>
+                  );
+                });
+              })()}
             </g>
           </>
         );

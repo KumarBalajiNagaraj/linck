@@ -207,6 +207,16 @@ When the WhatsApp Business number is ready, set these on the **api** component:
 dashboard, set the webhook URL to `https://<vercel domain>/api/webhooks/whatsapp`,
 with the same verify token, and subscribe to **messages**.
 
+## 12. Industry news summaries (optional, free)
+
+1. Open https://aistudio.google.com/apikey, sign in with a Google account, and create an API key.
+2. On the **api** component, set `LINCK_AI_API_KEY` 🔑 to that key and save. The app redeploys.
+3. In Linck, open **Industry news** and press **Refresh**.
+
+Until the key is set, Industry news shows headlines only, and no AI model is called. Gemini's
+free tier is the default (`LINCK_AI_MODEL=gemini-2.5-flash`). To use another free provider
+(OpenRouter, Groq, or Ollama on your own server), see `apps/api/.env.example`.
+
 ---
 
 ## Every day

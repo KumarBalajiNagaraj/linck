@@ -39,6 +39,12 @@ choice is remembered.
   English word is what people actually say (டீசல், டிரைவர், பில், லோடு),
   use it in Tamil script.
 - Numbers stay as digits (12,500), dates as 06-08-2026, money as ₹.
+- A day on a chart axis or a timeline is day and short month: 08 Aug,
+  08 ஆக. — one shape on every screen (`useDayMonth` in
+  `apps/web/src/i18n/format.ts`).
+- A short money figure ends in a word the reader says: ₹4.50 L in English,
+  ₹4.50 லட்சம் in Tamil (`useInrCompact`, same file). K, L and Cr are
+  English letters.
 
 ## Glossary
 
@@ -52,6 +58,10 @@ choice is remembered.
 | Amount | தொகை | value |
 | Total | மொத்தம் | |
 | Rate | விலை | |
+| Sale | விற்பனை | revenue |
+| Units (100 cubic feet) | யூனிட் | |
+| Weight | எடை | |
+| Thousand / Lakh / Crore (in a short figure) | ஆயிரம் / லட்சம் / கோடி | K, L, Cr |
 | Vehicle | வண்டி | asset |
 | Driver | டிரைவர் | |
 | Vendor / shop | கடை | supplier, vendor |
@@ -74,16 +84,20 @@ choice is remembered.
 | Pay / Paid | பணம் கொடு / பணம் கொடுத்தது | settle, disburse |
 | Waiting | காத்திருக்கிறது | pending, awaiting |
 | Waiting for you | உங்களுக்காக காத்திருக்கிறது | |
+| Mark to check | சரிபார்க்கக் குறி | flag |
 | Wrong | தவறு | invalid |
 | Reason | காரணம் | justification |
 | Save | சேமி | |
 | Cancel | ரத்து | |
+| Go back (out of a question, without doing it) | வேண்டாம் | Cancel, ரத்து — beside "Yes, cancel the load" that reads as the action |
 | Close | மூடு | |
 | Search | தேடு | |
 | All | எல்லாம் | |
 | Today | இன்று | |
 | Days | நாள் / நாட்கள் | |
 | Trip | ட்ரிப் | journey |
+| Ready or on trip (a vehicle that can work) | தயார் அல்லது ட்ரிப்பில் | uptime, utilisation |
+| No work (a vehicle that can run, with no load) | வேலை இல்லை | idle |
 | Load (dispatch) | லோடு | consignment |
 | Breakdown | பழுது | |
 | Repair | ரிப்பேர் | |
@@ -91,9 +105,14 @@ choice is remembered.
 | Spares | ஸ்பேர்ஸ் | parts |
 | Toll | டோல் | |
 | Other | மற்றவை | |
-| Odometer reading | கி.மீ. ரீடிங் | |
+| Km reading | கி.மீ. ரீடிங் | odometer |
 | Mileage | மைலேஜ் | |
+| Normal (the usual figure to compare with) | வழக்கம் | benchmark, சாதாரணம் |
 | Stock | இருப்பு | inventory |
+| Minimum (stock) | குறைந்தபட்சம் | safety stock, reorder level |
+| Promise (units held for a customer) | ஒதுக்கு | reserve, allocate |
+| Count (of a pile) | அளவு | stock take |
+| Stone in / Product out | கல் உள்ளே / பொருள் வெளியே | input, output |
 | Weighbridge | எடை மேடை | |
 | Tonnes | டன் | |
 | Production | உற்பத்தி | |
@@ -101,6 +120,12 @@ choice is remembered.
 | Invoice (sales) | இன்வாய்ஸ் | |
 | Order | ஆர்டர் | purchase order (on screen) |
 | Payment received | பணம் வந்தது | receipt |
+| A payment (one that came in, counted) | வரவு | receipt |
+| Money due (owed to us) | பாக்கி | receivable, outstanding, வர வேண்டிய பணம் |
+| Due date | கெடு தேதி | |
+| Cash | ரொக்கம் | |
+| GST | ஜிஎஸ்டி | |
+| E-way bill | இ-வே பில் | EWB |
 | Documents (RC, FC, permit) | ஆவணங்கள் | |
 | Expires | காலாவதி | |
 | Request for material | பொருள் கோரிக்கை | indent (on screen) |

@@ -35,11 +35,14 @@ const TIME_FMT = new Intl.DateTimeFormat('en-GB', {
   hour12: false,
 });
 
-const DAYMON_FMT = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Asia/Kolkata',
-  day: '2-digit',
-  month: 'short',
-});
+/**
+ * Short month names for `formatDayMonth`. English by default; the screen
+ * passes the reader's own. Spelled out here rather than taken from ICU, whose
+ * en-GB "Sept" and en-IN "Sep" depend on the runtime.
+ */
+export const ENGLISH_MONTHS_SHORT: readonly string[] = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
 
 export type Instant = string | Date;
 
@@ -65,10 +68,19 @@ export function formatTime(v: Instant | null | undefined): string {
   return TIME_FMT.format(toDate(v));
 }
 
-/** `08 Aug` — compact axis and timeline labels. */
-export function formatDayMonth(v: Instant | null | undefined): string {
+/**
+ * `08 Aug` — compact axis and timeline labels, on the IST calendar.
+ *
+ * Language-free like the rest of this package: `months` is the reader's
+ * twelve short month names, January first (`08 ஆக.` for a Tamil reader).
+ * A plain `YYYY-MM-DD` is read as that calendar day.
+ */
+export function formatDayMonth(v: Instant | null | undefined, months: readonly string[] = ENGLISH_MONTHS_SHORT): string {
   if (!v) return '–';
-  return DAYMON_FMT.format(toDate(v));
+  const d = toDate(v);
+  if (Number.isNaN(d.getTime())) return '–';
+  const iso = businessDate(d);
+  return `${iso.slice(8, 10)} ${months[Number(iso.slice(5, 7)) - 1] ?? ''}`.trim();
 }
 
 /** The IST calendar date an instant belongs to, as `YYYY-MM-DD`. */

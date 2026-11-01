@@ -257,6 +257,34 @@ export function ReferenceLine({
   );
 }
 
+/**
+ * How wide a label will draw, in px, given what one Latin character is
+ * allowed (`perChar` — each chart keeps the allowance it was tuned with).
+ *
+ * Label fitting here is arithmetic on the string, not a measurement: no
+ * canvas, no wait for a webfont, the same answer on every render. Counting
+ * code points was right for Latin and wrong for Tamil, where a letter draws
+ * about one and a half Latin characters wide and its vowel signs split three
+ * ways — beside it (ா ெ ே ை), around it (ொ ோ ௌ), or joined to it at almost
+ * no width (ி ீ ு ூ; the pulli, none). So "அவசரம்", six code points, counts
+ * as eight characters, close to how it draws. Each weight below is the
+ * measured advance in Noto Sans Tamil at 11px over a typical Latin label
+ * character, rounded up a little: a short estimate makes labels collide.
+ */
+export function labelWidth(text: string, perChar = 6.2): number {
+  let units = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (cp < 0x0b80 || cp > 0x0bff) units += 1;
+    else if (cp === 0x0bca || cp === 0x0bcb || cp === 0x0bcc) units += 2.6;
+    else if (cp === 0x0bbe || (cp >= 0x0bc6 && cp <= 0x0bc8)) units += 1.4;
+    else if ((cp >= 0x0bbf && cp <= 0x0bc2) || cp === 0x0bd7) units += 0.3;
+    else if (cp === 0x0bcd || cp === 0x0b82) units += 0; // the pulli and the dot sit on top
+    else units += 1.6;
+  }
+  return units * perChar;
+}
+
 /** Axis tick labels along the bottom. Tertiary ink, 11px, never bold. */
 export function AxisLabels({
   box,
@@ -278,9 +306,10 @@ export function AxisLabels({
     So the count rule proposes and geometry disposes: a tick that would touch
     the last one drawn is dropped. Same rule the stacked bar already uses for
     its segment names — label only what actually fits — and it is inert at
-    desk widths, where nothing collides in the first place.
+    desk widths, where nothing collides in the first place. Widths come from
+    `labelWidth`, so a Tamil "26 ஜூலை" is not measured as if it were Latin.
   */
-  const CHAR_W = 6.2; // mean advance of the 11px UI face
+  const CHAR_W = 6.2; // mean advance of the 11px UI face, per Latin character
   const MIN_GAP = 8;
   const drawn: { left: number; right: number }[] = [];
 
@@ -290,7 +319,7 @@ export function AxisLabels({
         if (i % every !== 0) return null;
         const x = box.x0 + i * step;
         const anchor = i === 0 ? 'start' : i === labels.length - 1 ? 'end' : 'middle';
-        const w = label.length * CHAR_W;
+        const w = labelWidth(label, CHAR_W);
         const left = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
         const right = left + w;
         if (drawn.some((d) => left < d.right + MIN_GAP && right > d.left - MIN_GAP)) return null;

@@ -129,6 +129,13 @@ services:
         value: ""
         scope: RUN_TIME
 
+      # Industry news (LIN-10). Gemini's free tier is the default model. Until
+      # this key is set, no model is called and the screen shows headlines only.
+      - key: LINCK_AI_API_KEY
+        type: SECRET
+        value: ""
+        scope: RUN_TIME
+
 jobs:
   # Runs before every deploy, from the same image. If it fails, the deploy
   # stops and the running version keeps serving.

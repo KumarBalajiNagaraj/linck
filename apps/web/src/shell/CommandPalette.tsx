@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { can, formatINRCompact } from '@linck/domain';
+import { can } from '@linck/domain';
 import type { StatusFamily } from '@linck/tokens';
 import {
   CUSTOMERS_LIST,
@@ -19,6 +19,7 @@ import { cn, EmptyState, StatusStamp } from '@linck/ui';
 import type { Persona } from '../auth/personas.js';
 import { useLang, type Lang } from '../i18n/lang.js';
 import { statusWords } from '../i18n/statusWords.js';
+import { inrCompactNow } from '../i18n/format.js';
 import { useWords, wordsNow } from '../i18n/words.js';
 import { navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
@@ -195,7 +196,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
           tag: 'invoice',
           title: inv.number,
           mono: true,
-          subtitle: `${inv.customerName} · ${formatINRCompact(inv.total)}`,
+          subtitle: `${inv.customerName} · ${inrCompactNow(inv.total, lang)}`,
           status: {
             family: INVOICE_STATUS_FAMILY[inv.status],
             label: status.invoice[inv.status],

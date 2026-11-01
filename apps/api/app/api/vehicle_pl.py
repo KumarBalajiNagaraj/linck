@@ -1,27 +1,37 @@
-"""The vehicle P&L (LIN-22): trips with their lines, the masters they pick from, and the reports.
+"""The vehicle P&L (LIN-22): trip sheets with their trips and lines, the masters, and the reports.
 
-    GET    /vehicle-pl/trips               trip-wise list, with search and filters   trip readers
-    POST   /vehicle-pl/trips               a new trip with its lines                  fleet.trip_pl.write
-    GET    /vehicle-pl/trips/{id}          one trip, every line, its P&L              trip readers
-    PUT    /vehicle-pl/trips/{id}          the trip as the page holds it now          fleet.trip_pl.write
-    DELETE /vehicle-pl/trips/{id}          the trip and its lines                     fleet.trip_pl.write
-    GET    /vehicle-pl/masters             customers, vendors and materials to pick
-    POST   /vehicle-pl/parties             a customer or vendor added from the trip page
-    POST   /vehicle-pl/materials           a material, with its HSN code and GST rate
-    PATCH  /vehicle-pl/materials/{id}      correct a material, or retire it
-    GET    /vehicle-pl/diesel-bills        a vehicle's diesel bills a trip may link
-    POST   /vehicle-pl/attachments         a photo or PDF of a vendor's invoice
-    GET    /vehicle-pl/attachments/{id}    that file, under the trip's read keys
-    GET    /vehicle-pl/reports/trips       trip-wise, with totals                     trip readers
-    GET    /vehicle-pl/reports/vehicles    vehicle-wise                               finance.pl_report.read
-    GET    /vehicle-pl/reports/months      month-wise                                 finance.pl_report.read
-    GET    /vehicle-pl/reports/customers   money due from customers                   finance.pl_report.read
-    GET    /vehicle-pl/reports/vendors     money due to vendors                       finance.pl_report.read
+    GET    /sheets                           trip sheets, searched and filtered        readers
+    POST   /sheets                           a new sheet with its trips and lines      write
+    GET    /sheets/{id}                      one sheet, every trip and line, the P&L   readers
+    PUT    /sheets/{id}                      the sheet as the page holds it now        write
+    DELETE /sheets/{id}                      the sheet, its trips and lines            write
+    POST   /sheets/{id}/trips/{tripId}/close a customer paid the trip in full          close
+    DELETE /sheets/{id}/trips/{tripId}/close take that back                            close
+    GET    /masters                          vendors, customers, materials, GST rates
+    POST   /parties                          a vendor or customer added from the sheet write
+    PATCH  /parties/{id}                     a GSTIN or phone typed on a line, saved   write
+    POST   /parties/{id}/locations           a purchase or delivery location, saved    write
+    POST   /materials                        a material: HSN, unit, default GST rate   write
+    PATCH  /materials/{id}                   correct a material, or retire it          write
+    POST   /gst-rates                        a GST rate lines may be billed at         write
+    PATCH  /gst-rates/{id}                   switch a rate off, or on again            write
+    GET    /diesel-bills                     a vehicle's diesel bills a sheet may link
+    POST   /attachments                      a photo or PDF of a trip's paper          write
+    GET    /attachments/{id}                 that file, under the sheet's read keys
+    GET    /reports/trips                    trip-wise, with totals                    readers
+    GET    /reports/vehicles                 vehicle-wise                              report
+    GET    /reports/months                   month-wise                                report
+    GET    /reports/customers                money due from customers                  report
+    GET    /reports/vendors                  money due to vendors                      report
 
-A trip is read where fleet.trip_pl.read or finance.pl_report.read reaches its
-site, and written where fleet.trip_pl.write does: whoever enters a trip sees
-that trip's P&L. The vehicle-wise and monthly reports and the money-due lists
-are the director's and accounts'. Every figure is worked out on the server by
+    under /vehicle-pl. readers: fleet.trip_pl.read or finance.pl_report.read;
+    write: fleet.trip_pl.write; close: finance.receipt.verify; report:
+    finance.pl_report.read.
+
+A sheet is read where fleet.trip_pl.read or finance.pl_report.read reaches its
+site, and written where fleet.trip_pl.write does: whoever enters a sheet sees
+its P&L. The vehicle-wise and monthly reports and the money-due lists are the
+director's and accounts'. Every figure is worked out on the server by
 app/domain/vehicle_pl.py.
 """
 
@@ -47,14 +57,21 @@ from app.core.storage import UploadRefused, clean_file_name, file_store, read_ca
 from app.domain import vehicle_pl as pl
 from app.models.core import File, Site
 from app.models.finance import ExpenseBill
-from app.models.logistics import DutyFuelLink, Trip, TripDiesel
-from app.models.master import Item, Party
+from app.models.logistics import DieselLine, EnRouteExpense, Trip, TripSheet
+from app.models.master import GstRate, Item, Party, PartyLocation
 from app.models.procurement import TripPurchase, TripPurchaseFile
+from app.models.sales import TripSale
 from app.schemas.common import money, number
 from app.schemas.expenses import AttachmentOut
 from app.schemas.vehicle_pl import (
+    CloseIn,
     DieselBillOut,
-    LinkedTripOut,
+    GstRateBody,
+    GstRateOut,
+    GstRatePatch,
+    LinkedSheetOut,
+    LocationIn,
+    LocationOut,
     MastersOut,
     MaterialIn,
     MaterialOut,
@@ -66,10 +83,11 @@ from app.schemas.vehicle_pl import (
     OutstandingTotalOut,
     PartyIn,
     PartyOut,
-    TripIn,
-    TripOut,
+    PartyPatch,
+    SheetIn,
+    SheetListOut,
+    SheetOut,
     TripReportOut,
-    TripRowOut,
     VehiclePlOut,
     VehicleReportOut,
 )
@@ -81,20 +99,22 @@ from app.services.vehicle_pl import (
     VOID_BILL,
     WRITE,
     Context,
-    TripBundle,
-    TripFilter,
+    SheetBundle,
+    SheetFilter,
+    Unit,
     build_context,
-    delete_trip,
-    domain_trips,
-    find_trip_ids,
+    close_trip,
+    delete_sheet,
+    find_sheet_ids,
     latest_vehicle,
     load_bundles,
     may_read,
-    row_out,
-    save_trip,
-    sum_rows,
+    save_sheet,
+    sheet_out,
+    sheet_row,
     totals_out,
-    trip_out,
+    trip_row,
+    units_of,
 )
 
 router = APIRouter(prefix="/vehicle-pl", tags=["fleet"])
@@ -108,6 +128,9 @@ SiteId = Annotated[uuid.UUID | None, Query(alias="siteId")]
 Search = Annotated[str | None, Query(alias="q", max_length=100)]
 Limit = Annotated[int, Query(ge=1, le=2000)]
 
+#: Every sheet of a report: the reports add trips up, so none is cut off.
+ALL = 100000
+
 
 def _scope_or_refuse(access: Access, *keys: str) -> Scope:
     scope = access.scope(*keys)
@@ -116,27 +139,28 @@ def _scope_or_refuse(access: Access, *keys: str) -> Scope:
     return scope
 
 
-async def _trip(db: AsyncSession, trip_id: uuid.UUID, *, lock: bool = False) -> TripBundle:
-    """The trip with its lines; another tenant's is not there, as if it never was."""
-    stmt = select(Trip.id).where(Trip.id == trip_id)
+async def _sheet(db: AsyncSession, sheet_id: uuid.UUID, *, lock: bool = False) -> SheetBundle:
+    """The sheet with its trips and lines; another tenant's is not there, as if it never was."""
+    stmt = select(TripSheet.id).where(TripSheet.id == sheet_id)
     if lock:
         stmt = stmt.with_for_update()
     if await db.scalar(stmt) is None:
-        raise gone("trip-gone")
-    return (await load_bundles(db, [trip_id]))[0]
+        raise gone("sheet-gone")
+    return (await load_bundles(db, [sheet_id]))[0]
 
 
-async def _respond(db: AsyncSession, trip_id: uuid.UUID) -> TripOut:
+async def _respond(db: AsyncSession, sheet_id: uuid.UUID) -> SheetOut:
     await db.flush()
-    bundles = await load_bundles(db, [trip_id])
-    return trip_out(bundles[0], await build_context(db, bundles))
+    db.expire_all()
+    bundles = await load_bundles(db, [sheet_id])
+    return sheet_out(bundles[0], await build_context(db, bundles))
 
 
-# ------------------------------------------------------------------- trips
+# ------------------------------------------------------------------- sheets
 
 
-@router.get("/trips", response_model=list[TripRowOut])
-async def list_trips(
+@router.get("/sheets", response_model=SheetListOut)
+async def list_sheets(
     current: CurrentSessionDep,
     date_from: DateFrom = None,
     date_to: DateTo = None,
@@ -146,60 +170,94 @@ async def list_trips(
     site_id: SiteId = None,
     q: Search = None,
     limit: Limit = 500,
-) -> list[TripRowOut]:
-    """Trips this person may read, newest first, each with its P&L."""
+) -> SheetListOut:
+    """Trip sheets this person may read, the latest first, each with its total P&L."""
     scope = _scope_or_refuse(await access_for(current), *READ_KEYS)
-    f = TripFilter(date_from, date_to, vehicle_id, customer_id, vendor_id, site_id, q, limit)
-    bundles = await load_bundles(current.db, await find_trip_ids(current.db, scope, f))
+    f = SheetFilter(date_from, date_to, vehicle_id, customer_id, vendor_id, site_id, q, limit)
+    bundles = await load_bundles(current.db, await find_sheet_ids(current.db, scope, f))
     ctx = await build_context(current.db, bundles)
-    return [row_out(b, ctx) for b in bundles]
+    rows = [sheet_row(b, ctx) for b in bundles]
+    return SheetListOut(
+        rows=rows,
+        total=totals_out(
+            pl.sum_pl([ctx.calcs[str(b.sheet.id)].pl for b in bundles], sum(len(b.trips) for b in bundles))
+        ),
+    )
 
 
-@router.get("/trips/{trip_id}", response_model=TripOut)
-async def get_trip(trip_id: uuid.UUID, current: CurrentSessionDep) -> TripOut:
+@router.get("/sheets/{sheet_id}", response_model=SheetOut)
+async def get_sheet(sheet_id: uuid.UUID, current: CurrentSessionDep) -> SheetOut:
     access = await access_for(current)
-    bundle = await _trip(current.db, trip_id)
-    if not may_read(access, bundle.trip):
+    bundle = await _sheet(current.db, sheet_id)
+    if not may_read(access, bundle.sheet):
         raise needs_permission(READ)
-    return trip_out(bundle, await build_context(current.db, [bundle]))
+    return sheet_out(bundle, await build_context(current.db, [bundle]))
 
 
-@router.post("/trips", response_model=TripOut, status_code=status.HTTP_201_CREATED)
-async def create_trip(body: TripIn, current: CurrentSessionDep) -> TripOut:
-    for section in (body.diesel, body.purchases, body.sales, body.costs, body.payments):
-        if any(line.id is not None for line in section):
-            raise invalid("id", "a new trip's lines have no ids yet")
+def _no_ids(body: SheetIn) -> None:
+    sections = [body.diesel, body.en_route, body.payments, body.trips]
+    for trip in body.trips:
+        sections += [trip.diesel, trip.en_route, trip.purchases, trip.sales, trip.payments]
+    if any(line.id is not None for section in sections for line in section):
+        raise invalid("id", "a new sheet's trips and lines have no ids yet")
+
+
+@router.post("/sheets", response_model=SheetOut, status_code=status.HTTP_201_CREATED)
+async def create_sheet(body: SheetIn, current: CurrentSessionDep) -> SheetOut:
+    _no_ids(body)
     access = await access_for(current)
-    trip_id = await save_trip(current.db, access, await calendar_for(current), body, None)
-    return await _respond(current.db, trip_id)
+    sheet_id = await save_sheet(current.db, access, await calendar_for(current), body, None)
+    return await _respond(current.db, sheet_id)
 
 
-@router.put("/trips/{trip_id}", response_model=TripOut)
-async def replace_trip(trip_id: uuid.UUID, body: TripIn, current: CurrentSessionDep) -> TripOut:
-    """The trip as the page holds it now: lines kept by id are corrected, the
-    rest added or deleted. Values the rules derive are worked out again."""
+@router.put("/sheets/{sheet_id}", response_model=SheetOut)
+async def replace_sheet(sheet_id: uuid.UUID, body: SheetIn, current: CurrentSessionDep) -> SheetOut:
+    """The sheet as the page holds it now: trips and lines kept by id are corrected,
+    the rest added or deleted. Values the rules derive are worked out again."""
     access = await access_for(current)
-    bundle = await _trip(current.db, trip_id, lock=True)
-    if not may_read(access, bundle.trip):
+    bundle = await _sheet(current.db, sheet_id, lock=True)
+    if not may_read(access, bundle.sheet):
         raise needs_permission(READ)
-    await save_trip(current.db, access, await calendar_for(current), body, bundle)
-    return await _respond(current.db, trip_id)
+    await save_sheet(current.db, access, await calendar_for(current), body, bundle)
+    return await _respond(current.db, sheet_id)
 
 
-@router.delete("/trips/{trip_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_trip(trip_id: uuid.UUID, current: CurrentSessionDep) -> Response:
+@router.delete("/sheets/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_sheet(sheet_id: uuid.UUID, current: CurrentSessionDep) -> Response:
     access = await access_for(current)
-    bundle = await _trip(current.db, trip_id, lock=True)
-    if not access.can(WRITE, bundle.trip.site_id):
+    bundle = await _sheet(current.db, sheet_id, lock=True)
+    if not access.can(WRITE, bundle.sheet.site_id):
         raise needs_permission(WRITE)
-    await delete_trip(current.db, bundle)
+    await delete_sheet(current.db, bundle)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/sheets/{sheet_id}/trips/{trip_id}/close", response_model=SheetOut)
+async def close(
+    sheet_id: uuid.UUID, trip_id: uuid.UUID, body: CloseIn, current: CurrentSessionDep
+) -> SheetOut:
+    """Accounts confirm a customer paid this trip in full: its status turns closed."""
+    bundle = await _sheet(current.db, sheet_id, lock=True)
+    await close_trip(current.db, await access_for(current), bundle, trip_id, body.party_id, close=True)
+    return await _respond(current.db, sheet_id)
+
+
+@router.delete("/sheets/{sheet_id}/trips/{trip_id}/close", response_model=SheetOut)
+async def reopen(
+    sheet_id: uuid.UUID,
+    trip_id: uuid.UUID,
+    current: CurrentSessionDep,
+    party_id: Annotated[uuid.UUID, Query(alias="partyId")],
+) -> SheetOut:
+    bundle = await _sheet(current.db, sheet_id, lock=True)
+    await close_trip(current.db, await access_for(current), bundle, trip_id, party_id, close=False)
+    return await _respond(current.db, sheet_id)
 
 
 # ----------------------------------------------------------------- masters
 
 
-def party_out(p: Party) -> PartyOut:
+def party_out(p: Party, locations: list[PartyLocation]) -> PartyOut:
     return PartyOut(
         id=p.id,
         name=p.display_name,
@@ -207,6 +265,7 @@ def party_out(p: Party) -> PartyOut:
         phone=p.phone,
         contact_name=p.contact_name,
         roles=list(p.party_roles),
+        locations=[LocationOut(id=x.id, name=x.name) for x in locations if x.party_id == p.id],
     )
 
 
@@ -222,23 +281,47 @@ def material_out(i: Item) -> MaterialOut:
     )
 
 
+def rate_out(r: GstRate) -> GstRateOut:
+    return GstRateOut(id=r.id, rate_pct=number(r.rate_pct) or 0, active=r.is_active)
+
+
+async def _locations(db: AsyncSession, party_ids: list[uuid.UUID] | None = None) -> list[PartyLocation]:
+    stmt = select(PartyLocation).order_by(PartyLocation.name, PartyLocation.id)
+    if party_ids is not None:
+        stmt = stmt.where(PartyLocation.party_id.in_(party_ids))
+    return list((await db.scalars(stmt)).all())
+
+
 @router.get("/masters", response_model=MastersOut)
 async def masters(current: CurrentSessionDep) -> MastersOut:
-    """Who and what a trip line can name. The party master is read org-wide, as the customer database is."""
+    """Who and what a line can name. The party master is read org-wide, as the customer database is."""
     _scope_or_refuse(await access_for(current), READ, WRITE, REPORT)
-    parties = (await current.db.scalars(select(Party).order_by(Party.display_name, Party.id))).all()
-    items = (await current.db.scalars(select(Item).order_by(Item.name, Item.id))).all()
+    db = current.db
+    parties = (await db.scalars(select(Party).order_by(Party.display_name, Party.id))).all()
+    locations = await _locations(db)
+    items = (await db.scalars(select(Item).order_by(Item.name, Item.id))).all()
+    rates = (await db.scalars(select(GstRate).order_by(GstRate.rate_pct))).all()
     return MastersOut(
-        customers=[party_out(p) for p in parties if "customer" in p.party_roles],
-        vendors=[party_out(p) for p in parties if "vendor" in p.party_roles],
+        customers=[party_out(p, locations) for p in parties if "customer" in p.party_roles],
+        vendors=[party_out(p, locations) for p in parties if "vendor" in p.party_roles],
         materials=[material_out(i) for i in items],
+        gst_rates=[rate_out(r) for r in rates],
     )
+
+
+async def _add_locations(db: AsyncSession, party: Party, names: list[str]) -> None:
+    have = {x.name.lower() for x in await _locations(db, [party.id])}
+    for name in dict.fromkeys(names):
+        if name.lower() not in have:
+            db.add(PartyLocation(organization_id=party.organization_id, party_id=party.id, name=name))
+            have.add(name.lower())
+    await db.flush()
 
 
 @router.post("/parties", response_model=PartyOut, status_code=status.HTTP_201_CREATED)
 async def add_party(body: PartyIn, current: CurrentSessionDep) -> PartyOut:
-    """A customer or vendor from the trip page. A firm already in the master under
-    the same GSTIN takes the role, so one firm is never two parties."""
+    """A vendor or customer from the sheet. A firm already in the master under the
+    same GSTIN takes the role, so one firm is never two parties."""
     db = current.db
     access = await access_for(current)
     if body.role == "customer":
@@ -250,39 +333,86 @@ async def add_party(body: PartyIn, current: CurrentSessionDep) -> PartyOut:
             raise invalid("siteId", "no such site")
     elif not access.can(WRITE):
         raise needs_permission(WRITE)
+    party: Party | None = None
     if body.gstin is not None:
         if not gstin_is_valid(body.gstin):
             raise invalid("gstin", "not a valid GSTIN")
-        found = await db.scalar(select(Party).where(Party.gstin == body.gstin).with_for_update())
-        if found is not None:
-            if body.role not in found.party_roles:
-                found.party_roles = [*found.party_roles, body.role]
-                if body.role == "customer" and found.served_from_site_id is None:
-                    found.served_from_site_id = body.site_id
-                await db.flush()
-            return party_out(found)
-    party = Party(
-        organization_id=current.organization_id,
-        display_name=body.name,
-        legal_name=body.name,
-        party_roles=[body.role],
-        gstin=body.gstin,
-        contact_name=body.contact_name,
-        phone=body.phone,
-        served_from_site_id=body.site_id if body.role == "customer" else None,
-    )
-    db.add(party)
+        party = await db.scalar(select(Party).where(Party.gstin == body.gstin).with_for_update())
+        if party is not None and body.role not in party.party_roles:
+            party.party_roles = [*party.party_roles, body.role]
+            if body.role == "customer" and party.served_from_site_id is None:
+                party.served_from_site_id = body.site_id
+            await db.flush()
+    if party is None:
+        party = Party(
+            organization_id=current.organization_id,
+            display_name=body.name,
+            legal_name=body.name,
+            party_roles=[body.role],
+            gstin=body.gstin,
+            contact_name=body.contact_name,
+            phone=body.phone,
+            served_from_site_id=body.site_id if body.role == "customer" else None,
+        )
+        db.add(party)
+        try:
+            await db.flush()
+        except IntegrityError as exc:  # pragma: no cover - two people adding one GSTIN at once
+            raise refuse({"code": "gstin-used", "gstin": body.gstin}) from exc
+    await _add_locations(db, party, body.locations)
+    return party_out(party, await _locations(db, [party.id]))
+
+
+async def _party_to_write(current: CurrentSessionDep, party_id: uuid.UUID) -> Party:
+    if not (await access_for(current)).can(WRITE):
+        raise needs_permission(WRITE)
+    party = await current.db.get(Party, party_id, with_for_update=True)
+    if party is None:
+        raise gone()
+    return party
+
+
+@router.patch("/parties/{party_id}", response_model=PartyOut)
+async def update_party(party_id: uuid.UUID, body: PartyPatch, current: CurrentSessionDep) -> PartyOut:
+    """A GSTIN typed on a line, saved into the master; only where the master has none,
+    so a line never rewrites a firm's registered GSTIN."""
+    party = await _party_to_write(current, party_id)
+    if body.gstin is not None and body.gstin != party.gstin:
+        if not gstin_is_valid(body.gstin):
+            raise invalid("gstin", "not a valid GSTIN")
+        if party.gstin is not None:
+            raise refuse({"code": "gstin-set", "gstin": party.gstin})
+        party.gstin = body.gstin
+    if body.phone is not None:
+        party.phone = body.phone
     try:
-        await db.flush()
-    except IntegrityError as exc:  # pragma: no cover - two people adding one GSTIN at once
+        await current.db.flush()
+    except IntegrityError as exc:
         raise refuse({"code": "gstin-used", "gstin": body.gstin}) from exc
-    return party_out(party)
+    return party_out(party, await _locations(current.db, [party.id]))
+
+
+@router.post("/parties/{party_id}/locations", response_model=PartyOut, status_code=status.HTTP_201_CREATED)
+async def add_location(party_id: uuid.UUID, body: LocationIn, current: CurrentSessionDep) -> PartyOut:
+    """A purchase or delivery location typed on a line, saved into the party's master."""
+    party = await _party_to_write(current, party_id)
+    await _add_locations(current.db, party, [body.name])
+    return party_out(party, await _locations(current.db, [party.id]))
+
+
+async def _name_free(db: AsyncSession, name: str, item_id: uuid.UUID | None = None) -> None:
+    stmt = select(Item.id).where(Item.name.ilike(name.replace("\\", "\\\\").replace("%", "\\%"), escape="\\"))
+    if item_id is not None:
+        stmt = stmt.where(Item.id != item_id)
+    if await db.scalar(stmt) is not None:
+        raise refuse({"code": "name-used", "name": name})
 
 
 @router.post("/materials", response_model=MaterialOut, status_code=status.HTTP_201_CREATED)
 async def add_material(body: MaterialIn, current: CurrentSessionDep) -> MaterialOut:
     if not (await access_for(current)).can(WRITE):
         raise needs_permission(WRITE)
+    await _name_free(current.db, body.name)
     item = Item(
         organization_id=current.organization_id,
         code=body.code,
@@ -305,13 +435,14 @@ async def add_material(body: MaterialIn, current: CurrentSessionDep) -> Material
 async def update_material(
     material_id: uuid.UUID, body: MaterialPatch, current: CurrentSessionDep
 ) -> MaterialOut:
-    """A new rate or HSN code applies to lines entered from now: each line keeps what it was billed at."""
+    """A new rate, HSN code or unit applies to lines entered from now; a line keeps what it was billed at."""
     if not (await access_for(current)).can(WRITE):
         raise needs_permission(WRITE)
     item = await current.db.get(Item, material_id)
     if item is None:
         raise gone()
     if body.name is not None:
+        await _name_free(current.db, body.name, item.id)
         item.name = body.name
     if body.hsn_code is not None:
         item.hsn_code = body.hsn_code
@@ -326,6 +457,35 @@ async def update_material(
     return material_out(item)
 
 
+@router.post("/gst-rates", response_model=GstRateOut, status_code=status.HTTP_201_CREATED)
+async def add_gst_rate(body: GstRateBody, current: CurrentSessionDep) -> GstRateOut:
+    """A GST rate lines may be billed at. A rate already on the list is switched on again."""
+    if not (await access_for(current)).can(WRITE):
+        raise needs_permission(WRITE)
+    rate = await current.db.scalar(select(GstRate).where(GstRate.rate_pct == body.rate_pct).with_for_update())
+    if rate is None:
+        rate = GstRate(organization_id=current.organization_id, rate_pct=body.rate_pct)
+        current.db.add(rate)
+    rate.is_active = True
+    await current.db.flush()
+    await current.db.refresh(rate)
+    return rate_out(rate)
+
+
+@router.patch("/gst-rates/{rate_id}", response_model=GstRateOut)
+async def update_gst_rate(rate_id: uuid.UUID, body: GstRatePatch, current: CurrentSessionDep) -> GstRateOut:
+    """Switched off, a rate is no longer offered; lines billed at it still read."""
+    if not (await access_for(current)).can(WRITE):
+        raise needs_permission(WRITE)
+    rate = await current.db.get(GstRate, rate_id)
+    if rate is None:
+        raise gone()
+    rate.is_active = body.active
+    await current.db.flush()
+    await current.db.refresh(rate)
+    return rate_out(rate)
+
+
 @router.get("/diesel-bills", response_model=list[DieselBillOut])
 async def diesel_bills(
     current: CurrentSessionDep,
@@ -333,7 +493,7 @@ async def diesel_bills(
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> list[DieselBillOut]:
-    """A vehicle's diesel bills, newest first, and the trips each is already split across."""
+    """A vehicle's diesel bills, newest first, and the sheet each is already linked on."""
     _scope_or_refuse(await access_for(current), WRITE, READ)
     stmt = select(ExpenseBill).where(
         ExpenseBill.desk == "fleet",
@@ -346,19 +506,15 @@ async def diesel_bills(
     if date_to:
         stmt = stmt.where(ExpenseBill.bill_date <= date_to)
     bills = (await current.db.scalars(stmt.order_by(ExpenseBill.bill_date.desc()).limit(100))).all()
-    linked: dict[uuid.UUID, list[LinkedTripOut]] = {}
+    linked: dict[uuid.UUID, LinkedSheetOut] = {}
     if bills:
         rows = await current.db.execute(
-            select(DutyFuelLink.expense_bill_id, Trip.id, Trip.trip_number, Trip.trip_date)
-            .join(TripDiesel, TripDiesel.link_id == DutyFuelLink.id)
-            .join(Trip, Trip.id == TripDiesel.trip_id)
-            .where(DutyFuelLink.expense_bill_id.in_([b.id for b in bills]))
-            .order_by(Trip.trip_number)
+            select(DieselLine.expense_bill_id, TripSheet.id, TripSheet.sheet_number)
+            .join(TripSheet, TripSheet.id == DieselLine.trip_sheet_id)
+            .where(DieselLine.expense_bill_id.in_([b.id for b in bills]))
         )
-        for bill_id, trip_id, trip_number, trip_date in rows:
-            linked.setdefault(bill_id, []).append(
-                LinkedTripOut(trip_id=trip_id, trip_number=trip_number, date=trip_date)
-            )
+        for bill_id, sheet_id, sheet_number in rows:
+            linked[bill_id] = LinkedSheetOut(sheet_id=sheet_id, sheet_number=sheet_number)
     return [
         DieselBillOut(
             id=b.id,
@@ -369,7 +525,7 @@ async def diesel_bills(
             litres=number(b.litres),
             amount=money(b.amount),
             status=b.status,
-            linked_trips=linked.get(b.id, []),
+            linked_sheet=linked.get(b.id),
         )
         for b in bills
     ]
@@ -380,7 +536,8 @@ async def diesel_bills(
 
 @router.post("/attachments", response_model=AttachmentOut, status_code=status.HTTP_201_CREATED)
 async def upload_attachment(current: CurrentSessionDep, file: UploadFile) -> AttachmentOut:
-    """A photo or PDF of a vendor's invoice, ten megabytes at most, put on a purchase by saving the trip."""
+    """A photo or PDF of a trip's paper (a vendor's bill, a PO, a signed DC, a diesel,
+    toll, police or maintenance bill), ten megabytes at most, put on a line by saving the sheet."""
     access = await access_for(current)
     if not access.can(WRITE):
         raise needs_permission(WRITE)
@@ -395,11 +552,11 @@ async def upload_attachment(current: CurrentSessionDep, file: UploadFile) -> Att
         raise HTTPException(status_code=code, detail={"problem": {"code": refused.code}}) from refused
     row = File(
         organization_id=current.organization_id,
-        purpose="purchase_invoice",
+        purpose="trip_document",
         sha256=stored.sha256,
         mime_type=stored.mime_type,
         size_bytes=stored.size,
-        original_name=clean_file_name(file.filename, "invoice"),
+        original_name=clean_file_name(file.filename, "photo"),
         uploaded_by=access.user_id,
     )
     current.db.add(row)
@@ -409,25 +566,46 @@ async def upload_attachment(current: CurrentSessionDep, file: UploadFile) -> Att
     )
 
 
+async def _sheet_of_file(db: AsyncSession, file_id: uuid.UUID) -> TripSheet | None:
+    """The sheet a file is on, through whichever line holds it."""
+    candidates = [
+        select(TripSheet)
+        .join(Trip, Trip.trip_sheet_id == TripSheet.id)
+        .join(TripPurchase, TripPurchase.trip_id == Trip.id)
+        .join(TripPurchaseFile, TripPurchaseFile.purchase_id == TripPurchase.id)
+        .where(TripPurchaseFile.file_id == file_id),
+        select(TripSheet)
+        .join(Trip, Trip.trip_sheet_id == TripSheet.id)
+        .join(TripSale, TripSale.trip_id == Trip.id)
+        .where(or_(TripSale.po_file_id == file_id, TripSale.dc_file_id == file_id)),
+        select(TripSheet)
+        .join(DieselLine, DieselLine.trip_sheet_id == TripSheet.id)
+        .where(DieselLine.file_id == file_id),
+        select(TripSheet)
+        .join(EnRouteExpense, EnRouteExpense.trip_sheet_id == TripSheet.id)
+        .where(EnRouteExpense.file_id == file_id),
+    ]
+    for stmt in candidates:
+        sheet = await db.scalar(stmt.limit(1))
+        if sheet is not None:
+            return sheet
+    return None
+
+
 @router.get("/attachments/{file_id}")
 async def download_attachment(file_id: uuid.UUID, current: CurrentSessionDep) -> StreamingResponse:
-    """The file, streamed through here so the trip's read keys still decide: to whoever
-    may read the trip it is on, or to whoever uploaded it before it was."""
+    """The file, streamed through here so the sheet's read keys still decide: to whoever
+    may read the sheet it is on, or to whoever uploaded it before it was."""
     db = current.db
     access = await access_for(current)
     file = await db.get(File, file_id)
-    if file is None or file.purpose != "purchase_invoice":
+    if file is None or file.purpose != "trip_document":
         raise gone("file-gone")
-    trip = await db.scalar(
-        select(Trip)
-        .join(TripPurchase, TripPurchase.trip_id == Trip.id)
-        .join(TripPurchaseFile, TripPurchaseFile.purchase_id == TripPurchase.id)
-        .where(TripPurchaseFile.file_id == file_id)
-    )
-    if trip is None:
+    sheet = await _sheet_of_file(db, file_id)
+    if sheet is None:
         if file.uploaded_by != access.user_id:
             raise gone("file-gone")
-    elif not may_read(access, trip):
+    elif not may_read(access, sheet):
         raise needs_permission(READ)
     stored = await file_store().open(current.organization_id, file.sha256)
     if stored is None:
@@ -438,11 +616,16 @@ async def download_attachment(file_id: uuid.UUID, current: CurrentSessionDep) ->
 # ----------------------------------------------------------------- reports
 
 
-async def _report_trips(
-    current: CurrentSessionDep, scope: Scope, f: TripFilter
-) -> tuple[list[TripBundle], Context]:
-    bundles = await load_bundles(current.db, await find_trip_ids(current.db, scope, f))
-    return bundles, await build_context(current.db, bundles)
+async def _units(
+    current: CurrentSessionDep, scope: Scope, f: SheetFilter
+) -> tuple[list[Unit], list[SheetBundle], Context]:
+    bundles = await load_bundles(current.db, await find_sheet_ids(current.db, scope, f))
+    ctx = await build_context(current.db, bundles)
+    return units_of(bundles, ctx, f), bundles, ctx
+
+
+def _total(units: list[Unit]) -> pl.PlTotals:
+    return pl.total_pl([u.unit for u in units])
 
 
 @router.get("/reports/trips", response_model=TripReportOut)
@@ -456,13 +639,13 @@ async def trip_report(
     site_id: SiteId = None,
     q: Search = None,
 ) -> TripReportOut:
-    """Trip-wise P&L with its totals, for the trips this person may read."""
+    """Trip-wise P&L with its totals: each trip with its share of its sheet's costs, by trip date."""
     scope = _scope_or_refuse(await access_for(current), *READ_KEYS)
-    f = TripFilter(date_from, date_to, vehicle_id, customer_id, vendor_id, site_id, q, 2000)
-    bundles, ctx = await _report_trips(current, scope, f)
+    f = SheetFilter(date_from, date_to, vehicle_id, customer_id, vendor_id, site_id, q, ALL)
+    units, _, ctx = await _units(current, scope, f)
     return TripReportOut(
-        rows=[row_out(b, ctx) for b in bundles],
-        total=totals_out(sum_rows(ctx, bundles)),
+        rows=[trip_row(u, ctx) for u in units],
+        total=totals_out(_total(units)),
     )
 
 
@@ -477,20 +660,19 @@ async def vehicle_report(
 ) -> VehicleReportOut:
     """One row per vehicle, the most profitable first."""
     scope = _scope_or_refuse(await access_for(current), REPORT)
-    f = TripFilter(date_from, date_to, vehicle_id, None, None, site_id, q, 100000)
-    bundles, ctx = await _report_trips(current, scope, f)
-    trips = domain_trips(ctx, bundles)
+    f = SheetFilter(date_from, date_to, vehicle_id, None, None, site_id, q, ALL)
+    units, bundles, _ = await _units(current, scope, f)
     latest = latest_vehicle(bundles)
     rows = [
         VehiclePlOut(
-            vehicle_id=vehicle_id_,
-            registration_number=latest[vehicle_id_].registration_number,
-            vehicle_model=latest[vehicle_id_].vehicle_model,
+            vehicle_id=vid,
+            registration_number=latest[vid].registration_number,
+            vehicle_model=latest[vid].vehicle_model,
             **totals.wire(),
         )
-        for vehicle_id_, totals in pl.pl_by_vehicle(trips, ctx.calcs)
+        for vid, totals in pl.pl_by_vehicle([u.unit for u in units])
     ]
-    return VehicleReportOut(rows=rows, total=totals_out(sum_rows(ctx, bundles)))
+    return VehicleReportOut(rows=rows, total=totals_out(_total(units)))
 
 
 @router.get("/reports/months", response_model=MonthReportOut)
@@ -503,27 +685,31 @@ async def month_report(
 ) -> MonthReportOut:
     """One row per month of the trip date, oldest first."""
     scope = _scope_or_refuse(await access_for(current), REPORT)
-    f = TripFilter(date_from, date_to, vehicle_id, None, None, site_id, None, 100000)
-    bundles, ctx = await _report_trips(current, scope, f)
-    trips = domain_trips(ctx, bundles)
-    rows = [MonthPlOut(month=month, **totals.wire()) for month, totals in pl.pl_by_month(trips, ctx.calcs)]
-    return MonthReportOut(rows=rows, total=totals_out(sum_rows(ctx, bundles)))
+    f = SheetFilter(date_from, date_to, vehicle_id, None, None, site_id, None, ALL)
+    units, _, _ = await _units(current, scope, f)
+    rows = [
+        MonthPlOut(month=month, **totals.wire()) for month, totals in pl.pl_by_month([u.unit for u in units])
+    ]
+    return MonthReportOut(rows=rows, total=totals_out(_total(units)))
 
 
 async def _outstanding(
     current: CurrentSessionDep, role: str, date_from: date | None, date_to: date | None, q: str | None
 ) -> OutstandingReportOut:
     scope = _scope_or_refuse(await access_for(current), REPORT)
-    f = TripFilter(date_from, date_to, None, None, None, None, None, 100000)
-    bundles, ctx = await _report_trips(current, scope, f)
-    rows = pl.outstanding(domain_trips(ctx, bundles), ctx.calcs, role)
+    f = SheetFilter(date_from, date_to, None, None, None, None, None, ALL)
+    units, _, ctx = await _units(current, scope, f)
     parties = ctx.parties
     needle = (q or "").strip().lower()
     out = []
-    for r in rows:
+    for r in pl.outstanding([u.unit for u in units], role):
         party = parties.get(uuid.UUID(r.party_id))
         name = party.display_name if party else ""
-        if needle and needle not in name.lower() and needle not in (party.gstin or "").lower():
+        if (
+            needle
+            and needle not in name.lower()
+            and needle not in ((party.gstin if party else "") or "").lower()
+        ):
             continue
         out.append(
             OutstandingOut(
@@ -536,6 +722,7 @@ async def _outstanding(
                 billed=money(r.billed),
                 settled=money(r.settled),
                 due=money(r.due),
+                status=r.status,
                 first_date=date.fromisoformat(r.first_date),
                 last_date=date.fromisoformat(r.last_date),
             )
@@ -555,7 +742,7 @@ async def _outstanding(
 async def customer_dues(
     current: CurrentSessionDep, date_from: DateFrom = None, date_to: DateTo = None, q: Search = None
 ) -> OutstandingReportOut:
-    """Money due from each customer: their bills with GST, less what they paid. The most due first."""
+    """Money due from each customer: AX, their bills with GST, less BA, what they paid."""
     return await _outstanding(current, "customer", date_from, date_to, q)
 
 
@@ -563,5 +750,5 @@ async def customer_dues(
 async def vendor_dues(
     current: CurrentSessionDep, date_from: DateFrom = None, date_to: DateTo = None, q: Search = None
 ) -> OutstandingReportOut:
-    """Money due to each vendor: their bills with GST, less what we paid. The most due first."""
+    """Money due to each vendor: BD, their bills with GST, less BE, what we paid."""
     return await _outstanding(current, "vendor", date_from, date_to, q)

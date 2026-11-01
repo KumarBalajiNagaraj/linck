@@ -5,9 +5,9 @@ one table at a time, through the unprivileged app role; then the structural
 rules the vehicle P&L leans on, asserted against the database itself, so a
 data fix in psql cannot break them either:
 
-  - a trip's vehicle and date are its vehicle day's;
-  - a trip's part of a diesel fill names a fill posted to its own day;
-  - a fill is posted once; a linked line repeats none of its fill's figures;
+  - a line of a sheet or of one of its trips names a trip of its own sheet;
+  - a diesel bill or fuel entry is linked once; a linked bill repeats none of its figures;
+  - a GST purchase names the vendor's GSTIN; maintenance says which kind;
   - a customer has a site it is served from, a vendor need not.
 """
 
@@ -28,14 +28,16 @@ from app.core.db import tenant_session
 # Parents before children, as they are planted.
 LIN22_TABLES = [
     "master.items",
-    "logistics.vehicle_duty_logs",
+    "master.party_locations",
+    "master.gst_rates",
+    "logistics.trip_sheets",
     "logistics.trips",
-    "logistics.duty_fuel_links",
-    "logistics.trip_diesel",
-    "logistics.trip_costs",
+    "logistics.diesel_lines",
+    "logistics.enroute_expenses",
     "procurement.trip_purchases",
     "procurement.trip_purchase_files",
     "sales.trip_sales",
+    "sales.trip_closures",
     "finance.trip_payments",
 ]
 
@@ -48,7 +50,14 @@ def planted(
     tag = uuid.uuid4().hex[:10]
     user = make_user(tenant_a, f"pl-planter-{tag}@example.com", "Planter")
     ids = {table: uuid.uuid4() for table in LIN22_TABLES}
-    extra = {"vendor": uuid.uuid4(), "customer": uuid.uuid4(), "bill": uuid.uuid4(), "file": uuid.uuid4()}
+    extra = {
+        "vendor": uuid.uuid4(),
+        "customer": uuid.uuid4(),
+        "bill": uuid.uuid4(),
+        "file": uuid.uuid4(),
+        "other_sheet": uuid.uuid4(),
+        "other_trip": uuid.uuid4(),
+    }
     row = {
         "org": tenant_a.org_id,
         "site": tenant_a.site_id,
@@ -59,15 +68,22 @@ def planted(
         **{table.replace(".", "_"): row_id for table, row_id in ids.items()},
     }
     statements = """
-            INSERT INTO master.parties (id, organization_id, display_name, legal_name, party_roles)
-            VALUES (%(vendor)s, %(org)s, 'Planted Quarry', 'Planted Quarry', '{vendor}');
+            INSERT INTO master.parties (id, organization_id, display_name, legal_name, party_roles, gstin)
+            VALUES (%(vendor)s, %(org)s, 'Planted Quarry', 'Planted Quarry', '{vendor}', NULL);
 
             INSERT INTO master.parties
                 (id, organization_id, display_name, legal_name, party_roles, served_from_site_id)
             VALUES (%(customer)s, %(org)s, 'Planted Builder', 'Planted Builder', '{customer}', %(site)s);
 
             INSERT INTO master.items (id, organization_id, code, name, hsn_code, gst_rate_pct, unit)
-            VALUES (%(master_items)s, %(org)s, 'PL' || upper(%(tag)s), 'M-Sand', '2517', 5, 'unit');
+            VALUES (%(master_items)s, %(org)s, 'PL' || upper(%(tag)s), 'M-Sand ' || %(tag)s, '2517', 5,
+                    'unit');
+
+            INSERT INTO master.party_locations (id, organization_id, party_id, name)
+            VALUES (%(master_party_locations)s, %(org)s, %(vendor)s, 'Pallur yard');
+
+            INSERT INTO master.gst_rates (id, organization_id, rate_pct)
+            VALUES (%(master_gst_rates)s, %(org)s, 99.97);
 
             INSERT INTO finance.expense_bills
                 (id, organization_id, desk, site_id, kind, bill_number, bill_date, litres, amount, status,
@@ -77,51 +93,67 @@ def planted(
 
             INSERT INTO core.files
                 (id, organization_id, purpose, sha256, mime_type, size_bytes, original_name, uploaded_by)
-            VALUES (%(file)s, %(org)s, 'purchase_invoice', repeat('b', 64), 'image/jpeg', 10, 'invoice.jpg',
+            VALUES (%(file)s, %(org)s, 'trip_document', repeat('b', 64), 'image/jpeg', 10, 'bill.jpg',
                     %(user)s);
 
-            INSERT INTO logistics.vehicle_duty_logs (id, organization_id, vehicle_ref, duty_date)
-            VALUES (%(logistics_vehicle_duty_logs)s, %(org)s, %(vehicle)s, current_date);
+            INSERT INTO logistics.trip_sheets
+                (id, organization_id, financial_year, serial, sheet_number, site_id, vehicle_ref,
+                 registration_number, start_date, start_km, end_km, batta, created_by, created_by_name)
+            VALUES (%(logistics_trip_sheets)s, %(org)s, 'planted', 1, 'TS/planted/' || %(tag)s, %(site)s,
+                    %(vehicle)s, 'TN29AB1001', current_date, 100, 186, 500, %(user)s, 'Planter');
+
+            INSERT INTO logistics.trip_sheets
+                (id, organization_id, financial_year, serial, sheet_number, site_id, vehicle_ref,
+                 registration_number, start_date, created_by, created_by_name)
+            VALUES (%(other_sheet)s, %(org)s, 'planted', 2, 'TS/planted2/' || %(tag)s, %(site)s,
+                    %(vehicle)s, 'TN29AB1001', current_date, %(user)s, 'Planter');
 
             INSERT INTO logistics.trips
-                (id, organization_id, financial_year, serial, trip_number, duty_log_id, site_id, vehicle_ref,
-                 registration_number, trip_date, start_km, end_km, created_by, created_by_name)
-            VALUES (%(logistics_trips)s, %(org)s, 'planted', 1, 'TRP/planted/' || %(tag)s,
-                    %(logistics_vehicle_duty_logs)s, %(site)s, %(vehicle)s, 'TN29AB1001', current_date,
-                    100, 140, %(user)s, 'Planter');
+                (id, organization_id, trip_sheet_id, financial_year, serial, trip_number, trip_date)
+            VALUES (%(logistics_trips)s, %(org)s, %(logistics_trip_sheets)s, 'planted', 1,
+                    'TRP/planted/' || %(tag)s, current_date);
 
-            INSERT INTO logistics.duty_fuel_links (id, organization_id, duty_log_id, source, expense_bill_id)
-            VALUES (%(logistics_duty_fuel_links)s, %(org)s, %(logistics_vehicle_duty_logs)s, 'expense_bill',
+            INSERT INTO logistics.trips
+                (id, organization_id, trip_sheet_id, financial_year, serial, trip_number, trip_date)
+            VALUES (%(other_trip)s, %(org)s, %(other_sheet)s, 'planted', 2, 'TRP/planted2/' || %(tag)s,
+                    current_date);
+
+            INSERT INTO logistics.diesel_lines
+                (id, organization_id, trip_sheet_id, position, source, expense_bill_id)
+            VALUES (%(logistics_diesel_lines)s, %(org)s, %(logistics_trip_sheets)s, 0, 'expense_bill',
                     %(bill)s);
 
-            INSERT INTO logistics.trip_diesel
-                (id, organization_id, trip_id, position, source, link_id, duty_log_id)
-            VALUES (%(logistics_trip_diesel)s, %(org)s, %(logistics_trips)s, 0, 'expense_bill',
-                    %(logistics_duty_fuel_links)s, %(logistics_vehicle_duty_logs)s);
-
-            INSERT INTO logistics.trip_costs (id, organization_id, trip_id, position, kind, amount)
-            VALUES (%(logistics_trip_costs)s, %(org)s, %(logistics_trips)s, 0, 'batta', 600.00);
+            INSERT INTO logistics.enroute_expenses
+                (id, organization_id, trip_sheet_id, trip_id, position, kind, location, reference, amount,
+                 file_id)
+            VALUES (%(logistics_enroute_expenses)s, %(org)s, %(logistics_trip_sheets)s, %(logistics_trips)s,
+                    0, 'toll', 'Sriperumbudur', 'TXN-1', 235.00, %(file)s);
 
             INSERT INTO procurement.trip_purchases
-                (id, organization_id, trip_id, position, vendor_party_id, item_id, hsn_code, unit, quantity,
-                 rate, gst_billed, gst_rate_pct)
+                (id, organization_id, trip_id, position, vendor_party_id, location, item_id, hsn_code, unit,
+                 quantity, rate, gst_billed, gst_rate_pct)
             VALUES (%(procurement_trip_purchases)s, %(org)s, %(logistics_trips)s, 0, %(vendor)s,
-                    %(master_items)s, '2517', 'unit', 7, 2850.00, true, 5);
+                    'Pallur yard', %(master_items)s, '2517', 'unit', 7, 2850.00, false, 0);
 
             INSERT INTO procurement.trip_purchase_files (id, organization_id, purchase_id, file_id)
             VALUES (%(procurement_trip_purchase_files)s, %(org)s, %(procurement_trip_purchases)s, %(file)s);
 
             INSERT INTO sales.trip_sales
                 (id, organization_id, trip_id, position, customer_party_id, item_id, hsn_code, unit, quantity,
-                 rate, gst_billed, gst_rate_pct, transport_amount, transport_gst_rate_pct)
+                 rate, gst_billed, gst_rate_pct, transport_amount)
             VALUES (%(sales_trip_sales)s, %(org)s, %(logistics_trips)s, 0, %(customer)s, %(master_items)s,
-                    '2517', 'unit', 7, 4200.00, true, 5, 1500.00, 18);
+                    '2517', 'unit', 7, 4200.00, true, 5, 1500.00);
+
+            INSERT INTO sales.trip_closures
+                (id, organization_id, trip_id, customer_party_id, billed, closed_by, closed_by_name)
+            VALUES (%(sales_trip_closures)s, %(org)s, %(logistics_trips)s, %(customer)s, 32445.00, %(user)s,
+                    'Planter');
 
             INSERT INTO finance.trip_payments
-                (id, organization_id, trip_id, position, direction, party_id, paid_on, method, amount,
-                 recorded_by)
-            VALUES (%(finance_trip_payments)s, %(org)s, %(logistics_trips)s, 0, 'in', %(customer)s,
-                    current_date, 'cash', 20000.00, %(user)s)
+                (id, organization_id, trip_sheet_id, trip_id, position, direction, party_id, paid_on, method,
+                 amount, recorded_by)
+            VALUES (%(finance_trip_payments)s, %(org)s, %(logistics_trip_sheets)s, %(logistics_trips)s, 0,
+                    'in', %(customer)s, current_date, 'cash', 20000.00, %(user)s)
     """
     with admin.cursor() as cur:
         for statement in statements.split(";\n\n"):
@@ -208,58 +240,72 @@ async def _refused(tenant: Tenant, sql: str, params: dict[str, object], constrai
     assert constraint in str(caught.value), caught.value
 
 
-async def test_a_trips_vehicle_and_date_are_its_days(planted: dict[str, uuid.UUID], tenant_a: Tenant) -> None:
-    await _refused(
-        tenant_a,
-        "UPDATE logistics.trips SET trip_date = trip_date - 1 WHERE id = :id",
-        {"id": str(planted["logistics.trips"])},
-        "fk_trips_organization_id_duty_log_id_vehicle_ref_trip_date",
-    )
-
-
-async def test_a_link_names_a_fill_of_the_trips_own_day(
-    planted: dict[str, uuid.UUID], tenant_a: Tenant, admin: psycopg.Connection
+@pytest.mark.parametrize(
+    ("table", "constraint"),
+    [
+        ("logistics.diesel_lines", "fk_diesel_lines_organization_id_trip_sheet_id_trip_id"),
+        ("logistics.enroute_expenses", "fk_enroute_expenses_organization_id_trip_sheet_id_trip_id"),
+        ("finance.trip_payments", "fk_trip_payments_organization_id_trip_sheet_id_trip_id"),
+    ],
+)
+async def test_a_line_names_a_trip_of_its_own_sheet(
+    table: str, constraint: str, planted: dict[str, uuid.UUID], tenant_a: Tenant
 ) -> None:
-    other_day = uuid.uuid4()
-    with admin.cursor() as cur:
-        cur.execute(
-            "INSERT INTO logistics.vehicle_duty_logs (id, organization_id, vehicle_ref, duty_date)"
-            " VALUES (%s, %s, 'veh-elsewhere', current_date - 1)",
-            (other_day, tenant_a.org_id),
-        )
     await _refused(
         tenant_a,
-        "UPDATE logistics.duty_fuel_links SET duty_log_id = :day WHERE id = :id",
-        {"day": str(other_day), "id": str(planted["logistics.duty_fuel_links"])},
-        "fk_trip_diesel_organization_id_duty_log_id_link_id",
+        f"UPDATE {table} SET trip_id = :trip WHERE id = :id",
+        {"trip": str(planted["extra.other_trip"]), "id": str(planted[table])},
+        constraint,
     )
 
 
-async def test_a_fill_is_posted_once_and_a_link_repeats_none_of_its_figures(
+async def test_a_fill_is_linked_once_and_a_bill_repeats_none_of_its_figures(
     planted: dict[str, uuid.UUID], tenant_a: Tenant
 ) -> None:
     await _refused(
         tenant_a,
-        "INSERT INTO logistics.duty_fuel_links (organization_id, duty_log_id, source, expense_bill_id)"
-        " VALUES (:org, :day, 'expense_bill', :bill)",
+        "INSERT INTO logistics.diesel_lines"
+        " (organization_id, trip_sheet_id, position, source, expense_bill_id)"
+        " VALUES (:org, :sheet, 1, 'expense_bill', :bill)",
         {
             "org": str(tenant_a.org_id),
-            "day": str(planted["logistics.vehicle_duty_logs"]),
+            "sheet": str(planted["extra.other_sheet"]),
             "bill": str(planted["extra.bill"]),
         },
-        "uq_duty_fuel_links_organization_id_expense_bill_id",
+        "uq_diesel_lines_organization_id_expense_bill_id",
     )
     await _refused(
         tenant_a,
-        "UPDATE logistics.trip_diesel SET litres = 30 WHERE id = :id",
-        {"id": str(planted["logistics.trip_diesel"])},
-        "ck_trip_diesel_figures_typed_once",
+        "UPDATE logistics.diesel_lines SET litres = 30 WHERE id = :id",
+        {"id": str(planted["logistics.diesel_lines"])},
+        "ck_diesel_lines_figures_typed_once",
+    )
+
+
+async def test_a_gst_purchase_names_the_vendors_gstin(
+    planted: dict[str, uuid.UUID], tenant_a: Tenant
+) -> None:
+    await _refused(
+        tenant_a,
+        "UPDATE procurement.trip_purchases SET gst_billed = true WHERE id = :id",
+        {"id": str(planted["procurement.trip_purchases"])},
+        "ck_trip_purchases_gst_bill_has_gstin",
+    )
+
+
+async def test_maintenance_says_which_kind(planted: dict[str, uuid.UUID], tenant_a: Tenant) -> None:
+    await _refused(
+        tenant_a,
+        "UPDATE logistics.enroute_expenses SET kind = 'maintenance' WHERE id = :id",
+        {"id": str(planted["logistics.enroute_expenses"])},
+        "ck_enroute_expenses_maintenance_kind_known",
     )
     await _refused(
         tenant_a,
-        "UPDATE logistics.duty_fuel_links SET amount = 2833.21 WHERE id = :id",
-        {"id": str(planted["logistics.duty_fuel_links"])},
-        "ck_duty_fuel_links_figures_from_the_source",
+        "UPDATE logistics.enroute_expenses SET kind = 'maintenance', maintenance_kind = 'misc'"
+        " WHERE id = :id",
+        {"id": str(planted["logistics.enroute_expenses"])},
+        "ck_enroute_expenses_misc_described",
     )
 
 

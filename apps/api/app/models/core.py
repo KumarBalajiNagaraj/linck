@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -16,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, created_at, org_fk, pk, updated_at
+from app.models.base import Base, created_at, org_fk, pk, tenant_fk, updated_at
 
 SCHEMA = "core"
 
@@ -494,3 +495,49 @@ class WhatsAppMessage(Base):
     received_at: Mapped[datetime] = created_at()
     imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     imported_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("core.users.id"))
+
+
+# ---------------------------------------------------------------------------
+# Stored files (LIN-20)
+# ---------------------------------------------------------------------------
+
+#: What may be stored: what a phone camera, a scanner or WhatsApp produces for
+#: a paper bill. Anything else is refused at upload, and the column says so too.
+FILE_MIME_TYPES = ("image/jpeg", "image/png", "image/webp", "application/pdf")
+
+
+class File(Base):
+    """One upload: a scanned bill today.
+
+    The bytes live on disk under the tenant's own directory, named by their
+    SHA-256 (see app/core/storage.py), and are reachable only through this
+    row, so only through RLS. The row is per upload rather than per content:
+    the same photo uploaded twice is two uploads, each attached to at most one
+    bill, while the disk keeps it once.
+    """
+
+    __tablename__ = "files"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        tenant_fk("uploaded_by", "core.users"),
+        CheckConstraint("purpose in ('expense_bill')", name="purpose_known"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="sha256_hex"),
+        CheckConstraint(
+            "mime_type in (" + ", ".join(f"'{m}'" for m in FILE_MIME_TYPES) + ")", name="mime_type_allowed"
+        ),
+        CheckConstraint("size_bytes > 0", name="size_positive"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    # What the file is for. It decides who may fetch it: a bill scan is read
+    # through its bill, under the bill's read permission.
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    # Sniffed from the bytes at upload, never taken from the client's word.
+    mime_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    original_name: Mapped[str] = mapped_column(Text, nullable=False)
+    uploaded_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = created_at()

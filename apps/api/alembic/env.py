@@ -6,8 +6,12 @@ from sqlalchemy import Connection, create_engine, pool, text
 # Importing for the side effect of registering every model on Base.metadata.
 # Without this, autogenerate cheerfully proposes dropping the whole schema.
 import app.models.core  # noqa: F401
+import app.models.finance  # noqa: F401
+import app.models.fleet  # noqa: F401
+import app.models.master  # noqa: F401
+import app.models.sales  # noqa: F401
 from app.core.settings import get_settings
-from app.models.base import Base
+from app.models.base import BUSINESS_SCHEMAS, Base
 
 config = context.config
 if config.config_file_name is not None:
@@ -20,7 +24,7 @@ target_metadata = Base.metadata
 # role has privileges the app role must never hold.
 settings = get_settings()
 
-SCHEMAS = ("core",)
+SCHEMAS = BUSINESS_SCHEMAS
 
 # Alembic's version table lives in a schema the migration role creates and owns.
 #

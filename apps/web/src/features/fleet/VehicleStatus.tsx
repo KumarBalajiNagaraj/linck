@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatQty } from '@linck/domain';
+import { formatDate, formatQty } from '@linck/domain';
 import {
   DOCUMENTS,
   DRIVERS,
@@ -12,7 +12,7 @@ import {
   vehiclesForSite,
   vehiclesWithExpiredDocs,
   VEHICLE_STATUS_FAMILY,
-  VEHICLE_STATUS_LABEL,
+  type ComplianceDocument,
   type Vehicle,
   type VehicleStatus,
 } from '@linck/mock';
@@ -44,8 +44,11 @@ import {
   TrendChart,
   type Column,
 } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { fleetWords, vehicleWords } from './words.js';
 
 /**
  * Vehicle status — the fleet's full vehicle database.
@@ -61,16 +64,26 @@ import { useViewParam } from '../../shell/useViewParam.js';
  * tipper that can work and isn't is the thing this team is actually paid to
  * eliminate.
  *
+ * "Uptime" is said on screen as "Ready or on trip": the share of the fleet on a
+ * trip or ready for one. Only those two earn; service is planned and
+ * forgivable, idle is neither.
+ *
  * The tiles are paper with a state-coloured rule, a stamp and a time-in-status
  * counter — NOT sixty flood-filled colour blocks. That is what lets one
  * breakdown among sixty be the loudest thing on a 27-inch screen.
  *
  * Three charts, each answering one question the table cannot:
  *   - the proportion bar answers "what shape is the fleet in right now";
- *   - the fourteen-day trend answers "is that shape normal";
+ *   - the fourteen-day trend answers "is that shape normal" (the band is a
+ *     normal working day; the low days are Sundays, when the plant runs half
+ *     a shift — a low weekday is the one to go and ask about);
  *   - the scatter answers "which three tippers are burning diesel they did not
  *     move any material with", which is the pilferage question and the reason
- *     58 rows of km/l are worth plotting at all.
+ *     58 rows of km/l are worth plotting at all. The dashed diagonal is "met
+ *     its benchmark"; the ringed, named dots well under it are each a tank
+ *     that emptied without moving material.
+ *
+ * "Benchmark" km/l is said as "normal" on screen.
  */
 
 /** The board's clock. Every time-in-status figure is measured from here. */
@@ -83,6 +96,21 @@ const BOARD_NOW = '2026-08-08T09:12:00Z';
  */
 const PILFERAGE_RATIO = 0.82;
 
+/**
+ * Rough units of dispatch one idle tipper would have moved today, at today's
+ * average. Only used to put a size on the idle count.
+ */
+const UNITS_PER_IDLE_TIPPER = 6.4;
+
+/**
+ * The reason recorded when a breakdown is reported from this board. Stored as
+ * this marker and worded at render, so it reads in the viewer's language.
+ */
+const REPORTED_HERE = 'Reported from vehicle status — awaiting workshop triage';
+
+/** A vehicle carries its next document by name; the name maps back to the type. */
+const DOC_TYPE_BY_LABEL = new Map<string, ComplianceDocument['type']>(DOCUMENTS.map((d) => [d.label, d.type]));
+
 /** A status change made on this board, not yet written back to the yard. */
 interface StatusOverride {
   status: VehicleStatus;
@@ -92,7 +120,14 @@ interface StatusOverride {
 
 const VIEWS = ['all', 'breakdown', 'idle', 'service', 'service_overdue', 'docs', 'docs_expired', 'diesel'] as const;
 
+type VehicleText = (typeof vehicleWords)['en'];
+type FleetText = (typeof fleetWords)['en'];
+type StatusText = (typeof statusWords)['en'];
+
 export function VehicleStatus() {
+  const t = useWords(vehicleWords);
+  const f = useWords(fleetWords);
+  const status = useWords(statusWords);
   const { siteScope, density } = useApp();
   const [filter, setFilter] = useViewParam(VIEWS, 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -140,6 +175,7 @@ export function VehicleStatus() {
     () => all.filter((v) => v.lastKmpl !== null && v.lastKmpl < v.benchmarkKmpl * PILFERAGE_RATIO),
     [all],
   );
+  // Next document inside 30 days, or already past it.
   const docsExpiring = useMemo(() => all.filter((v) => (v.nextDocExpiryDays ?? 999) <= 30), [all]);
   const docsExpired = useMemo(() => {
     const expired = vehiclesWithExpiredDocs();
@@ -158,8 +194,8 @@ export function VehicleStatus() {
       case 'idle':
         return idleRoadworthy;
       // "In the workshop" is exactly the count on its chip. Overdue vehicles
-      // still on the road have their own chip, "Due for service", which is
-      // what the command board's card of that name opens.
+      // still on the road have their own chip, "Service due", which is what
+      // the command board's card of that name opens.
       case 'service':
         return all.filter((v) => v.status === 'under_service');
       case 'service_overdue':
@@ -178,8 +214,9 @@ export function VehicleStatus() {
   // Ranked, never auto-applied, and dismissal is recorded.
   const idleWithDrivers = idleRoadworthy.filter((v) => v.driverId !== null).length;
 
+  // Day labels as 08-08 — digits read the same in both languages.
   const uptimeSeries = LAST_14.map((d) => ({
-    label: d.label,
+    label: dayMonth(d.date),
     value: d.uptimePct,
   }));
 
@@ -196,6 +233,8 @@ export function VehicleStatus() {
     [all],
   );
 
+  const columns = useMemo(() => columnsFor(t, f, status), [t, f, status]);
+
   const selected = selectedId === null ? null : (all.find((v) => v.id === selectedId) ?? null);
   const canReportBreakdown = selected !== null && selected.status !== 'breakdown' && selected.status !== 'off_road';
   const wasProductive = selected !== null && (selected.status === 'on_trip' || selected.status === 'ready');
@@ -204,255 +243,178 @@ export function VehicleStatus() {
       ? Math.round(((counts.onTrip + counts.ready - 1) / counts.total) * 1000) / 10
       : counts.uptimePct;
 
+  // The segments ARE the status families, so the bar reads the same words as
+  // every stamp in the table below it.
+  const segments = [
+    { key: 'on_trip', value: counts.onTrip, tone: 'var(--status-active)' },
+    { key: 'ready', value: counts.ready, tone: 'var(--status-ready)' },
+    { key: 'idle', value: counts.idle, tone: 'var(--status-attention)' },
+    { key: 'under_service', value: counts.underService, tone: 'var(--status-planned)' },
+    { key: 'breakdown', value: counts.breakdown, tone: 'var(--status-critical)' },
+    { key: 'off_road', value: counts.offRoad, tone: 'var(--status-dormant)' },
+  ] as const;
+
+  const chips: { view: (typeof VIEWS)[number]; label: string; count: number }[] = [
+    { view: 'all', label: f.all, count: counts.total },
+    { view: 'breakdown', label: status.vehicle.breakdown, count: counts.breakdown },
+    { view: 'idle', label: status.vehicle.idle, count: idleRoadworthy.length },
+    { view: 'service', label: status.vehicle.under_service, count: counts.underService },
+    { view: 'service_overdue', label: t.views.serviceDue, count: serviceOverdue.length },
+    { view: 'docs', label: t.views.docsSoon, count: docsExpiring.length },
+    { view: 'docs_expired', label: t.views.docsExpired, count: docsExpired.length },
+    { view: 'diesel', label: t.lowMileage, count: dieselOutliers.length },
+  ];
+
   return (
     <>
       <PageHeader
-        eyebrow="Fleet"
-        title="Vehicle status"
+        eyebrow={f.eyebrow}
+        title={t.title}
         meta={
-          // Two independent stamps, not one line: at 375px the source name and
-          // the driver tally cannot share a row without one of them pushing the
-          // header past the viewport.
+          // Two independent stamps, not one line: at 375px the driver tally
+          // cannot share a row with the time without pushing the header past
+          // the viewport.
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <AsOfStamp asOf="14:42" source="v_vehicle_status_now" freshness="live" />
+            <AsOfStamp asOf="14:42" source={f.from.vehicles} freshness="live" />
             <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              {drivers.available} drivers available · {drivers.onTrip} on trip · {drivers.absent} absent or on leave
+              {t.drivers(drivers.available, drivers.onTrip, drivers.absent)}
             </span>
           </span>
         }
       />
 
       {/* ONE TILE PER ROW ON A PHONE.
-          Three of these four deltas are a sentence, not a number — "roughly
-          51.2 units of dispatch not happening" runs to four lines in the 131px
-          of text a half-width column leaves at 375px, and four lines of 12px
-          prose under a 40px figure reads as a paragraph rather than a reading.
           Hairlines follow the stacking: a bottom rule between stacked tiles,
           the vertical rule only once they sit side by side. */}
       <TileRow className="grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 [&>*]:border-b [&>*]:border-[var(--border-subtle)] [&>*:last-child]:border-b-0 sm:[&>*]:border-b-0 sm:[&>*]:border-r">
         <div className="relative">
           <KpiTile
-            eyebrow="Fleet uptime"
+            eyebrow={t.working}
             hero
             value={`${formatQty(counts.uptimePct, 1)}%`}
             delta={{
-              text: `${counts.onTrip} on trip · ${counts.ready} ready of ${counts.total}`,
+              text: t.workingSplit(counts.onTrip, counts.ready, counts.total),
               tone: counts.breakdown > 0 ? 'critical' : 'neutral',
             }}
             asOf="14:42"
-            source="v_fleet_uptime"
+            source={f.from.vehicles}
             freshness="live"
           />
-          {/* The sparkline is parked in the tile's top-right gutter, which is
-              only a gutter while the tile is wide. In a 187px half-width column
-              it landed on top of the word "uptime". It is not hidden and it is
-              not moved — the tile stacking above gives it back its gutter, and
-              72px of trend needs 130px of clear tile to the right of a 72px
-              eyebrow, which every stacked width provides. */}
-          <div className="absolute right-7 top-7">
+          {/* The sparkline sits level with the figure, not the caption: the
+              caption is longer in Tamil and runs under a sparkline parked at
+              the top. Beside the figure there is room at every width, because
+              the tiles stack one per row before they get narrow. */}
+          <div className="absolute right-7 top-[60px]">
             <Sparkline data={uptimeSeries.map((p) => p.value)} width={72} height={20} />
           </div>
         </div>
         <KpiTile
-          eyebrow="Ready but unassigned"
+          eyebrow={status.vehicle.idle}
           value={String(idleRoadworthy.length)}
           delta={{
             text:
               idleRoadworthy.length > 0
-                ? `roughly ${formatQty(idleRoadworthy.length * 6.4, 1)} units of dispatch not happening`
-                : 'every roadworthy tipper has a load',
+                ? t.idleLoss(formatQty(idleRoadworthy.length * UNITS_PER_IDLE_TIPPER, 1))
+                : t.idleNone,
             tone: idleRoadworthy.length > 0 ? 'attention' : 'neutral',
           }}
           asOf="14:42"
-          source="v_vehicle_status_now"
+          source={f.from.vehicles}
         />
         <KpiTile
-          eyebrow="Broken down"
+          eyebrow={status.vehicle.breakdown}
           value={String(counts.breakdown)}
           delta={{
-            text: counts.breakdown > 0 ? 'earning nothing, still on the payroll' : 'nothing on the hard shoulder',
+            text: counts.breakdown > 0 ? t.breakdownNow : t.breakdownNone,
             tone: counts.breakdown > 0 ? 'critical' : 'neutral',
           }}
           asOf="14:42"
-          source="v_vehicle_status_now"
+          source={f.from.vehicles}
         />
         <KpiTile
-          eyebrow="Diesel readings off benchmark"
+          eyebrow={t.lowMileage}
           value={String(dieselOutliers.length)}
           delta={{
-            text: `more than 18% under their own km/l · ${docsExpiring.length} documents inside 30 days`,
+            text: t.lowMileageRule,
             tone: dieselOutliers.length > 0 ? 'attention' : 'neutral',
           }}
           asOf="06:00"
-          source="v_fuel_tank_to_tank"
+          source={f.from.fullTank}
           freshness="materialised"
         />
       </TileRow>
 
       {/* Eight filters that wrap to several rows on a phone rather than scroll
-          sideways in a strip. It costs 220px, which is real, but a filter you
-          cannot see is a filter nobody uses — and the shell already spends one
-          horizontal scroller on the section chips directly above this, so a
-          second one immediately under it reads as the same control. */}
+          sideways in a strip: a filter you cannot see is a filter nobody uses. */}
       <div
         id="list"
         className="flex flex-wrap items-center gap-2 px-6 py-3"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
-        {/* The honest answer to twelve columns is usually that three people
-            each need four of them — hence saved views, not more columns. */}
-        <Chip active={filter === 'all'} onClick={() => setFilter('all')} count={counts.total}>
-          Whole fleet
-        </Chip>
-        <Chip active={filter === 'breakdown'} onClick={() => setFilter('breakdown')} count={counts.breakdown}>
-          Breakdowns
-        </Chip>
-        <Chip active={filter === 'idle'} onClick={() => setFilter('idle')} count={idleRoadworthy.length}>
-          Idle
-        </Chip>
-        <Chip active={filter === 'service'} onClick={() => setFilter('service')} count={counts.underService}>
-          In the workshop
-        </Chip>
-        <Chip active={filter === 'service_overdue'} onClick={() => setFilter('service_overdue')} count={serviceOverdue.length}>
-          Due for service
-        </Chip>
-        <Chip active={filter === 'docs'} onClick={() => setFilter('docs')} count={docsExpiring.length}>
-          Documents expiring
-        </Chip>
-        <Chip active={filter === 'docs_expired'} onClick={() => setFilter('docs_expired')} count={docsExpired.length}>
-          Documents expired
-        </Chip>
-        <Chip active={filter === 'diesel'} onClick={() => setFilter('diesel')} count={dieselOutliers.length}>
-          Diesel off benchmark
-        </Chip>
-
-        {/* Right-aligned against the chips on a desk; its own line on a phone,
-            where `ml-auto` inside a wrapped row otherwise flings it to the far
-            right of whichever chip row happened to have 40px spare. */}
-        <span
-          className="flex w-full items-center gap-3 pt-1 text-[12px] sm:ml-auto sm:w-auto sm:pt-0"
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          <span>
-            Uptime{' '}
-            <span className="num font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
-              {formatQty(counts.uptimePct, 1)}%
-            </span>
-          </span>
-        </span>
+        {chips.map((c) => (
+          <Chip key={c.view} active={filter === c.view} onClick={() => setFilter(c.view)} count={c.count}>
+            {c.label}
+          </Chip>
+        ))}
       </div>
 
-      <Section caption="Right now" title="What the fleet is doing">
+      <Section title={t.now}>
         <div className="px-6">
-          {/* The one chart on this page allowed a full palette: these segments
-              ARE the status families, so borrowing the monochrome ramp would
-              make the bar disagree with every stamp in the table below it. */}
           <ProportionBar
-            summary={`Of ${counts.total} tippers, ${counts.onTrip} are on trip and ${counts.ready} ready — ${formatQty(
-              counts.uptimePct,
-              1,
-            )}% uptime. ${counts.idle} idle, ${counts.underService} in service, ${counts.breakdown} broken down, ${
-              counts.offRoad
-            } off road.`}
+            summary={t.nowSummary(
+              counts.total,
+              segments.map((s) => `${status.vehicle[s.key]} ${s.value}`).join(', '),
+            )}
             height={30}
-            segments={[
-              {
-                label: 'On trip',
-                value: counts.onTrip,
-                tone: 'var(--status-active)',
-              },
-              {
-                label: 'Ready',
-                value: counts.ready,
-                tone: 'var(--status-ready)',
-              },
-              {
-                label: 'Idle',
-                value: counts.idle,
-                tone: 'var(--status-attention)',
-              },
-              {
-                label: 'Service',
-                value: counts.underService,
-                tone: 'var(--status-planned)',
-              },
-              {
-                label: 'Breakdown',
-                value: counts.breakdown,
-                tone: 'var(--status-critical)',
-              },
-              {
-                label: 'Off road',
-                value: counts.offRoad,
-                tone: 'var(--status-dormant)',
-              },
-            ]}
+            segments={segments.map((s) => ({ label: status.vehicle[s.key], value: s.value, tone: s.tone }))}
           />
-          <ChartCaption>
-            Only the first two segments earn money. Service is planned and forgivable; idle is neither, which is why it
-            sits in the attention hue beside it rather than in a neutral grey.
-          </ChartCaption>
         </div>
       </Section>
 
       {/* WHERE THE GUTTER LIVES CHANGES WITH THE COLUMN COUNT.
           Two charts side by side want ONE outer gutter and a gap between them,
-          so the page pads and the charts do not. Stacked, that same outer pad
-          nests inside `Section`'s own px-6 and sets these two headings 24px
-          further in than the proportion bar's heading directly above them —
-          and 24px further in than the chart they title. Below xl the padding
-          moves onto the chart, which puts every caption on the page's one left
-          margin and hands the heading back the 24px it was wrapping over. */}
+          so the page pads and the charts do not. Below xl the padding moves
+          onto the chart, which puts every caption on the page's one left
+          margin. */}
       <div className="grid grid-cols-1 gap-x-8 pt-2 xl:grid-cols-2 xl:px-6">
-        <Section caption="Fourteen days" title="Uptime against the band">
+        <Section caption={t.days14} title={t.working}>
           <div className="px-6 xl:px-0">
             <TrendChart
               data={uptimeSeries}
-              summary={`Uptime over fourteen days, today at ${formatQty(counts.uptimePct, 1)}%. The two floor days are Sundays.`}
-              seriesLabel="Uptime"
+              summary={t.trendSummary(formatQty(counts.uptimePct, 1))}
               band={{ from: 70, to: 85 }}
               flagBelow={55}
               height={190}
               format={(v) => `${formatQty(v, 0)}%`}
             />
-            <ChartCaption>
-              The tinted band is where this fleet is expected to sit on a working day. Flagged days that fall below it
-              are Sundays, when the plant runs a half shift — a flagged weekday is the one to go and ask about.
-            </ChartCaption>
+            <ChartCaption>{t.trendNote}</ChartCaption>
           </div>
         </Section>
 
-        <Section caption="Last full-tank reading" title="Diesel against each vehicle's own benchmark">
+        <Section caption={t.lastFull} title={t.mileageTitle}>
           <div className="px-6 xl:px-0">
             <ScatterPlot
               points={scatterPoints}
-              summary={
-                dieselOutliers.length === 0
-                  ? 'Every tipper is within 18% of its own benchmark km/l.'
-                  : `${dieselOutliers.length} of ${scatterPoints.length} tippers are running more than 18% below their own benchmark: ${dieselOutliers
-                      .map((v) => v.displayReg)
-                      .join(', ')}.`
-              }
-              xLabel="benchmark km/l"
-              yLabel="last km/l"
+              summary={t.scatterSummary(
+                dieselOutliers.length,
+                scatterPoints.length,
+                dieselOutliers.map((v) => v.displayReg).join(', '),
+              )}
+              xLabel={t.scatterX}
+              yLabel={t.scatterY}
               parityLine
               height={210}
               format={(v) => formatQty(v, 1)}
             />
-            <ChartCaption>
-              The dashed diagonal is &ldquo;met its benchmark&rdquo;. A 58-row table hides the three that drifted; here
-              they are the only ringed and named dots well under the line, and each one is a tank that emptied without
-              moving material.
-            </ChartCaption>
+            <ChartCaption>{t.scatterNote}</ChartCaption>
           </div>
         </Section>
       </div>
 
       {idleWithDrivers > 0 && filter === 'all' ? (
         <div className="px-6 pt-4">
-          <SuggestionStrip onApply={() => setFilter('idle')} onDismiss={() => undefined} applyLabel="Show them">
-            {idleWithDrivers} tippers are ready with a driver assigned and no load allotted. At today&rsquo;s average
-            that is roughly {formatQty(idleWithDrivers * 6.4, 1)} units of dispatch not happening.
+          <SuggestionStrip onApply={() => setFilter('idle')} onDismiss={() => undefined} applyLabel={t.showThem}>
+            {t.idleWithDriver(idleWithDrivers)}
           </SuggestionStrip>
         </div>
       ) : null}
@@ -467,16 +429,7 @@ export function VehicleStatus() {
           onRowClick={(v) => setSelectedId(v.id)}
           isDormant={(v) => v.status === 'off_road'}
           rail={(v) => ({ status: VEHICLE_STATUS_FAMILY[v.status] })}
-          empty={
-            <EmptyState
-              fact="No vehicles match this view."
-              because="Every tipper at this site is either running or accounted for elsewhere."
-              action={{
-                label: 'Show the whole fleet',
-                onClick: () => setFilter('all'),
-              }}
-            />
-          }
+          empty={<EmptyState fact={t.noneHere} action={{ label: f.showAll, onClick: () => setFilter('all') }} />}
         />
       </Section>
 
@@ -487,31 +440,32 @@ export function VehicleStatus() {
         onClose={() => setSelectedId(null)}
         width="form"
         title={selected?.displayReg ?? ''}
-        identifier={selected ? `${selected.model} · ${selected.classTonnes}T` : undefined}
+        identifier={selected ? `${selected.model} · ${t.sizeOf(selected.classTonnes)}` : undefined}
+        // How long it has been in this status is in the sheet's Status
+        // section, so the stamp up here carries the word alone — on a phone a
+        // longer stamp squeezes the vehicle number onto several lines.
         {...(selected
           ? {
               status: {
                 family: VEHICLE_STATUS_FAMILY[selected.status],
-                label: VEHICLE_STATUS_LABEL[selected.status],
-                severity: hoursSince(selected.statusSince),
+                label: status.vehicle[selected.status],
               },
             }
           : {})}
-        revision={selected ? `ODO ${selected.odometerKm.toLocaleString('en-IN')} KM` : undefined}
+        // The km reading is in the sheet's Service section, so the header does
+        // not repeat it.
         footer={
           selected ? (
             canReportBreakdown ? (
-              <>
-                <Button variant="destructive" onClick={() => setConfirming(true)}>
-                  Report breakdown
-                </Button>
-                <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-                  Takes it off the board immediately and recounts uptime.
-                </span>
-              </>
+              // Reporting takes it off the board at once and recounts uptime;
+              // the confirm dialog spells that out with the real numbers.
+              <Button variant="destructive" onClick={() => setConfirming(true)}>
+                {t.reportBreakdown}
+              </Button>
             ) : (
-              <span className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-                Already off the road — the workshop owns this one now.
+              // Already off the road — the workshop owns this one now.
+              <span className="text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
+                {t.alreadyDown}
               </span>
             )
           ) : null
@@ -522,7 +476,8 @@ export function VehicleStatus() {
 
       {/* An irreversible-feeling call: reporting a breakdown pulls a tipper off
           every dispatch list in the yard, so the consequence is spelled out with
-          the real numbers rather than asking "are you sure?". */}
+          the real numbers rather than asking "are you sure?". Today's trips
+          stop where they are. */}
       <ConfirmModal
         open={confirming && selected !== null}
         onClose={() => setConfirming(false)}
@@ -533,23 +488,26 @@ export function VehicleStatus() {
             [selected.id]: {
               status: 'breakdown',
               statusSince: BOARD_NOW,
-              statusReason: 'Reported from vehicle status — awaiting workshop triage',
+              statusReason: REPORTED_HERE,
             },
           }));
         }}
-        title="Report this tipper broken down"
+        title={t.confirmTitle}
         destructive
-        confirmLabel="Report breakdown"
+        confirmLabel={t.reportBreakdown}
         consequence={
           selected ? (
             <>
-              {selected.displayReg} comes off the dispatch board now. Today&rsquo;s {selected.tripsToday}{' '}
-              {selected.tripsToday === 1 ? 'trip' : 'trips'} and {formatQty(selected.tonnesToday, 1)} MT stop where they
-              are
-              {selected.driverId
-                ? `, and ${DRIVERS.find((d) => d.id === selected.driverId)?.name ?? 'the driver'} needs reallocating`
-                : ''}
-              . Fleet uptime falls from {formatQty(counts.uptimePct, 1)}% to {formatQty(uptimeIfDown, 1)}%.
+              {t
+                .confirmLines(
+                  selected.displayReg,
+                  selected.driverId ? (DRIVERS.find((d) => d.id === selected.driverId)?.name ?? null) : null,
+                  formatQty(counts.uptimePct, 1),
+                  formatQty(uptimeIfDown, 1),
+                )
+                .map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
             </>
           ) : null
         }
@@ -567,11 +525,14 @@ export function VehicleStatus() {
  * gate next.
  */
 function VehicleDetail({ vehicle }: { vehicle: Vehicle }) {
+  const v = useWords(vehicleWords);
+  const f = useWords(fleetWords);
+  const t = v.sheet;
   const driver = DRIVERS.find((d) => d.id === vehicle.driverId) ?? null;
   const site = SITES.find((s) => s.id === vehicle.siteId);
 
   const mileage = mileageFor(vehicle.id).map((m) => ({
-    label: m.label,
+    label: dayMonth(m.date),
     value: m.kmpl,
   }));
   const floor = Math.round(vehicle.benchmarkKmpl * PILFERAGE_RATIO * 100) / 100;
@@ -584,112 +545,95 @@ function VehicleDetail({ vehicle }: { vehicle: Vehicle }) {
   const nextDoc = DOCUMENTS.filter((d) => d.vehicleId === vehicle.id).sort((a, b) => a.daysLeft - b.daysLeft)[0];
 
   const serviceDue = vehicle.serviceDueInKm;
+  const reason = reasonText(vehicle.statusReason, v);
 
   return (
     <>
-      <SheetSection caption="Identity">
+      <SheetSection caption={t.vehicle}>
         <DetailGrid>
-          <Detail label="Registration">
+          <Detail label={t.number}>
             <IdCell>{vehicle.displayReg}</IdCell>
           </Detail>
-          <Detail label="Model">{vehicle.model}</Detail>
-          <Detail label="Rated class">{formatQty(vehicle.classTonnes, 0)} T</Detail>
-          <Detail label="Home site">{site?.name ?? '–'}</Detail>
+          <Detail label={t.model}>{vehicle.model}</Detail>
+          <Detail label={t.size}>{v.sizeOf(vehicle.classTonnes)}</Detail>
+          <Detail label={t.site}>{site?.name ?? '–'}</Detail>
         </DetailGrid>
       </SheetSection>
 
-      <SheetSection caption="Standing">
+      <SheetSection caption={t.status}>
+        {/* The stamp itself is in the sheet's header. On a trip with nothing
+            recorded, there is nothing that needs an answer, so no reason row. */}
         <DetailGrid>
-          <Detail label="Status">
-            <StatusStamp
-              status={VEHICLE_STATUS_FAMILY[vehicle.status]}
-              label={VEHICLE_STATUS_LABEL[vehicle.status]}
-              severity={hoursSince(vehicle.statusSince)}
-            />
-          </Detail>
-          <Detail label="In this status for">{hoursSince(vehicle.statusSince)}</Detail>
+          <Detail label={t.howLong}>{timeSince(vehicle.statusSince, f)}</Detail>
+          {reason || vehicle.status !== 'on_trip' ? <Detail label={t.reason}>{reason ?? t.noReason}</Detail> : null}
         </DetailGrid>
-        <Note>
-          {vehicle.statusReason
-            ? `${vehicle.statusReason}.`
-            : vehicle.status === 'on_trip'
-              ? 'Out on a load. Nothing is being reported against it that needs an answer.'
-              : 'No reason has been recorded against this status.'}
-        </Note>
       </SheetSection>
 
-      <SheetSection caption="Crew">
+      <SheetSection caption={t.driver}>
         {driver ? (
           <DetailGrid>
-            <Detail label="Driver">{driver.name}</Detail>
-            <Detail label="Phone">{driver.phone}</Detail>
-            <Detail label="Licence">
+            <Detail label={t.name}>{driver.name}</Detail>
+            <Detail label={t.phone}>{driver.phone}</Detail>
+            <Detail label={t.licence}>
               <IdCell>{driver.licenceNumber}</IdCell>
             </Detail>
-            <Detail label="Licence expires">{driver.licenceExpiry.slice(0, 10)}</Detail>
+            <Detail label={t.licenceExpiry}>{formatDate(driver.licenceExpiry)}</Detail>
           </DetailGrid>
         ) : (
-          <Note>
-            No driver is assigned. A tipper without a name against it cannot be allotted a load, however roadworthy it
-            is.
-          </Note>
+          // A tipper without a name against it cannot be allotted a load,
+          // however roadworthy it is.
+          <Note>{t.noDriver}</Note>
         )}
       </SheetSection>
 
-      <SheetSection caption="Today">
+      {/* Zero trips is a fact, not a missing reading — the 0 says so itself. */}
+      <SheetSection caption={t.today}>
         <DetailGrid>
-          <Detail label="Trips">
+          <Detail label={t.trips}>
             <QuantityCell value={vehicle.tripsToday} decimals={0} />
           </Detail>
-          <Detail label="Moved">
-            <QuantityCell value={vehicle.tonnesToday} decimals={1} uom="MT" />
+          <Detail label={t.moved}>
+            <QuantityCell value={vehicle.tonnesToday} decimals={1} uom={f.tonnes} />
           </Detail>
         </DetailGrid>
-        {vehicle.tripsToday === 0 ? (
-          <Note>Nothing has moved on this vehicle today. Zero trips is a fact, not a missing reading.</Note>
-        ) : null}
       </SheetSection>
 
-      <SheetSection caption="Diesel, tank to tank">
+      <SheetSection caption={t.mileage}>
         {mileage.length < 2 ? (
-          <Note>
-            Fewer than two full-tank fills on record, so no km/l can be derived. Part fills tell you nothing about
-            consumption and are deliberately not plotted here.
-          </Note>
+          // Only full-tank fills give a usable reading; part fills tell you
+          // nothing about consumption and are deliberately not plotted.
+          <Note>{t.notEnoughFills}</Note>
         ) : (
           <>
             <TrendChart
               data={mileage}
-              summary={`Last reading ${formatQty(vehicle.lastKmpl ?? 0, 2)} km/l against a benchmark of ${formatQty(
-                vehicle.benchmarkKmpl,
-                2,
-              )}${drifted ? `, a shortfall of ${formatQty(shortfallPct ?? 0, 1)}%` : ' — within tolerance'}.`}
-              seriesLabel="km/l"
+              summary={t.mileageSummary(
+                formatQty(vehicle.lastKmpl ?? 0, 2),
+                formatQty(vehicle.benchmarkKmpl, 2),
+                drifted ? formatQty(shortfallPct ?? 0, 1) : null,
+              )}
+              seriesLabel={f.kmpl}
               benchmark={{
                 value: vehicle.benchmarkKmpl,
-                label: `${formatQty(vehicle.benchmarkKmpl, 2)} benchmark`,
+                label: t.normalAt(formatQty(vehicle.benchmarkKmpl, 2)),
               }}
               flagBelow={floor}
               height={180}
-              format={(v) => formatQty(v, 1)}
+              format={(n) => formatQty(n, 1)}
             />
-            <ChartCaption>
-              Only full-tank fills give a usable reading, so the points are sparse by construction — six to nine a
-              month, never thirty.{' '}
-              {drifted
-                ? 'This one slid over a fortnight rather than overnight, which is the shape of a slow leak or a nightly siphon, not a bad tank.'
-                : 'The line sits on its benchmark; nothing to ask the driver about.'}
-            </ChartCaption>
+            {/* A drift that slid over a fortnight rather than overnight is the
+                shape of a slow leak or a nightly siphon, not a bad tank. */}
+            <ChartCaption>{drifted ? t.dropping : t.steady}</ChartCaption>
           </>
         )}
       </SheetSection>
 
-      <SheetSection caption="Upkeep">
+      <SheetSection caption={t.service}>
         <DetailGrid>
-          <Detail label="Odometer">
-            <QuantityCell value={vehicle.odometerKm} decimals={0} uom="km" />
+          <Detail label={t.kmReading}>
+            <QuantityCell value={vehicle.odometerKm} decimals={0} uom={f.km} />
           </Detail>
-          <Detail label="Service due in">
+          <Detail label={t.nextService}>
             {serviceDue === null ? (
               '–'
             ) : (
@@ -698,48 +642,49 @@ function VehicleDetail({ vehicle }: { vehicle: Vehicle }) {
                   color: serviceDue < 0 ? 'var(--status-critical)' : undefined,
                 }}
               >
-                <QuantityCell value={serviceDue} decimals={0} uom="km" />
+                <QuantityCell value={serviceDue} decimals={0} uom={f.km} />
               </span>
             )}
           </Detail>
         </DetailGrid>
-        {serviceDue !== null && serviceDue < 0 ? (
-          <Note>
-            Overrun by {formatQty(Math.abs(serviceDue), 0)} km. Every kilometre past the interval is warranty the
-            workshop will not honour on the next gearbox.
-          </Note>
-        ) : null}
+        {/* Every kilometre past the interval is warranty the workshop will not
+            honour on the next gearbox. */}
+        {serviceDue !== null && serviceDue < 0 ? <Note>{t.serviceLate(formatQty(Math.abs(serviceDue), 0))}</Note> : null}
       </SheetSection>
 
-      <SheetSection caption="Next document to expire">
+      <SheetSection caption={t.nextDoc}>
         {!nextDoc ? (
-          <Note>No statutory documents are on file for this vehicle, which is itself the finding.</Note>
+          <Note>{t.noDocs}</Note>
         ) : (
           <>
             <DetailGrid>
-              <Detail label="Document">{nextDoc.label}</Detail>
-              <Detail label="Number">
+              <Detail label={t.document}>{f.docType[nextDoc.type]}</Detail>
+              <Detail label={t.docNumber}>
                 <IdCell>{nextDoc.number}</IdCell>
               </Detail>
-              <Detail label="Expires">{nextDoc.expiresOn.slice(0, 10)}</Detail>
-              <Detail label="Issued by">{nextDoc.issuer}</Detail>
+              <Detail label={t.expires}>{formatDate(nextDoc.expiresOn)}</Detail>
+              <Detail label={t.issuer}>{nextDoc.issuer}</Detail>
             </DetailGrid>
             <div className="mt-2 flex items-center gap-2">
               <StatusStamp
                 status={nextDoc.daysLeft < 0 ? 'critical' : nextDoc.daysLeft <= 30 ? 'attention' : 'ready'}
-                label={nextDoc.daysLeft < 0 ? 'Expired' : nextDoc.daysLeft <= 30 ? 'Expiring' : 'In force'}
-                severity={nextDoc.daysLeft < 0 ? `${Math.abs(nextDoc.daysLeft)}d ago` : `${nextDoc.daysLeft}d`}
+                label={nextDoc.daysLeft < 0 ? f.expired : nextDoc.daysLeft <= 30 ? f.expiring : f.valid}
+                severity={nextDoc.daysLeft < 0 ? f.daysAgo(Math.abs(nextDoc.daysLeft)) : f.inDays(nextDoc.daysLeft)}
               />
             </div>
+            {/* A blocking document stops the vehicle at the gate: a load allotted
+                to it is a detention risk and the fine lands on the consignor.
+                A non-blocking one is the first thing asked for at a check post.
+                Renewals of a blocking type take a fortnight at the RTO. */}
             <div className="mt-2">
               <Note>
                 {nextDoc.daysLeft < 0
                   ? nextDoc.blocksOperation
-                    ? `Expired ${Math.abs(nextDoc.daysLeft)} days ago and it stops the vehicle at the gate. Any load allotted to it today is a detention risk and the fine lands on the consignor, not the driver.`
-                    : `Expired ${Math.abs(nextDoc.daysLeft)} days ago. It does not stop the vehicle at the gate, but it will be the first thing asked for at a check post.`
+                    ? t.docExpiredStops
+                    : t.docExpiredRuns
                   : nextDoc.blocksOperation
-                    ? `${nextDoc.daysLeft} days left, and when it goes the vehicle cannot legally leave the yard. Renewals of this type take a fortnight at the RTO.`
-                    : `${nextDoc.daysLeft} days left. Renew it with the next batch rather than on its own.`}
+                    ? t.docStops
+                    : t.docRuns}
               </Note>
             </div>
           </>
@@ -749,173 +694,186 @@ function VehicleDetail({ vehicle }: { vehicle: Vehicle }) {
   );
 }
 
-function hoursSince(iso: string): string {
+/** How long in this status: `45 min`, `11 hrs`, `3 days`. */
+function timeSince(iso: string, f: FleetText): string {
   const h = (Date.parse(BOARD_NOW) - Date.parse(iso)) / 3_600_000;
-  if (h < 1) return `${Math.round(h * 60)}m`;
-  if (h < 48) return `${Math.round(h)}h`;
-  return `${Math.round(h / 24)}d`;
+  if (h < 1) return f.min(Math.round(h * 60));
+  if (h < 48) return f.hours(Math.round(h));
+  return f.days(Math.round(h / 24));
 }
 
-const columns: Column<Vehicle>[] = [
-  {
-    key: 'reg',
-    header: 'Vehicle',
-    type: 'id',
-    sticky: true,
-    width: 200,
-    group: 'Identity',
-    render: (v) => <Stacked primary={<IdCell>{v.displayReg}</IdCell>} secondary={`${v.model} · ${v.classTonnes}T`} />,
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    type: 'status',
-    width: 148,
-    group: 'Identity',
-    render: (v) => (
-      <StatusStamp
-        status={VEHICLE_STATUS_FAMILY[v.status]}
-        label={VEHICLE_STATUS_LABEL[v.status]}
-        severity={hoursSince(v.statusSince)}
-      />
-    ),
-  },
-  {
-    key: 'reason',
-    header: 'Because',
-    group: 'Identity',
-    // Recorded text, so it sets in the data face. The italic margin voice is
-    // reserved for the product talking about the data, never for the data.
-    render: (v) =>
-      v.statusReason ? (
-        <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-          {v.statusReason}
-        </span>
-      ) : null,
-  },
-  {
-    key: 'driver',
-    header: 'Driver',
-    group: 'Crew',
-    render: (v) => DRIVERS.find((d) => d.id === v.driverId)?.name ?? null,
-  },
-  {
-    key: 'trips',
-    header: 'Trips',
-    type: 'num',
-    width: 78,
-    group: 'Today',
-    render: (v) => <QuantityCell value={v.tripsToday} decimals={0} />,
-  },
-  {
-    key: 'tonnes',
-    header: 'Moved',
-    unit: 'MT',
-    type: 'num',
-    width: 96,
-    group: 'Today',
-    render: (v) => <QuantityCell value={v.tonnesToday} decimals={1} />,
-  },
-  {
-    key: 'kmpl',
-    header: 'Last',
-    unit: 'km/l',
-    type: 'num',
-    width: 96,
-    group: 'Diesel',
-    render: (v) =>
-      v.lastKmpl === null ? null : (
-        <span
-          style={{
-            // Colour is spent only when the reading crosses its threshold —
-            // an 18% drop against benchmark is the pilferage signal.
-            color: v.lastKmpl < v.benchmarkKmpl * PILFERAGE_RATIO ? 'var(--status-attention)' : undefined,
-          }}
-        >
-          <QuantityCell value={v.lastKmpl} decimals={2} />
-        </span>
-      ),
-  },
-  {
-    key: 'benchmark',
-    header: 'Benchmark',
-    unit: 'km/l',
-    type: 'num',
-    width: 104,
-    group: 'Diesel',
-    render: (v) => (
-      <span style={{ color: 'var(--text-tertiary)' }}>
-        <QuantityCell value={v.benchmarkKmpl} decimals={2} />
-      </span>
-    ),
-  },
-  {
-    key: 'trend',
-    header: 'Trend',
-    width: 84,
-    group: 'Diesel',
-    // The sparkline answers "is this a bad week or a slide" without costing a
-    // click, and the benchmark hairline behind it is what makes it readable.
-    render: (v) => {
-      const series = mileageFor(v.id).map((m) => m.kmpl);
-      if (series.length < 2) return null;
-      return (
-        <Sparkline
-          data={series}
-          benchmark={v.benchmarkKmpl}
-          width={72}
-          height={18}
-          tone={v.lastKmpl !== null && v.lastKmpl < v.benchmarkKmpl * PILFERAGE_RATIO ? 'attention' : 'chart'}
+/** `2026-08-08` → `08-08`. */
+function dayMonth(isoDate: string): string {
+  return `${isoDate.slice(8, 10)}-${isoDate.slice(5, 7)}`;
+}
+
+/** What was written down, except the reason this board writes, which is worded. */
+function reasonText(reason: string | undefined, t: VehicleText): string | null {
+  if (!reason) return null;
+  return reason === REPORTED_HERE ? t.reportedHere : reason;
+}
+
+function columnsFor(t: VehicleText, f: FleetText, status: StatusText): Column<Vehicle>[] {
+  return [
+    {
+      key: 'reg',
+      header: t.col.vehicle,
+      type: 'id',
+      sticky: true,
+      width: 220,
+      render: (v) => <Stacked primary={<IdCell>{v.displayReg}</IdCell>} secondary={`${v.model} · ${t.sizeOf(v.classTonnes)}`} />,
+    },
+    {
+      key: 'status',
+      header: t.col.status,
+      type: 'status',
+      width: 170,
+      render: (v) => (
+        <StatusStamp
+          status={VEHICLE_STATUS_FAMILY[v.status]}
+          label={status.vehicle[v.status]}
+          severity={timeSince(v.statusSince, f)}
         />
-      );
+      ),
     },
-  },
-  {
-    key: 'service',
-    header: 'Service due in',
-    unit: 'km',
-    type: 'num',
-    width: 128,
-    group: 'Upkeep',
-    render: (v) =>
-      v.serviceDueInKm === null ? null : (
-        <span
-          style={{
-            color: v.serviceDueInKm < 0 ? 'var(--status-critical)' : undefined,
-          }}
-        >
-          <QuantityCell value={v.serviceDueInKm} decimals={0} />
+    {
+      key: 'reason',
+      header: t.col.reason,
+      // Recorded text, so it sets in the data face. The italic margin voice is
+      // reserved for the product talking about the data, never for the data.
+      render: (v) => {
+        const reason = reasonText(v.statusReason, t);
+        return reason ? (
+          <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+            {reason}
+          </span>
+        ) : null;
+      },
+    },
+    {
+      key: 'driver',
+      header: t.col.driver,
+      render: (v) => DRIVERS.find((d) => d.id === v.driverId)?.name ?? null,
+    },
+    {
+      key: 'trips',
+      header: t.col.trips,
+      type: 'num',
+      width: 78,
+      group: t.col.today,
+      render: (v) => <QuantityCell value={v.tripsToday} decimals={0} />,
+    },
+    {
+      key: 'tonnes',
+      header: t.col.moved,
+      unit: f.tonnes,
+      type: 'num',
+      width: 120,
+      group: t.col.today,
+      render: (v) => <QuantityCell value={v.tonnesToday} decimals={1} />,
+    },
+    {
+      key: 'kmpl',
+      header: t.col.last,
+      unit: f.kmpl,
+      type: 'num',
+      width: 110,
+      group: t.col.mileage,
+      render: (v) =>
+        v.lastKmpl === null ? null : (
+          <span
+            style={{
+              // Colour is spent only when the reading crosses its threshold —
+              // an 18% drop against benchmark is the pilferage signal.
+              color: v.lastKmpl < v.benchmarkKmpl * PILFERAGE_RATIO ? 'var(--status-attention)' : undefined,
+            }}
+          >
+            <QuantityCell value={v.lastKmpl} decimals={2} />
+          </span>
+        ),
+    },
+    {
+      key: 'benchmark',
+      header: t.col.normal,
+      unit: f.kmpl,
+      type: 'num',
+      width: 110,
+      group: t.col.mileage,
+      render: (v) => (
+        <span style={{ color: 'var(--text-tertiary)' }}>
+          <QuantityCell value={v.benchmarkKmpl} decimals={2} />
         </span>
       ),
-  },
-  {
-    key: 'docs',
-    header: 'Next document',
-    width: 190,
-    group: 'Upkeep',
-    render: (v) => {
-      if (v.nextDocExpiryDays === null) return null;
-      const expired = v.nextDocExpiryDays < 0;
-      const soon = v.nextDocExpiryDays <= 30;
-      return (
-        <span className="flex items-center gap-2">
-          <span
-            style={{
-              color: expired ? 'var(--status-critical)' : soon ? 'var(--status-attention)' : 'var(--text-secondary)',
-            }}
-          >
-            {v.nextDocType}
-          </span>
-          <span
-            className="num tabular-nums text-[12px]"
-            style={{
-              color: expired ? 'var(--status-critical)' : 'var(--text-tertiary)',
-            }}
-          >
-            {expired ? `${Math.abs(v.nextDocExpiryDays)}d ago` : `${v.nextDocExpiryDays}d`}
-          </span>
-        </span>
-      );
     },
-  },
-];
+    {
+      key: 'trend',
+      header: t.col.days28,
+      width: 84,
+      group: t.col.mileage,
+      // The sparkline answers "is this a bad week or a slide" without costing a
+      // click, and the benchmark hairline behind it is what makes it readable.
+      render: (v) => {
+        const series = mileageFor(v.id).map((m) => m.kmpl);
+        if (series.length < 2) return null;
+        return (
+          <Sparkline
+            data={series}
+            benchmark={v.benchmarkKmpl}
+            width={72}
+            height={18}
+            tone={v.lastKmpl !== null && v.lastKmpl < v.benchmarkKmpl * PILFERAGE_RATIO ? 'attention' : 'chart'}
+          />
+        );
+      },
+    },
+    {
+      key: 'service',
+      header: t.col.serviceIn,
+      unit: f.km,
+      type: 'num',
+      width: 128,
+      group: t.col.upkeep,
+      render: (v) =>
+        v.serviceDueInKm === null ? null : (
+          <span
+            style={{
+              color: v.serviceDueInKm < 0 ? 'var(--status-critical)' : undefined,
+            }}
+          >
+            <QuantityCell value={v.serviceDueInKm} decimals={0} />
+          </span>
+        ),
+    },
+    {
+      key: 'docs',
+      header: t.col.nextDoc,
+      width: 230,
+      group: t.col.upkeep,
+      render: (v) => {
+        if (v.nextDocExpiryDays === null) return null;
+        const expired = v.nextDocExpiryDays < 0;
+        const soon = v.nextDocExpiryDays <= 30;
+        const type = v.nextDocType === null ? undefined : DOC_TYPE_BY_LABEL.get(v.nextDocType);
+        return (
+          <span className="flex flex-wrap items-center gap-x-2">
+            <span
+              style={{
+                color: expired ? 'var(--status-critical)' : soon ? 'var(--status-attention)' : 'var(--text-secondary)',
+              }}
+            >
+              {type ? f.docType[type] : v.nextDocType}
+            </span>
+            <span
+              className="num tabular-nums text-[12px]"
+              style={{
+                color: expired ? 'var(--status-critical)' : 'var(--text-tertiary)',
+              }}
+            >
+              {expired ? f.daysAgo(Math.abs(v.nextDocExpiryDays)) : f.inDays(v.nextDocExpiryDays)}
+            </span>
+          </span>
+        );
+      },
+    },
+  ];
+}

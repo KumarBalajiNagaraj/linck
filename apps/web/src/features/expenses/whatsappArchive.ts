@@ -45,7 +45,12 @@ function decode(bytes: Uint8Array): string {
   return strFromU8(bytes).replace(/^﻿/, '');
 }
 
-export class ChatArchiveError extends Error {}
+/** Why a chat file could not be read: too big, or no chat in it. Worded by the screen. */
+export class ChatArchiveError extends Error {
+  constructor(readonly reason: 'too-big' | 'no-chat') {
+    super(reason);
+  }
+}
 
 export async function readChatArchive(files: readonly File[]): Promise<ChatArchive> {
   const chats: { name: string; text: string }[] = [];
@@ -63,7 +68,7 @@ export async function readChatArchive(files: readonly File[]): Promise<ChatArchi
           return keep && total <= MAX_UNZIPPED_BYTES;
         },
       });
-      if (total > MAX_UNZIPPED_BYTES) throw new ChatArchiveError('That archive is far larger than a chat export — it was not read.');
+      if (total > MAX_UNZIPPED_BYTES) throw new ChatArchiveError('too-big');
       for (const [path, bytes] of Object.entries(entries)) {
         const name = baseName(path);
         if (TEXT.test(name)) chats.push({ name, text: decode(bytes) });
@@ -79,7 +84,7 @@ export async function readChatArchive(files: readonly File[]): Promise<ChatArchi
   }
 
   if (chats.length === 0) {
-    throw new ChatArchiveError('No chat text found. Export the group with "Export chat" and choose the .zip, or the .txt inside it.');
+    throw new ChatArchiveError('no-chat');
   }
   // iOS names it _chat.txt; Android "WhatsApp Chat with …". Otherwise the
   // longest text file is the chat — a stray notes.txt is never longer.

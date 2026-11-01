@@ -66,26 +66,28 @@ export interface Actor {
   can: (permission: string, siteId: string) => boolean;
 }
 
-export const STATUS_LABEL: Record<BillStatus, string> = {
-  submitted: 'Awaiting validation',
-  validated: 'Awaiting director',
-  approved: 'Awaiting accounts',
-  passed: 'Passed for payment',
-  paid: 'Paid',
-  rejected: 'Rejected',
-  deleted: 'Deleted',
-};
-
-export const ACTION_LABEL: Record<BillAction, string> = {
-  validate: 'Validate',
-  approve: 'Approve',
-  pass: 'Pass for payment',
-  pay: 'Record payment',
-  reject: 'Reject',
-  send_back: 'Send back',
-  delete: 'Delete',
-  restore: 'Restore',
-};
+/**
+ * Why a move cannot be made, or what it still needs, as a code and its values.
+ * The screen words it in the reader's language (docs/WRITING.md).
+ */
+export type WorkflowProblem =
+  /** The bill is not at a status this move applies to. */
+  | { code: 'wrong-step'; status: BillStatus; action: BillAction }
+  /** The person lacks `permission` at the bill's site. */
+  | { code: 'needs-permission'; permission: string }
+  /** Only whoever can take the current step can reject the bill now. */
+  | { code: 'only-step-owner'; step: BillAction }
+  /** Only the desk that raises these bills can delete one. */
+  | { code: 'only-desk-deletes' }
+  /** This person already signed the bill: a note is needed, and it is flagged. */
+  | { code: 'second-signature' }
+  | { code: 'needs-reason'; action: BillAction }
+  | { code: 'needs-payment' }
+  | { code: 'bad-utr' }
+  | { code: 'utr-used'; utr: string }
+  | { code: 'future-payment-date' }
+  /** Left out of a batch: already signed by this person, so it goes one at a time. */
+  | { code: 'batch-second-signature' };
 
 /** The one signing step each status waits on, and the key it needs. */
 const STEP: Partial<Record<BillStatus, { action: BillAction; to: BillStatus; permission: (b: WorkflowBill) => string }>> = {
@@ -117,9 +119,9 @@ export function signersOf(bill: WorkflowBill): { id: string; action: BillAction 
 
 export interface ActionOption {
   action: BillAction;
-  /** False with a reason when the person cannot take it at all. */
+  /** False with the problem when the person cannot take it at all. */
   allowed: boolean;
-  reason: string | null;
+  problem: WorkflowProblem | null;
   /** A note is required: rejecting, deleting, sending back, or any exception. */
   needsNote: boolean;
   /** Taking it would be a second signature by the same person. */
@@ -135,25 +137,26 @@ function wouldRepeat(bill: WorkflowBill, actor: Actor, action: BillAction): bool
 
 export function availableActions(bill: WorkflowBill, actor: Actor): ActionOption[] {
   const opts: ActionOption[] = [];
-  const add = (action: BillAction, allowed: boolean, reason: string | null, needsNote: boolean, exception = false) =>
-    opts.push({ action, allowed, reason, needsNote: needsNote || exception, exception });
+  const add = (action: BillAction, allowed: boolean, problem: WorkflowProblem | null, needsNote: boolean, exception = false) =>
+    opts.push({ action, allowed, problem: allowed ? null : problem, needsNote: needsNote || exception, exception });
 
   const step = STEP[bill.status];
   if (step) {
     const permission = step.permission(bill);
     const may = actor.can(permission, bill.siteId);
     const repeat = may && wouldRepeat(bill, actor, step.action);
-    add(step.action, may, may ? null : `Needs ${permission} at this site.`, false, repeat);
-    add('reject', may, may ? null : `Only whoever can ${ACTION_LABEL[step.action].toLowerCase()} it can reject it now.`, true);
-    if (PREVIOUS[bill.status]) add('send_back', may, may ? null : `Needs ${permission} at this site.`, true);
+    add(step.action, may, { code: 'needs-permission', permission }, false, repeat);
+    add('reject', may, { code: 'only-step-owner', step: step.action }, true);
+    if (PREVIOUS[bill.status]) add('send_back', may, { code: 'needs-permission', permission }, true);
   }
   if (bill.status === 'submitted') {
     const mayDelete = actor.can(`${bill.desk}.expense.upload`, bill.siteId) || actor.can(`${bill.desk}.expense.validate`, bill.siteId);
-    add('delete', mayDelete, mayDelete ? null : 'Only the desk that raises these bills can delete one.', true);
+    add('delete', mayDelete, { code: 'only-desk-deletes' }, true);
   }
   if (bill.status === 'deleted') {
-    const may = actor.can(`${bill.desk}.expense.validate`, bill.siteId);
-    add('restore', may, may ? null : `Needs ${bill.desk}.expense.validate at this site.`, false);
+    const permission = `${bill.desk}.expense.validate`;
+    const may = actor.can(permission, bill.siteId);
+    add('restore', may, { code: 'needs-permission', permission }, false);
   }
   return opts;
 }
@@ -165,22 +168,23 @@ export interface ActionInput {
   usedUtrs?: ReadonlySet<string>;
 }
 
-export class WorkflowError extends Error {}
+export class WorkflowError extends Error {
+  constructor(readonly problem: WorkflowProblem) {
+    // The message is for logs; people read the problem, worded by the screen.
+    super(`${problem.code} ${JSON.stringify(problem)}`);
+  }
+}
 
 const UTR = /^[A-Z0-9]{6,22}$/;
 
 /** The bill after `action`, or a WorkflowError saying why it cannot be taken. */
 export function applyAction<B extends WorkflowBill>(bill: B, action: BillAction, actor: Actor, at: string, input: ActionInput = {}): B {
   const option = availableActions(bill, actor).find((o) => o.action === action);
-  if (!option) throw new WorkflowError(`A bill that is ${STATUS_LABEL[bill.status].toLowerCase()} cannot be ${pastTense(action)}.`);
-  if (!option.allowed) throw new WorkflowError(option.reason ?? 'Not allowed.');
+  if (!option) throw new WorkflowError({ code: 'wrong-step', status: bill.status, action });
+  if (!option.allowed) throw new WorkflowError(option.problem ?? { code: 'wrong-step', status: bill.status, action });
   const note = input.note?.trim() || null;
   if (option.needsNote && !note) {
-    throw new WorkflowError(
-      option.exception
-        ? `You have already signed this bill. Signing it again needs a note saying why, and is shown to the director.`
-        : `${ACTION_LABEL[action]} needs a reason.`,
-    );
+    throw new WorkflowError(option.exception ? { code: 'second-signature' } : { code: 'needs-reason', action });
   }
 
   let to: BillStatus;
@@ -193,11 +197,11 @@ export function applyAction<B extends WorkflowBill>(bill: B, action: BillAction,
       break;
     case 'pay': {
       const p = input.payment;
-      if (!p) throw new WorkflowError('Record the UTR, the date and how it was paid.');
+      if (!p) throw new WorkflowError({ code: 'needs-payment' });
       const utr = p.utr.trim().toUpperCase();
-      if (p.mode !== 'Cash' && !UTR.test(utr)) throw new WorkflowError('The UTR is 6 to 22 letters and digits, as the bank shows it.');
-      if (p.mode !== 'Cash' && input.usedUtrs?.has(utr)) throw new WorkflowError(`UTR ${utr} is already recorded against another payment.`);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(p.paidOn) || p.paidOn > at.slice(0, 10)) throw new WorkflowError('The payment date cannot be after today.');
+      if (p.mode !== 'Cash' && !UTR.test(utr)) throw new WorkflowError({ code: 'bad-utr' });
+      if (p.mode !== 'Cash' && input.usedUtrs?.has(utr)) throw new WorkflowError({ code: 'utr-used', utr });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(p.paidOn) || p.paidOn > at.slice(0, 10)) throw new WorkflowError({ code: 'future-payment-date' });
       payment = { ...p, utr };
       to = 'paid';
       break;
@@ -219,23 +223,11 @@ export function applyAction<B extends WorkflowBill>(bill: B, action: BillAction,
   return { ...bill, status: to, payment, history: [...(bill.history ?? []), event] };
 }
 
-function pastTense(action: BillAction): string {
-  return {
-    validate: 'validated',
-    approve: 'approved',
-    pass: 'passed for payment',
-    pay: 'paid',
-    reject: 'rejected',
-    send_back: 'sent back',
-    delete: 'deleted',
-    restore: 'restored',
-  }[action];
-}
 
 export interface BatchPlan<B extends WorkflowBill> {
   action: BillAction;
   eligible: B[];
-  skipped: { bill: B; reason: string }[];
+  skipped: { bill: B; problem: WorkflowProblem }[];
   /** Whole paise. */
   totalPaise: number;
   litres: number;
@@ -249,12 +241,12 @@ export interface BatchPlan<B extends WorkflowBill> {
  */
 export function planBatch<B extends WorkflowBill>(bills: readonly B[], action: BillAction, actor: Actor): BatchPlan<B> {
   const eligible: B[] = [];
-  const skipped: { bill: B; reason: string }[] = [];
+  const skipped: { bill: B; problem: WorkflowProblem }[] = [];
   for (const bill of bills) {
     const o = availableActions(bill, actor).find((x) => x.action === action);
-    if (!o) skipped.push({ bill, reason: `It is ${STATUS_LABEL[bill.status].toLowerCase()}.` });
-    else if (!o.allowed) skipped.push({ bill, reason: o.reason ?? 'Not allowed.' });
-    else if (o.exception) skipped.push({ bill, reason: 'You already signed it; it needs your note, one at a time.' });
+    if (!o) skipped.push({ bill, problem: { code: 'wrong-step', status: bill.status, action } });
+    else if (!o.allowed) skipped.push({ bill, problem: o.problem ?? { code: 'wrong-step', status: bill.status, action } });
+    else if (o.exception) skipped.push({ bill, problem: { code: 'batch-second-signature' } });
     else eligible.push(bill);
   }
   return {

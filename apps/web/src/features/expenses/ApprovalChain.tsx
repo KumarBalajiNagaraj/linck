@@ -11,6 +11,7 @@ import {
 } from '@linck/domain';
 import type { ExpenseBill } from '@linck/mock';
 import { Button, Modal, Note, Rail, SheetSection, StatusStamp } from '@linck/ui';
+import { LIVE } from '../../auth/api.js';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
@@ -121,9 +122,13 @@ export function ChainActions({ bill }: { bill: ExpenseBill }) {
   const allowed = options.filter((o) => o.allowed);
   if (allowed.length === 0) {
     const waiting = options.find((o) => PRIMARY.includes(o.action));
-    return waiting ? (
+    // Live, a refused move re-reads the bill, which has often moved on: the
+    // refusal stays, above where the bill now is, so the reason is not lost.
+    const refused = LIVE && problem ? <Refusal text={say(problem)} /> : null;
+    return waiting || refused ? (
       <SheetSection caption={t.chain.nextStep}>
-        <Note>{t.chain.notYours(t.action[waiting.action], waiting.problem ? say(waiting.problem) : '')}</Note>
+        {refused}
+        {waiting ? <Note>{t.chain.notYours(t.action[waiting.action], waiting.problem ? say(waiting.problem) : '')}</Note> : null}
       </SheetSection>
     ) : null;
   }
@@ -199,6 +204,16 @@ export function ChainActions({ bill }: { bill: ExpenseBill }) {
         </p>
       ) : null}
     </SheetSection>
+  );
+}
+
+/** Why the API refused a move, kept in view once the bill has moved on. */
+function Refusal({ text }: { text: string }) {
+  return (
+    <p role="alert" className="relative mb-2 pl-3 text-[14px]" style={{ color: 'var(--status-critical)' }}>
+      <Rail status="critical" />
+      {text}
+    </p>
   );
 }
 

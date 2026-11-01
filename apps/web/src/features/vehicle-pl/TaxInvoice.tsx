@@ -130,8 +130,10 @@ export function TaxInvoice({ invoice }: { invoice: PlInvoiceDetail }) {
               </td>
               <td data-label={p.col.hsn}>{l.hsnCode}</td>
               <td className="num" data-label={p.col.qty}>
-                {l.quantity}
-                <span className="inv-sub">{l.unit}</span>
+                <span>
+                  {l.quantity}
+                  <span className="inv-sub">{l.unit}</span>
+                </span>
               </td>
               <td className="num" data-label={p.col.rate}>
                 {grouped(l.rate)}
@@ -148,18 +150,24 @@ export function TaxInvoice({ invoice }: { invoice: PlInvoiceDetail }) {
               {intra ? (
                 <>
                   <td className="num" data-label={p.col.cgst}>
-                    {grouped(l.cgst)}
-                    <span className="inv-sub">{p.col.rateOf(pct(l.cgstPct))}</span>
+                    <span>
+                      {grouped(l.cgst)}
+                      <span className="inv-sub">{p.col.rateOf(pct(l.cgstPct))}</span>
+                    </span>
                   </td>
                   <td className="num" data-label={p.col.sgst}>
-                    {grouped(l.sgst)}
-                    <span className="inv-sub">{p.col.rateOf(pct(l.sgstPct))}</span>
+                    <span>
+                      {grouped(l.sgst)}
+                      <span className="inv-sub">{p.col.rateOf(pct(l.sgstPct))}</span>
+                    </span>
                   </td>
                 </>
               ) : (
                 <td className="num" data-label={p.col.igst}>
-                  {grouped(l.igst)}
-                  <span className="inv-sub">{p.col.rateOf(pct(l.igstPct))}</span>
+                  <span>
+                    {grouped(l.igst)}
+                    <span className="inv-sub">{p.col.rateOf(pct(l.igstPct))}</span>
+                  </span>
                 </td>
               )}
               <td className="num inv-strong" data-label={p.col.total}>

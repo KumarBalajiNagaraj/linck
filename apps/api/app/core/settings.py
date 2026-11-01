@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +48,31 @@ class Settings(BaseSettings):
     # reachable. Ten megabytes covers a phone photo or a multi-page scan.
     file_storage_dir: str = "var/files"
     file_max_bytes: int = 10 * 1024 * 1024
+
+    # Industry news (LIN-10). Headlines come from Google News RSS, which is
+    # free and needs no key: one search per query below (LINCK_NEWS_QUERIES,
+    # as a JSON list). The short summaries are written by any OpenAI-compatible
+    # chat-completions endpoint, chosen by three values: the base URL (the part
+    # before chat/completions), an API key and the model name. The default is
+    # Google Gemini's free tier; Google renames its free models now and then,
+    # so check its current list. The AI stays off, and nothing is sent to any
+    # model, until a key is set: the screen shows the top headlines alone and
+    # says so. Gemini first, then the alternatives, in .env.example.
+    ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    ai_api_key: SecretStr = SecretStr("")
+    ai_model: str = "gemini-2.5-flash"
+    # A hosted free model answers within a minute; a local model on a CPU may need several.
+    ai_timeout_seconds: int = 60
+    news_queries: list[str] = [
+        "Tamil Nadu construction",
+        "Chennai real estate",
+        "Tamil Nadu road OR highway project OR tender",
+        '"M-sand" price OR rules Tamil Nadu',
+        "cement price Tamil Nadu",
+        'Tamil Nadu quarry OR "sand mining" policy OR rules OR ban',
+        "northeast monsoon Tamil Nadu",
+        'Chennai metro OR airport OR "ring road" project',
+    ]
 
     session_secret: str = "dev-only-not-a-secret-change-me"
     session_cookie_name: str = "__Host-linck_session"

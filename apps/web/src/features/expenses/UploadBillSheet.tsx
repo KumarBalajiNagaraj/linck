@@ -123,9 +123,11 @@ export function UploadBillSheet({
   /** Ignores a slow read that finishes after the file was replaced. */
   const readToken = useRef(0);
   /**
-   * Fields the person has set since this file was picked. A reading that
-   * lands afterwards never overwrites them: reading takes seconds, and a
-   * person who has already chosen "Repair" must not find "Other" back.
+   * Fields the person has set by hand: before the first photo, or since the
+   * current one was picked. A reading that lands afterwards never overwrites
+   * them: reading takes seconds, and a person who has already chosen
+   * "Repair" — or keyed the amount from the paper before attaching it — must
+   * not find the reading's guess in its place.
    */
   const touched = useRef(new Set<keyof Draft>());
 
@@ -194,8 +196,10 @@ export function UploadBillSheet({
     setFileError(null);
     setUnviewable(false);
     setPreview(url);
+    // A new photo replaces the last one's figures; figures keyed before any
+    // photo was attached are the person's own, and stay.
+    if (draft.file) touched.current = new Set();
     setDraft((d) => ({ ...d, file }));
-    touched.current = new Set();
     setCapture(null);
     if (file.type === 'application/pdf') {
       setReading({ state: 'pdf', progress: 0 });
@@ -236,9 +240,10 @@ export function UploadBillSheet({
         ...d,
         kind: kindRead && free('kind') ? (f.kind!.value as ExpenseBill['kind']) : d.kind,
         billNumber: f.billNumber && free('billNumber') ? f.billNumber.value : d.billNumber,
-        // A date capture could not read is cleared, not left on today: a
-        // default that looks like an answer gets submitted without a glance.
-        billDate: free('billDate') ? (f.billDate?.value ?? '') : d.billDate,
+        // A date a photo's reading could not find is cleared, not left on
+        // today: a default that looks like an answer gets submitted without a
+        // glance. Pasted text only fills what it finds.
+        billDate: !free('billDate') ? d.billDate : (f.billDate?.value ?? (requested ? d.billDate : '')),
         vendor: f.vendor && free('vendor') ? f.vendor.value : d.vendor,
         amount: f.amount && free('amount') ? f.amount.value : d.amount,
         litres: f.litres && free('litres') ? f.litres.value : d.litres,
@@ -251,16 +256,20 @@ export function UploadBillSheet({
   const capturedFor = (key: BillFieldKey, current: string): CapturedMark | null => {
     const field = capture?.result.fields[key];
     if (!field || (key === 'kind' && field.source === '')) return null;
-    // A registration read cleanly but not among the vehicles offered is not a
-    // correction the user made — it is a vehicle the form cannot pick.
+    // A reading the form cannot pick — a registration not among the vehicles
+    // offered, a diesel slip on the stores desk — is not a correction the
+    // person made.
     if (key === 'vehicle' && !current && !offered.some((v) => v.registrationNumber === field.value)) {
-      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: true };
+      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'not one of your vehicles' };
+    }
+    if (key === 'kind' && !KINDS_BY_DESK[desk].includes(field.value as ExpenseBill['kind'])) {
+      return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'not a type this desk books' };
     }
     const same =
       key === 'amount' || key === 'litres'
         ? parseTypedAmount(current, 3) !== null && parseTypedAmount(current, 3) === parseTypedAmount(field.value, 3)
         : current.trim().toUpperCase() === field.value.trim().toUpperCase();
-    return { value: field.value, confidence: field.confidence, source: field.source, corrected: !same, unmatched: false };
+    return { value: field.value, confidence: field.confidence, source: field.source, corrected: !same, unmatched: null };
   };
 
   const amount = parseTypedAmount(draft.amount);
@@ -289,14 +298,17 @@ export function UploadBillSheet({
           engine: capture.engine,
           capturedAt: NOW.toISOString(),
           warnings: capture.result.warnings,
+          // Only the fields this bill has: a stores bill is against no
+          // vehicle, and only diesel is counted in litres. A reading of a
+          // field the form never showed is not a correction anyone made.
           fields: (
             [
               ['kind', 'Type', draft.kind],
               ['billNumber', 'Bill number', draft.billNumber.trim()],
               ['billDate', 'Bill date', draft.billDate],
               ['vendor', 'Vendor', draft.vendor.trim()],
-              ['vehicle', 'Vehicle', vehicle?.registrationNumber ?? ''],
-              ['litres', 'Litres', draft.kind === 'diesel' && litres !== null ? String(litres) : ''],
+              ...(desk === 'fleet' ? [['vehicle', 'Vehicle', vehicle?.registrationNumber ?? '']] : []),
+              ...(draft.kind === 'diesel' ? [['litres', 'Litres', litres !== null ? String(litres) : '']] : []),
               ['amount', 'Amount', amount.toFixed(2)],
             ] as [BillFieldKey, string, string][]
           ).map(([key, label, value]): CapturedBillField => {
@@ -320,8 +332,10 @@ export function UploadBillSheet({
       billNumber: draft.billNumber.trim(),
       kind: draft.kind,
       billDate: new Date(`${draft.billDate}T00:00:00+05:30`).toISOString(),
-      vehicleId: vehicle?.id ?? null,
-      driverId: draft.kind === 'diesel' ? (vehicle?.driverId ?? null) : null,
+      // The vehicle select is on the fleet form only; a reading must not
+      // put a stores bill against a vehicle nobody saw.
+      vehicleId: desk === 'fleet' ? (vehicle?.id ?? null) : null,
+      driverId: desk === 'fleet' && draft.kind === 'diesel' ? (vehicle?.driverId ?? null) : null,
       vendor: draft.vendor.trim(),
       description: draft.description.trim() || EXPENSE_KIND_LABEL[draft.kind],
       litres: draft.kind === 'diesel' ? litres : null,
@@ -512,8 +526,8 @@ interface CapturedMark {
   confidence: 1 | 2 | 3;
   source: string;
   corrected: boolean;
-  /** Read cleanly, but matches nothing the form can select. */
-  unmatched: boolean;
+  /** Read cleanly, but matches nothing the form can select: says why. */
+  unmatched: string | null;
 }
 
 /**
@@ -543,7 +557,9 @@ function Field({
           <span className="flex items-center gap-1.5 normal-case tracking-normal" title={`Read from: ${captured.source}`}>
             <ConfidenceMeter level={captured.confidence} />
             {captured.unmatched ? (
-              <span style={{ color: 'var(--status-attention)' }}>scan read {captured.value} — not one of your vehicles</span>
+              <span style={{ color: 'var(--status-attention)' }}>
+                scan read {captured.value} — {captured.unmatched}
+              </span>
             ) : captured.corrected ? (
               <span style={{ color: 'var(--status-attention)' }}>corrected — scan read {captured.value}</span>
             ) : (

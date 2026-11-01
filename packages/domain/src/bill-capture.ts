@@ -47,11 +47,24 @@ export function parseRupees(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * A printed quantity or rate: litres, ₹ per litre. Unlike rupees it keeps a
+ * third decimal — pumps print 120.455 L, and reading it as 120.45 loses
+ * diesel on every slip.
+ */
+export function parseQuantity(text: string): number | null {
+  const m = /(\d{1,3}(?:,\d{3})+(?:\.\d{1,3})?|\d+(?:\.\d{1,3})?)/.exec(text);
+  if (!m) return null;
+  const n = Number(m[1]!.replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function parseBillDate(text: string): string | null {
   const iso = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(text);
-  const dmy = /(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{2,4})/.exec(text);
+  // Two- or four-digit years only: "07/08/202" is a misread, not the year 202.
+  const dmy = /(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4}|\d{2})(?!\d)/.exec(text);
   const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-  const named = /(\d{1,2})[\s-]*([a-z]{3})[a-z]*[\s,-]*(\d{2,4})/i.exec(text);
+  const named = /(\d{1,2})[\s-]*([a-z]{3})[a-z]*[\s,-]*(\d{4}|\d{2})(?!\d)/i.exec(text);
   let y: number;
   let mo: number;
   let d: number;
@@ -90,18 +103,49 @@ const LABELS: { key: Exclude<BillFieldKey, 'kind' | 'vendor' | 'gstin'>; labels:
 /** Rank of each amount label: lower is more authoritative. */
 const AMOUNT_RANK = new Map(LABELS[0]!.labels.map((l, i) => [l, i]));
 
+/**
+ * A unit printed straight after a label — "Volume(Ltr.)", "Rate(Rs/Ltr)",
+ * "Total (incl. GST 18%)" — belongs to the label, not the value. A bracket
+ * holding what looks like a value (three digits running, or a date) is left
+ * for the value.
+ */
+const UNIT = String.raw`(?:\s*\((?![^)]*(?:\d{3}|\d[./-]\d))[^)]{0,30}\))?`;
+
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const labelRe = (l: string) => new RegExp(`(?<![a-z])${escape(l).replace(/\s+/g, '[\\s.]*')}\\.?(?![a-z])\\s*[:#=-]?\\s*(.*)$`, 'i');
+const labelRe = (l: string) => new RegExp(`(?<![a-z])${escape(l).replace(/\s+/g, '[\\s.]*')}\\.?${UNIT}(?![a-z])\\s*[:#=-]?\\s*(.*)$`, 'i');
+const startsWithLabel = (line: string) => LABELS.some((g) => g.labels.some((l) => labelRe(l).exec(line)?.index === 0));
+
+/**
+ * Totals that are not what is owed. "Total Qty: 2" is two tyres and "Total
+ * Tax: 1,800.00" is the GST — read as the bill total, either would be paid.
+ */
+const NOT_MONEY_AFTER = /^(?:qty|quantity|items?|nos?\b|pcs|pieces|units?|volume|vol\b|litres?|liters?|ltrs?|kgs?|weight|tax|gst|cgst|sgst|igst|cess|vat|discount|disc\b|savings?|tds)/i;
+const NOT_THE_TOTAL_BEFORE = /(?:taxable|tax|gst|cgst|sgst|igst|cess|vat|discount|disc\.?|round(?:ing)?[\s-]*off|tds)[\s.]*$/i;
 
 /* ------------------------------------------------------------------ kinds */
 
+/** "Fuel filter" and "diesel injector" are parts, not fuel. */
+const NOT_FUEL_AFTER = String.raw`(?![\s-]+(?:filters?|injectors?|injection|pumps?|tanks?|lines?|pipes?|hoses?|caps?|gauges?|sensors?|system|engine))`;
+
 const KIND_SIGNALS: { kind: BillKind; pattern: RegExp }[] = [
-  { kind: 'diesel', pattern: /\bdiesel\b|\bhsd\b|high\s+speed\s+diesel|\bfuel\b|\bbunk\b|\bpetroleum\b/i },
+  {
+    kind: 'diesel',
+    pattern: new RegExp(
+      String.raw`\b(?:diesel|fuels?)\b${NOT_FUEL_AFTER}|\bhsd\b|\bbunk\b|\bpetroleum\b|indian\s*oil|\b(?:iocl|bpcl|hpcl)\b|filling\s+station`,
+      'i',
+    ),
+  },
   { kind: 'toll', pattern: /\btoll\b|\bfastag\b|\bnhai\b|\bplaza\b/i },
   { kind: 'tyre', pattern: /\btyres?\b|\btires?\b|\bretread/i },
   { kind: 'repair', pattern: /\brepairs?\b|\blabou?r\b|\bservice\s+charge|\boverhaul|\bwelding\b|\bworkshop\b/i },
   { kind: 'spares', pattern: /\bspares?\b|\bfilter\b|\bhose\b|\bbearing\b|\bgasket\b|\bparts?\b/i },
 ];
+
+/**
+ * An oil company's name printed alone over the dealer's: "INDIAN OIL" above
+ * "SAKTHI FUELS". The bill is the dealer's, and the dealer is who is paid.
+ */
+const BRAND_ONLY = /^(?:indian\s*oil(?:\s+corporation(?:\s+ltd\.?)?)?|iocl|bharat\s+petroleum|bpcl|hp|hpcl|hindustan\s+petroleum|reliance|jio[\s-]*bp|nayara(?:\s+energy)?|shell)$/i;
 
 /* ------------------------------------------------------------------ parse */
 
@@ -111,7 +155,8 @@ const KIND_SIGNALS: { kind: BillKind; pattern: RegExp }[] = [
  *   read from a line the engine itself doubted can never score 3
  */
 export function captureExpenseBill(text: string, lineConfidence: number[] = []): BillCapture {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l, i, all) => l !== '' || i < all.length);
+  // Blank lines are kept: line i must stay line i of `lineConfidence`.
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
   const fields: Partial<Record<BillFieldKey, CapturedField>> = {};
   const warnings: string[] = [];
   /** A label that is on the bill with a value that would not parse: said out loud, never guessed. */
@@ -125,8 +170,8 @@ export function captureExpenseBill(text: string, lineConfidence: number[] = []):
   let amountRank = Number.POSITIVE_INFINITY;
   lines.forEach((line, i) => {
     // Every label on the line, earliest first and longest first at the same
-    // spot, each claiming its span — so "Rate/Ltr" is a rate, never litres
-    // because "Ltr" also appears in it.
+    // spot. Each claims itself, its unit and its separator — so "Rate/Ltr"
+    // is a rate, never litres because "Ltr" also appears in it.
     const hits: { key: (typeof LABELS)[number]['key']; label: string; start: number; end: number; rest: string }[] = [];
     for (const { key, labels } of LABELS) {
       for (const label of labels) {
@@ -137,39 +182,51 @@ export function captureExpenseBill(text: string, lineConfidence: number[] = []):
       }
     }
     hits.sort((a, b) => a.start - b.start || b.label.length - a.label.length);
-    const claimed: { start: number; end: number }[] = [];
+    const claimed: typeof hits = [];
     for (const hit of hits) {
-      const labelEnd = hit.start + hit.label.length;
-      if (claimed.some((c) => hit.start < c.end && labelEnd > c.start)) continue;
-      claimed.push({ start: hit.start, end: labelEnd });
+      if (!claimed.some((c) => hit.start < c.end && hit.end > c.start)) claimed.push(hit);
+    }
+    // A row of labels with no values — "Bill No:   Date:" — is a table
+    // header, and its values are on the line below.
+    const headerRow = claimed.length > 0 && claimed[claimed.length - 1]!.rest === '';
+    const below = lines[i + 1] ?? '';
+    claimed.forEach((hit, n) => {
       const { key, label } = hit;
-      const rest = hit.rest || (lines[i + 1] ?? '');
+      // Nothing after the label, or only the next label: the value is blank
+      // here. It may be printed below — but never when the line below is a
+      // label itself, as with "Bill No:" over "Date: 06/08/2026", and never
+      // for "Bill No:   Date: 06/08/2026", where the bill number is missing.
+      const next = claimed[n + 1];
+      const emptyHere = !hit.rest || (next !== undefined && line.slice(hit.end, next.start).trim() === '');
+      const rest = !emptyHere ? hit.rest : (!hit.rest || headerRow) && !startsWithLabel(below) ? below : '';
       if (key === 'amount') {
-        // A subtotal is never what is owed; a later "Total" of the same
-        // rank is the running one, so it replaces the earlier.
-        if (/sub[\s-]*total/i.test(line)) continue;
-        const n = parseRupees(rest);
+        // A subtotal, a tax, a discount or a "Total Qty" is never what is
+        // owed. A later "Total" of the same rank is the running one, so it
+        // replaces the earlier.
+        if (/sub[\s-]*total/i.test(line) || NOT_MONEY_AFTER.test(rest) || NOT_THE_TOTAL_BEFORE.test(line.slice(0, hit.start))) return;
+        // "Total incl. GST 18% 11,800.00": the rate is not the total.
+        const amount = parseRupees(rest.replace(/\d+(?:\.\d+)?\s*%/g, ' '));
         const rank = AMOUNT_RANK.get(label) ?? 99;
-        if (n !== null && rank <= amountRank) {
+        if (amount !== null && rank <= amountRank) {
           amountRank = rank;
-          fields.amount = { key, value: n.toFixed(2), source: line, confidence: cap(i, rank <= 5 ? 3 : 2) };
+          fields.amount = { key, value: amount.toFixed(2), source: line, confidence: cap(i, rank <= 5 ? 3 : 2) };
         }
       } else if (!fields[key]) {
+        const quantity = key === 'litres' || key === 'rate' ? parseQuantity(rest) : null;
         const value =
           key === 'billDate'
             ? parseBillDate(rest)
             : key === 'vehicle'
               ? parseRegistration(rest)
               : key === 'litres' || key === 'rate'
-                ? (() => {
-                    const n = parseRupees(rest);
-                    return n === null ? null : String(n);
-                  })()
+                ? quantity === null
+                  ? null
+                  : String(quantity)
                 : (/[A-Z0-9][A-Z0-9/-]*/i.exec(rest)?.[0] ?? null);
         if (value) fields[key] = { key, value, source: line, confidence: cap(i, 3) };
         else if (rest.trim() && !unreadable.has(key)) unreadable.set(key, rest.trim());
       }
-    }
+    });
   });
 
   // By shape, where no label claimed them.
@@ -191,9 +248,15 @@ export function captureExpenseBill(text: string, lineConfidence: number[] = []):
   }
 
   // The vendor is the letterhead: the first line of words near the top that
-  // is not a label, a number or a registration. A guess, and scored as one.
+  // is not a label, a number, a registration or an oil company's logo line.
+  // Found by position alone, so scored 2 at best.
   const head = lines.slice(0, 4).findIndex(
-    (l) => /[a-z]{3,}/i.test(l) && (l.match(/\d/g)?.length ?? 0) < 4 && !LABELS.some((g) => g.labels.some((lb) => labelRe(lb).test(l))) && !/tax\s+invoice|cash\s+bill|receipt|welcome/i.test(l),
+    (l) =>
+      /[a-z]{3,}/i.test(l) &&
+      (l.match(/\d/g)?.length ?? 0) < 4 &&
+      !LABELS.some((g) => g.labels.some((lb) => labelRe(lb).test(l))) &&
+      !/tax\s+invoice|cash\s+bill|receipt|welcome/i.test(l) &&
+      !BRAND_ONLY.test(l),
   );
   if (head >= 0) fields.vendor = { key: 'vendor', value: lines[head]!.replace(/\s{2,}/g, ' '), source: lines[head]!, confidence: cap(head, 2) };
 

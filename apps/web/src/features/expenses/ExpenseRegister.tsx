@@ -202,13 +202,15 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           ? 'Type the litres as printed, such as 120.45.'
           : draft.litres.trim() !== '' && litres === null
             ? 'Type the litres as printed, such as 120.45.'
-            : !/^\d{4}-\d{2}-\d{2}$/.test(draft.billDate)
-              ? 'Pick the date printed on the bill.'
-              : draft.billDate > today
-                ? 'A bill cannot be dated after today.'
-                : !draft.billNumber.trim() || !draft.vendor.trim()
-                  ? 'The bill number and vendor cannot be blank.'
-                  : null;
+            : bill.kind === 'diesel' && litres === null
+              ? 'A diesel bill needs its litres, as printed.'
+              : !/^\d{4}-\d{2}-\d{2}$/.test(draft.billDate)
+                ? 'Pick the date printed on the bill.'
+                : draft.billDate > today
+                  ? 'A bill cannot be dated after today.'
+                  : !draft.billNumber.trim() || !draft.vendor.trim()
+                    ? 'The bill number and vendor cannot be blank.'
+                    : null;
     setProblem(why);
     if (why || amount === null) return;
     const next: Record<EditableKey, string> = { ...draft, amount: amount.toFixed(2), litres: litres === null ? '' : String(litres) };
@@ -218,12 +220,14 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           fields: bill.capture.fields.map((f) => {
             if (!(f.key in next)) return f;
             const value = next[f.key as EditableKey];
-            const differs =
-              f.captured !== null &&
-              (f.key === 'amount' || f.key === 'litres'
-                ? parseTypedAmount(value, 3) !== parseTypedAmount(f.captured, 3)
-                : value.trim().toUpperCase() !== f.captured.trim().toUpperCase());
-            return { ...f, value, overridden: differs, overriddenBy: differs ? persona.name : null };
+            const same = (a: string, b: string) =>
+              f.key === 'amount' || f.key === 'litres' ? parseTypedAmount(a, 3) === parseTypedAmount(b, 3) : a.trim().toUpperCase() === b.trim().toUpperCase();
+            const differs = f.captured !== null && !same(value, f.captured);
+            // A correction is credited to whoever made it. Saving a fix to the
+            // vendor does not make this person the author of someone else's
+            // earlier fix to the amount.
+            const by = differs ? (f.overriddenBy && same(value, f.value) ? f.overriddenBy : persona.name) : null;
+            return { ...f, value, overridden: differs, overriddenBy: by };
           }),
         }
       : null;

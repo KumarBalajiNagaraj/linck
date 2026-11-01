@@ -1,4 +1,4 @@
-import type { BillEvent, PaymentRecord } from '@linck/domain';
+import type { BillEvent, BillNotice, PaymentRecord } from '@linck/domain';
 import type { Provenance, StatusFamily } from '@linck/tokens';
 
 /**
@@ -487,7 +487,8 @@ export interface BillCaptureRecord {
   engine: string;
   capturedAt: string;
   fields: CapturedBillField[];
-  warnings: string[];
+  /** What a person should look at, as codes; the screen words them. */
+  warnings: BillNotice[];
 }
 
 export interface ExpenseBill {

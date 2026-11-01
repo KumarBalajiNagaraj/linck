@@ -1,7 +1,9 @@
 import { salesAttention } from '@linck/mock';
 import { AsOfStamp, PageHeader } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { DestinationRow, UrgentActionsRow, type BoardDestination, type UrgentAction } from '../../shell/CommandBoard.js';
 import { useApp } from '../../shell/store.js';
+import { boardWords, salesWords } from './words.js';
 
 /**
  * The Sales Coordinator's command board.
@@ -18,51 +20,58 @@ import { useApp } from '../../shell/store.js';
  */
 export function SalesCommandBoard() {
   const { siteScope } = useApp();
+  const t = useWords(boardWords);
+  const s = useWords(salesWords);
   const counts = salesAttention(siteScope);
 
-  // Labels are the brief's own words, and every non-zero card spends colour —
-  // red for the one the brief calls Highest, amber for the rest.
+  // Every non-zero card spends colour — red for the one the brief calls
+  // Highest, amber for the rest.
   const urgent: UrgentAction[] = [
     {
-      label: 'Invoices not yet raised',
+      // Out of the gate for a credit customer, with no invoice raised against the load.
+      label: t.toInvoice.label,
       count: counts.unbilledDispatch,
-      definition: 'Out of the gate for a credit customer, with no invoice raised against the load',
+      definition: t.toInvoice.definition,
       priority: 'highest',
       accent: 'critical',
       to: '/sales/dispatch',
       view: 'unbilled',
     },
     {
-      label: 'Orders pending approval',
+      // Customer purchase orders awaiting sign-off before anything is loaded.
+      label: t.toApprove.label,
       count: counts.ordersPendingApproval,
-      definition: 'Customer purchase orders awaiting sign-off before anything is loaded',
+      definition: t.toApprove.definition,
       priority: 'high',
       accent: 'attention',
       to: '/sales/orders',
       view: 'pending_approval',
     },
     {
-      label: 'Dispatch pending confirmation / delayed',
+      // Loaded but not confirmed out of the gate, or planned and past its slot.
+      label: t.notOut.label,
       count: counts.dispatchUnconfirmed,
-      definition: 'Loaded but not confirmed out of the gate, or planned and past its slot',
+      definition: t.notOut.definition,
       priority: 'high',
       accent: 'attention',
       to: '/sales/dispatch',
       view: 'unconfirmed',
     },
     {
-      label: 'Invoices overdue for payment',
+      // Past the due date with a balance still owed.
+      label: t.overdue.label,
       count: counts.invoicesOverdue,
-      definition: 'Past the due date with a balance still owed',
+      definition: t.overdue.definition,
       priority: 'high',
       accent: 'attention',
       to: '/sales/invoices',
       view: 'overdue',
     },
     {
-      label: 'Stock below threshold',
+      // Product piles that have fallen under their safety level.
+      label: t.lowStock.label,
       count: counts.stockBelowSafety,
-      definition: 'Product piles that have fallen under their safety level',
+      definition: t.lowStock.definition,
       priority: 'medium',
       accent: 'attention',
       to: '/production/stock',
@@ -70,23 +79,25 @@ export function SalesCommandBoard() {
     },
   ];
 
+  // The same names the menu uses, so a link and the page it opens agree.
   const destinations: BoardDestination[] = [
-    { label: 'Material Stock', to: '/production/stock' },
-    { label: 'Customer', to: '/sales/customers' },
-    { label: 'Purchase Order', to: '/sales/orders' },
-    { label: 'Material Dispatch', to: '/sales/dispatch' },
-    { label: 'Invoices', to: '/sales/invoices' },
+    { label: t.stock, to: '/production/stock' },
+    { label: t.customers, to: '/sales/customers' },
+    { label: t.orders, to: '/sales/orders' },
+    { label: t.loads, to: '/sales/dispatch' },
+    { label: t.invoices, to: '/sales/invoices' },
   ];
 
   return (
     <>
       <PageHeader
-        eyebrow="Sales"
-        title="Command board"
-        meta={<AsOfStamp asOf="14:42" source="v_sales_attention" freshness="live" />}
+        eyebrow={s.eyebrow}
+        title={t.title}
+        // Counted from v_sales_attention.
+        meta={<AsOfStamp asOf="14:42" source={s.src.salesDesk} freshness="live" />}
       />
-      <UrgentActionsRow caption="Needs you now" actions={urgent} />
-      <DestinationRow caption="Go to" destinations={destinations} />
+      <UrgentActionsRow caption={t.needsYou} actions={urgent} />
+      <DestinationRow caption={t.goTo} destinations={destinations} />
       <div className="h-10" />
     </>
   );

@@ -24,6 +24,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -114,6 +115,70 @@ class Payment(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class TripPayment(Base):
+    """Money received from a customer (BA) or paid to a vendor (BE), on a trip or its sheet (LIN-22).
+
+    Not a finance.payments row: that table is the append-only record of money
+    whose UTR is claimed once for the life of the tenant, and a trip's money
+    line must be correctable and removable by whoever enters the trip. These
+    are the reported side of the owner's cross-verification rule
+    (docs/DATABASE.md): the line a fleet desk records, which a verified
+    payment confirms when receipts are matched to the bank. Part payments are
+    several lines; a payment written on the sheet settles that party's trips
+    oldest first (app/domain/vehicle_pl.py).
+    """
+
+    __tablename__ = "trip_payments"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        # The same transfer is not recorded twice on one sheet. A lump sum may
+        # cover several sheets, so the reference is not unique across them.
+        Index(
+            "uq_trip_payments_organization_id_trip_sheet_id_reference_no",
+            "organization_id",
+            "trip_sheet_id",
+            "reference_no",
+            unique=True,
+            postgresql_where=text("reference_no IS NOT NULL"),
+        ),
+        tenant_fk("trip_sheet_id", "logistics.trip_sheets"),
+        ForeignKeyConstraint(
+            ["organization_id", "trip_sheet_id", "trip_id"],
+            ["logistics.trips.organization_id", "logistics.trips.trip_sheet_id", "logistics.trips.id"],
+            ondelete="RESTRICT",
+        ),
+        tenant_fk("party_id", "master.parties"),
+        tenant_fk("recorded_by", "core.users"),
+        CheckConstraint("direction in ('in', 'out')", name="direction_known"),
+        CheckConstraint(_in("method", PAYMENT_METHODS), name="method_known"),
+        CheckConstraint("amount > 0", name="amount_positive"),
+        CheckConstraint(
+            "reference_no IS NULL OR reference_no ~ '^[A-Z0-9/-]{3,40}$'", name="reference_shape"
+        ),
+        CheckConstraint("position >= 0", name="position_not_negative"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    trip_sheet_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    #: Null: written on the sheet.
+    trip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    #: In: received from a customer. Out: paid to a vendor.
+    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    party_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    paid_on: Mapped[date] = mapped_column(Date, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)
+    #: UTR, cheque number, UPI reference or cash receipt number, if there is one.
+    reference_no: Mapped[str | None] = mapped_column(Text)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    recorded_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()
 
 
 class WhatsAppImportBatch(Base):

@@ -29,6 +29,9 @@ import { VerificationQueue } from './features/finance/VerificationQueue.js';
 import { ExtractionReview } from './features/ai/ExtractionReview.js';
 import { DeliveryDocCrossCheck } from './features/ai/DeliveryDocCrossCheck.js';
 import { Forbidden } from './features/Forbidden.js';
+import { PlReports } from './features/vehicle-pl/PlReports.js';
+import { SheetList } from './features/vehicle-pl/SheetList.js';
+import { SheetPage } from './features/vehicle-pl/SheetPage.js';
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -113,6 +116,11 @@ const routeTree = rootRoute.addChildren([
   route('/fleet/expenses', () => <ExpenseRegister desk="fleet" />, 'fleet.expense.read'),
   route('/fleet/whatsapp', () => <WhatsAppDieselImport />, 'fleet.expense.upload'),
   route('/fleet/diesel-summary', () => <DieselSummary />, 'fleet.expense.read'),
+  route('/fleet/pl', () => <SheetList />, 'fleet.trip_pl.read'),
+  route('/fleet/pl/new', () => <SheetPage />, 'fleet.trip_pl.write'),
+  route('/fleet/pl/sheets/$sheetId', () => <SheetPage />, 'fleet.trip_pl.read'),
+  route('/overview/pl', () => <PlReports />, 'finance.pl_report.read'),
+  route('/finance/pl', () => <PlReports />, 'finance.pl_report.read'),
   route('/stores/expenses', () => <ExpenseRegister desk="stores" />, 'stores.expense.read'),
   route('/finance/expenses', () => <ExpenseRegister desk={null} />, 'finance.expense.read'),
   route('/fleet/fuel/new', () => <FuelEntryScreen />, 'fleet.fuel.create'),

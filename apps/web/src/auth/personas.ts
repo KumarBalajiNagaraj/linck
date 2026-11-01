@@ -68,6 +68,9 @@ export const PERSONAS: Persona[] = [
       'stores.indent.read',
       'ai.extraction.review',
       'admin.member.manage',
+      // LIN-22: every trip's profit, and the vehicle-wise, monthly and money-due reports.
+      'fleet.trip_pl.read',
+      'finance.pl_report.read',
     ]),
   },
   {
@@ -89,6 +92,9 @@ export const PERSONAS: Persona[] = [
         'compliance.document.write',
         'compliance.ewb.read',
         'ai.extraction.review',
+        // LIN-22: the profit reports and money-due lists; closing a trip paid in full is receipt.verify.
+        'fleet.trip_pl.read',
+        'finance.pl_report.read',
       ]),
       ...scoped(['fleet.vehicle.read', 'sales.trip.read'], [KRP, TVL]),
     },
@@ -117,6 +123,9 @@ export const PERSONAS: Persona[] = [
         'sales.dispatch.read',
         'sales.trip.read',
         'ai.extraction.review',
+        // LIN-22: enters trip sheets, and sees each one's profit.
+        'fleet.trip_pl.read',
+        'fleet.trip_pl.write',
       ],
       [KRP, TVL, WSP],
     ),

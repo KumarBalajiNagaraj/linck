@@ -81,6 +81,8 @@ export const WORKSPACES: Workspace[] = [
       { key: 'sales-ahead', label: "What's coming", ta: 'வரப்போவது', route: '/overview/sales/ahead', permission: 'executive.dashboard.read' },
       { key: 'expense-approvals', label: 'Approve bills', ta: 'பில் அனுமதி', route: '/overview/expenses', permission: 'finance.expense.approve', badge: 'awaiting_director' },
       { key: 'industry-news', label: 'Industry news', ta: 'தொழில் செய்திகள்', route: '/overview/industry', permission: 'executive.dashboard.read' },
+      // LIN-22: trip-wise, vehicle-wise and monthly profit, and the money-due lists.
+      { key: 'pl-reports', label: 'Profit reports', ta: 'லாப நஷ்ட அறிக்கை', route: '/overview/pl', permission: 'finance.pl_report.read' },
     ],
   },
   {
@@ -98,6 +100,8 @@ export const WORKSPACES: Workspace[] = [
       { key: 'fuel', label: 'Add diesel', ta: 'டீசல் சேர்', route: '/fleet/fuel/new', permission: 'fleet.fuel.create' },
       { key: 'whatsapp', label: 'WhatsApp bills', ta: 'வாட்ஸ்அப் பில்கள்', route: '/fleet/whatsapp', permission: 'fleet.expense.upload' },
       { key: 'diesel-summary', label: 'Diesel report', ta: 'டீசல் அறிக்கை', route: '/fleet/diesel-summary', permission: 'fleet.expense.read' },
+      // LIN-22: trip sheets and each trip's profit.
+      { key: 'vehicle-pl', label: 'Vehicle P&L', ta: 'வண்டி லாப நஷ்டம்', route: '/fleet/pl', permission: 'fleet.trip_pl.read' },
       { key: 'docs', label: 'Documents', ta: 'ஆவணங்கள்', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
       // Inter-state movement is material here, so the e-way bill console is a
       // first-class destination and not a tab hidden inside dispatch.
@@ -156,6 +160,7 @@ export const WORKSPACES: Workspace[] = [
         badge: 'unverified_receipts',
       },
       { key: 'expense-bills', label: 'Expense bills', ta: 'செலவு பில்கள்', route: '/finance/expenses', permission: 'finance.expense.read' },
+      { key: 'finance-pl', label: 'Profit reports', ta: 'லாப நஷ்ட அறிக்கை', route: '/finance/pl', permission: 'finance.pl_report.read' },
     ],
   },
   {

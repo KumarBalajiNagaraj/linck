@@ -43,9 +43,9 @@ APP_PASSWORD = os.environ.get("LINCK_TEST_APP_PASSWORD", "linck_app")
 # nothing behind that the next run cannot identify and sweep.
 SLUG_PREFIX = "zz-test-"
 
-# The schemas migrations 0011 and 0020 created, and the tables the app role may
-# only INSERT into and read, like core.audit_logs.
-GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance", "ai")
+# The schemas migrations 0011, 0020 and 0030 created, and the tables the app
+# role may only INSERT into and read, like core.audit_logs.
+GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance", "ai", "logistics", "procurement")
 APPEND_ONLY_TABLES = ("finance.payments", "finance.expense_bill_events")
 
 
@@ -97,9 +97,9 @@ def _provision_app_role() -> None:
         # the migration, which targets PUBLIC rather than a named role.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE ON core.audit_logs FROM {}").format(role))
 
-        # The business schemas migrations 0011 and 0020 created grant linck_app
-        # what core does, from the migration itself. Only where the role did not
-        # exist when the migration ran (so it skipped the grants) are they
+        # The business schemas migrations 0011, 0020 and 0030 created grant
+        # linck_app what core does, from the migration itself. Only where the role
+        # did not exist when the migration ran (so it skipped the grants) are they
         # restated here, append-only tables included; otherwise the suite tests
         # the migration's own grants rather than this file's.
         cur.execute(
@@ -143,6 +143,18 @@ class Tenant:
 # children: most of these tables carry the audit trigger, so deleting them
 # writes fresh audit rows, and clearing the log any earlier would leave them.
 _TEARDOWN_ORDER = [
+    "finance.trip_payments",
+    "sales.trip_closures",
+    "sales.trip_sales",
+    "procurement.trip_purchase_files",
+    "procurement.trip_purchases",
+    "logistics.enroute_expenses",
+    "logistics.diesel_lines",
+    "logistics.trips",
+    "logistics.trip_sheets",
+    "master.gst_rates",
+    "master.party_locations",
+    "master.items",
     "ai.industry_digests",
     "finance.expense_bill_events",
     "finance.expense_bill_fields",

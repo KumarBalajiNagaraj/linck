@@ -513,10 +513,14 @@ class WhatsAppMessage(Base):
 #: What may be stored: what a phone camera, a scanner or WhatsApp produces for
 #: a paper bill. Anything else is refused at upload, and the column says so too.
 FILE_MIME_TYPES = ("image/jpeg", "image/png", "image/webp", "application/pdf")
+#: What an upload is for: a scanned expense bill, or a paper of a trip sheet
+#: (LIN-22): a vendor's bill, a customer's PO or signed DC, a diesel, toll,
+#: police or maintenance bill. It decides whose read key reaches it.
+FILE_PURPOSES = ("expense_bill", "trip_document")
 
 
 class File(Base):
-    """One upload: a scanned bill today.
+    """One upload: a scanned bill, or a vendor's invoice for material bought on a trip.
 
     The bytes live in the file store under the tenant's own prefix, named by
     their SHA-256 (app/core/storage.py: a directory in development, a private
@@ -530,7 +534,9 @@ class File(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "id"),
         tenant_fk("uploaded_by", "core.users"),
-        CheckConstraint("purpose in ('expense_bill')", name="purpose_known"),
+        CheckConstraint(
+            "purpose in (" + ", ".join(f"'{p}'" for p in FILE_PURPOSES) + ")", name="purpose_known"
+        ),
         CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="sha256_hex"),
         CheckConstraint(
             "mime_type in (" + ", ".join(f"'{m}'" for m in FILE_MIME_TYPES) + ")", name="mime_type_allowed"

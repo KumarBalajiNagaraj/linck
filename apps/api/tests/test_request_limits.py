@@ -81,6 +81,7 @@ async def test_every_route_refuses_a_body_over_its_cap_before_reading_it(api) ->
     settings = get_settings()
     caps = {
         "/expenses/attachments": settings.file_max_bytes + MULTIPART_MARGIN,
+        "/vehicle-pl/attachments": settings.file_max_bytes + MULTIPART_MARGIN,
         "/webhooks/whatsapp": WHATSAPP_WEBHOOK_MAX_BYTES,
         "/whatsapp/imports": WHATSAPP_IMPORT_MAX_BYTES,
     }

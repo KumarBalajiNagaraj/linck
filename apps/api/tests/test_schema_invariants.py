@@ -41,6 +41,22 @@ LIN20_TABLES = {
 LIN10_TABLES = {"ai.industry_digests"}
 NAMED_TABLES = LIN20_TABLES | LIN10_TABLES
 
+# And the tables LIN-22 added, two of them in schemas nothing used before.
+LIN22_TABLES = {
+    "master.items",
+    "master.party_locations",
+    "master.gst_rates",
+    "logistics.trip_sheets",
+    "logistics.trips",
+    "logistics.diesel_lines",
+    "logistics.enroute_expenses",
+    "procurement.trip_purchases",
+    "procurement.trip_purchase_files",
+    "sales.trip_sales",
+    "sales.trip_closures",
+    "finance.trip_payments",
+}
+
 SCHEMAS = {"schemas": list(BUSINESS_SCHEMAS)}
 
 POSTURE_SQL = """
@@ -60,7 +76,7 @@ async def test_every_tenant_table_enables_and_forces_rls() -> None:
 
     tables = {name: (enabled, forced, policies) for name, enabled, forced, policies in rows}
     assert "core.sites" in tables, "the posture query found nothing — it is checking the wrong catalog"
-    missing = NAMED_TABLES - tables.keys()
+    missing = (NAMED_TABLES | LIN22_TABLES) - tables.keys()
     assert not missing, f"the posture query does not reach {sorted(missing)}"
 
     problems: list[str] = []
@@ -200,7 +216,7 @@ async def test_every_tenant_table_has_the_audit_trigger() -> None:
 
     unaudited = set(rows) - UNAUDITED - NOT_TENANT_SCOPED
     assert unaudited == set(), f"tenant tables without the audit trigger: {sorted(unaudited)}"
-    assert not (NAMED_TABLES & set(rows))
+    assert not ((NAMED_TABLES | LIN22_TABLES) & set(rows))
 
 
 # Single-column references between core tables from before the composite rule
@@ -251,6 +267,7 @@ async def test_every_reference_between_tenant_tables_is_tenant_safe() -> None:
 
     assert any(source in LIN20_TABLES for source, *_ in rows), "the query found none of the new references"
     assert any(source in LIN10_TABLES for source, *_ in rows), "the query does not reach ai.industry_digests"
+    assert any(source in LIN22_TABLES for source, *_ in rows), "the query found none of LIN-22's references"
     unsafe = []
     for source, name, target, cols, target_cols in rows:
         if target in NOT_TENANT_SCOPED or source in SINGLE_COLUMN_FKS_FROM:

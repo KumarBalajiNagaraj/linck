@@ -9,7 +9,9 @@ import app.models.ai  # noqa: F401
 import app.models.core  # noqa: F401
 import app.models.finance  # noqa: F401
 import app.models.fleet  # noqa: F401
+import app.models.logistics  # noqa: F401
 import app.models.master  # noqa: F401
+import app.models.procurement  # noqa: F401
 import app.models.sales  # noqa: F401
 from app.core.settings import get_settings
 from app.models.base import BUSINESS_SCHEMAS, Base

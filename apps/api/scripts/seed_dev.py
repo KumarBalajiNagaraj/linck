@@ -40,6 +40,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -61,6 +62,7 @@ from app.models.core import (
     Site,
     User,
 )
+from app.models.master import GstRate
 
 t_org = Organization.__table__
 t_module = OrganizationModule.__table__
@@ -163,6 +165,9 @@ ROLES: dict[str, RoleSpec] = {
             "stores.expense.read",
             "finance.expense.read",
             "finance.expense.approve",
+            # LIN-22: every trip's profit, and the vehicle-wise, monthly and money-due reports.
+            "fleet.trip_pl.read",
+            "finance.pl_report.read",
         ),
     ),
     "accounts": RoleSpec(
@@ -183,6 +188,8 @@ ROLES: dict[str, RoleSpec] = {
             "finance.expense.read",
             "finance.expense.pass",
             "finance.expense.pay",
+            "fleet.trip_pl.read",
+            "finance.pl_report.read",
         ),
     ),
     "fleet_manager": RoleSpec(
@@ -209,6 +216,9 @@ ROLES: dict[str, RoleSpec] = {
             "sales.dispatch.read",
             "sales.trip.read",
             "ai.extraction.review",
+            # LIN-22: enters trips, and sees each trip's profit.
+            "fleet.trip_pl.read",
+            "fleet.trip_pl.write",
         ),
     ),
     "production_incharge": RoleSpec(
@@ -1072,6 +1082,24 @@ async def seed_tenant(spec: TenantSpec, permission_modules: dict[str, str]) -> T
                 t_assign.c.user_id.in_(list(user_ids.values())),
                 t_assign.c.id.notin_([r["id"] for r in assign_rows]),
             )
+        )
+
+        # -- the GST rates a trip line may be billed at (LIN-22) ----------
+        # A starting list for the tenant to edit, never the code's: a rate
+        # someone switched off stays off on a re-seed.
+        await session.execute(
+            pg_insert(GstRate.__table__)
+            .values(
+                [
+                    {
+                        "id": sid("org", spec.slug, "gst-rate", rate),
+                        "organization_id": org_id,
+                        "rate_pct": Decimal(rate),
+                    }
+                    for rate in ("0", "5", "12", "18", "28")
+                ]
+            )
+            .on_conflict_do_nothing()
         )
 
     return report

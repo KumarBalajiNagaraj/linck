@@ -43,7 +43,15 @@ export function ocrAssets(): Plugin {
         const file = req.url ? files.get(req.url.split('?')[0]!) : undefined;
         if (!file) return next();
         res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : 'application/octet-stream');
-        createReadStream(file).pipe(res);
+        // A file missing from node_modules is a 404 the bill sheet reports as
+        // "could not read", not an unhandled stream error that stops the dev
+        // server for everyone.
+        createReadStream(file)
+          .on('error', () => {
+            if (!res.headersSent) res.statusCode = 404;
+            res.end();
+          })
+          .pipe(res);
       });
     },
     writeBundle() {

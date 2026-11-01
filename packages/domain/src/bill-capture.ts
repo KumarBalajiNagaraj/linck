@@ -26,13 +26,23 @@ export interface CapturedField {
   source: string;
   /** 3 = labelled and well-formed, 2 = found by shape alone, 1 = a guess worth checking. */
   confidence: 1 | 2 | 3;
-  note?: string;
 }
+
+/**
+ * What a reviewer should look at first, as a code and its values. The screen
+ * words it in the reader's language (docs/WRITING.md).
+ */
+export type CaptureWarning =
+  /** Litres × rate does not come to the total on the bill. */
+  | { code: 'litres-rate-mismatch'; expected: number; stated: number }
+  /** A labelled field whose value could not be read — said, never guessed. */
+  | { code: 'unreadable'; field: 'billDate' | 'vehicle' | 'litres' | 'rate' | 'billNumber'; text: string }
+  | { code: 'no-total' }
+  | { code: 'no-bill-number' };
 
 export interface BillCapture {
   fields: Partial<Record<BillFieldKey, CapturedField>>;
-  /** Plain-sentence problems a reviewer should look at first. */
-  warnings: string[];
+  warnings: CaptureWarning[];
 }
 
 /* ------------------------------------------------------------ primitives */
@@ -158,7 +168,7 @@ export function captureExpenseBill(text: string, lineConfidence: number[] = []):
   // Blank lines are kept: line i must stay line i of `lineConfidence`.
   const lines = text.split(/\r?\n/).map((l) => l.trim());
   const fields: Partial<Record<BillFieldKey, CapturedField>> = {};
-  const warnings: string[] = [];
+  const warnings: CaptureWarning[] = [];
   /** A label that is on the bill with a value that would not parse: said out loud, never guessed. */
   const unreadable = new Map<BillFieldKey, string>();
   const cap = (i: number, c: 1 | 2 | 3): 1 | 2 | 3 => {
@@ -261,9 +271,10 @@ export function captureExpenseBill(text: string, lineConfidence: number[] = []):
   if (head >= 0) fields.vendor = { key: 'vendor', value: lines[head]!.replace(/\s{2,}/g, ' '), source: lines[head]!, confidence: cap(head, 2) };
 
   const kind = KIND_SIGNALS.find((k) => k.pattern.test(all));
+  // No word on the bill says what it is for: "other", with nothing read.
   fields.kind = kind
     ? { key: 'kind', value: kind.kind, source: kind.pattern.exec(all)![0], confidence: 2 }
-    : { key: 'kind', value: 'other', source: '', confidence: 1, note: 'No word on the bill says what it is for' };
+    : { key: 'kind', value: 'other', source: '', confidence: 1 };
 
   // Quantity and rate only mean litres and ₹/L on a fuel bill. On a tyre bill
   // "Qty 2" is two tyres, and reading it as litres would post nonsense.
@@ -277,25 +288,20 @@ export function captureExpenseBill(text: string, lineConfidence: number[] = []):
     const expected = Number(fields.litres.value) * Number(fields.rate.value);
     const stated = Number(fields.amount.value);
     if (expected > 0 && Math.abs(expected - stated) / expected > 0.01) {
-      fields.amount = { ...fields.amount, confidence: 1, note: `Litres × rate = ₹${expected.toFixed(2)}, not ₹${stated.toFixed(2)}` };
-      warnings.push(`Litres × rate comes to ₹${expected.toFixed(2)} but the bill total reads ₹${stated.toFixed(2)}.`);
+      fields.amount = { ...fields.amount, confidence: 1 };
+      warnings.push({ code: 'litres-rate-mismatch', expected: Math.round(expected * 100) / 100, stated });
     }
   }
-  const FIELD_WORD: Partial<Record<BillFieldKey, string>> = {
-    billDate: 'The date',
-    vehicle: 'The vehicle number',
-    litres: 'The quantity',
-    rate: 'The rate',
-    billNumber: 'The bill number',
-  };
+  const SAID_WHEN_UNREADABLE = ['billDate', 'vehicle', 'litres', 'rate', 'billNumber'] as const;
   for (const [key, text] of unreadable) {
-    if (fields[key] || !FIELD_WORD[key]) continue;
+    const field = SAID_WHEN_UNREADABLE.find((k) => k === key);
+    if (fields[key] || !field) continue;
     // Litres and rate were dropped above for a non-fuel bill; not a problem then.
-    if ((key === 'litres' || key === 'rate') && fields.kind.value !== 'diesel') continue;
-    warnings.push(`${FIELD_WORD[key]} is on the bill but could not be read (read as "${text}") — key it from the paper.`);
+    if ((field === 'litres' || field === 'rate') && fields.kind.value !== 'diesel') continue;
+    warnings.push({ code: 'unreadable', field, text });
   }
-  if (!fields.amount) warnings.push('No total could be read — key the amount from the paper.');
-  if (!fields.billNumber) warnings.push('No bill number could be read.');
+  if (!fields.amount) warnings.push({ code: 'no-total' });
+  if (!fields.billNumber) warnings.push({ code: 'no-bill-number' });
 
   return { fields, warnings };
 }

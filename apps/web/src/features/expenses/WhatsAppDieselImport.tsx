@@ -23,9 +23,11 @@ import {
   StatusStamp,
   type Column,
 } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { useExpenses } from './expenseStore.js';
+import { expenseWords } from './words.js';
 import { ChatArchiveError, readChatArchive } from './whatsappArchive.js';
 import {
   billFromClaim,
@@ -55,13 +57,13 @@ import {
 
 type Row = PlannedClaim<IntakeClaim>;
 
-const OUTCOME: Record<ImportOutcome, { family: StatusFamily; label: string }> = {
-  add: { family: 'active', label: 'Ready to add' },
-  needs_details: { family: 'attention', label: 'Needs details' },
-  repeat: { family: 'dormant', label: 'Repeat' },
-  already_imported: { family: 'dormant', label: 'Already imported' },
-  already_in_linck: { family: 'dormant', label: 'Already in Linck' },
-  no_fill: { family: 'dormant', label: 'No fill' },
+const OUTCOME_FAMILY: Record<ImportOutcome, StatusFamily> = {
+  add: 'active',
+  needs_details: 'attention',
+  repeat: 'dormant',
+  already_imported: 'dormant',
+  already_in_linck: 'dormant',
+  no_fill: 'dormant',
 };
 
 const VIEWS = ['all', 'ready', 'needs', 'left'] as const;
@@ -91,14 +93,17 @@ const reg = (id: string | null) => VEHICLES.find((v) => v.id === id)?.displayReg
 
 export function WhatsAppDieselImport() {
   const { persona } = useApp();
+  const t = useWords(expenseWords);
+  const w = t.whatsapp;
   const bills = useExpenses((s) => s.bills);
   const add = useExpenses((s) => s.add);
   const [source, setSource] = useState<IntakeSource | null>(null);
   const [claims, setClaims] = useState<IntakeClaim[]>([]);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  /** Kept as what went wrong, so it is worded in whichever language is showing. */
+  const [problem, setProblem] = useState<unknown>(null);
+  const [notice, setNotice] = useState<{ count: number; amount: number } | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [view, setView] = useViewParam(VIEWS, 'all');
@@ -114,7 +119,7 @@ export function WhatsAppDieselImport() {
       setClaims(read);
       setOverrides({});
     } catch (err) {
-      setProblem(err instanceof InboxUnavailable || err instanceof ChatArchiveError ? err.message : `Could not read that: ${String(err)}`);
+      setProblem(err);
     } finally {
       setProgress(null);
     }
@@ -148,14 +153,30 @@ export function WhatsAppDieselImport() {
     if (!source) return;
     for (const r of ready) add(billFromClaim(r.claim, source));
     void markInboxImported(ready.flatMap((r) => inboxIdsOf(r.claim, source)));
-    setNotice(`${ready.length} bills worth ${formatINR(readyAmount)} added. They wait for validation under Fleet → Expenses.`);
+    setNotice({ count: ready.length, amount: readyAmount });
     setConfirming(false);
   };
+
+  const problemText =
+    problem === null
+      ? null
+      : problem instanceof InboxUnavailable
+        ? problem.reason === 'sign-in'
+          ? w.inbox.signIn
+          : problem.reason === 'status'
+            ? w.inbox.status(problem.status ?? 0)
+            : w.inbox.unreachable
+        : problem instanceof ChatArchiveError
+          ? problem.reason === 'too-big'
+            ? w.archive.tooBig
+            : w.archive.noChat
+          : w.couldNotRead;
+  const via = source ? (source.kind === 'inbox' ? w.businessNumber : source.kind === 'demo' ? `${source.via} ${w.demoSuffix}` : source.via) : '';
 
   const columns: Column<Row>[] = [
     {
       key: 'sent',
-      header: 'Sent',
+      header: w.columns.sent,
       sticky: true,
       width: 190,
       render: (r) => (
@@ -165,27 +186,27 @@ export function WhatsAppDieselImport() {
         />
       ),
     },
-    { key: 'outcome', header: 'Outcome', type: 'status', width: 170, render: (r) => <OutcomeStamp row={r} leftOut={overrides[r.claim.key]?.leaveOut === true} /> },
-    { key: 'vehicle', header: 'Vehicle', type: 'id', width: 140, render: (r) => (reg(r.claim.vehicleId) ? <IdCell>{reg(r.claim.vehicleId)}</IdCell> : null) },
-    { key: 'litres', header: 'Litres', unit: 'L', type: 'num', width: 90, render: (r) => (r.claim.litres === null ? null : <QuantityCell value={r.claim.litres} decimals={2} />) },
+    { key: 'outcome', header: w.columns.result, type: 'status', width: 170, render: (r) => <OutcomeStamp row={r} leftOut={overrides[r.claim.key]?.leaveOut === true} /> },
+    { key: 'vehicle', header: w.columns.vehicle, type: 'id', width: 140, render: (r) => (reg(r.claim.vehicleId) ? <IdCell>{reg(r.claim.vehicleId)}</IdCell> : null) },
+    { key: 'litres', header: w.columns.litres, unit: 'L', type: 'num', width: 90, render: (r) => (r.claim.litres === null ? null : <QuantityCell value={r.claim.litres} decimals={2} />) },
     {
       key: 'amount',
-      header: 'Amount',
+      header: w.columns.amount,
       unit: '₹',
       type: 'money',
       width: 120,
       render: (r) => (r.claim.amount === null ? null : <Provisional>{r.claim.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</Provisional>),
     },
-    { key: 'bunk', header: 'Bunk · bill', render: (r) => (r.claim.vendor || r.claim.billNumber ? <Stacked primary={r.claim.vendor ?? '–'} secondary={r.claim.billNumber ?? ''} /> : null) },
+    { key: 'bunk', header: w.columns.bunk, render: (r) => (r.claim.vendor || r.claim.billNumber ? <Stacked primary={r.claim.vendor ?? '–'} secondary={r.claim.billNumber ?? ''} /> : null) },
     {
       key: 'why',
-      header: 'To check',
+      header: w.columns.toCheck,
       render: (r) => {
-        const first = r.reason ?? r.claim.issues[0];
+        const first = r.reason ? t.reason(r.reason) : r.claim.issues[0] ? t.notice(r.claim.issues[0]) : null;
         return first ? (
-          <span className="block max-w-[26rem] whitespace-normal py-1.5 text-[12px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+          <span className="block max-w-[26rem] whitespace-normal py-1.5 text-[13px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
             {first}
-            {r.claim.issues.length > 1 && !r.reason ? ` (+${r.claim.issues.length - 1} more)` : ''}
+            {r.claim.issues.length > 1 && !r.reason ? w.more(r.claim.issues.length - 1) : ''}
           </span>
         ) : null;
       },
@@ -195,18 +216,18 @@ export function WhatsAppDieselImport() {
   return (
     <>
       <PageHeader
-        eyebrow="Fleet"
-        title="Diesel slips from WhatsApp"
+        eyebrow={t.desk.fleet}
+        title={w.title}
         actions={
           <>
             <Button variant="primary" onClick={() => void load(fetchInboxSource)} disabled={progress !== null}>
-              Fetch from WhatsApp
+              {w.fetch}
             </Button>
             <label
               className="inline-flex h-11 cursor-pointer items-center px-3 text-[14px] font-medium focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-[var(--focus-ring)] [@media(hover:hover)]:h-[34px]"
               style={FIELD_STYLE}
             >
-              Import chat export
+              {w.importChat}
               <input
                 type="file"
                 multiple
@@ -220,32 +241,28 @@ export function WhatsAppDieselImport() {
               />
             </label>
             <Button onClick={() => void load(async () => demoSource())} disabled={progress !== null}>
-              Try the demo slips
+              {w.demo}
             </Button>
           </>
         }
       />
 
       <div className="flex flex-col gap-2 px-6 pt-4">
-        <Note>
-          Drivers only have to photograph the bunk slip and send it to the fleet&apos;s WhatsApp Business number — no typing.
-          The photo gets a 👍 when it arrives; Linck reads the litres, rupees, bill number and vehicle off the slip. A fleet
-          still using a drivers&apos; group can import its &ldquo;Export chat&rdquo; file here instead.
-        </Note>
+        <Note>{w.note}</Note>
         {progress ? (
-          <p className="text-[13px]" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>
-            {progress.total === 0 ? 'Collecting the messages…' : `Reading slip ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`}
+          <p className="text-[14px]" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>
+            {progress.total === 0 ? w.collecting : w.readingSlip(Math.min(progress.done + 1, progress.total), progress.total)}
           </p>
         ) : null}
-        {problem ? (
-          <p className="relative pl-3 text-[13px]" style={{ color: 'var(--status-critical)' }}>
+        {problemText ? (
+          <p className="relative pl-3 text-[14px]" style={{ color: 'var(--status-critical)' }}>
             <Rail status="critical" />
-            {problem}
+            {problemText}
           </p>
         ) : null}
         {notice ? (
-          <p className="text-[13px]" style={{ color: 'var(--status-ready)' }} aria-live="polite">
-            {notice}
+          <p className="text-[14px]" style={{ color: 'var(--status-ready)' }} aria-live="polite">
+            {w.added(notice.count, formatINR(notice.amount))}
           </p>
         ) : null}
       </div>
@@ -254,19 +271,19 @@ export function WhatsAppDieselImport() {
         <>
           <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <Chip active={view === 'all'} onClick={() => setView('all')} count={plan.length}>
-              Everything read
+              {w.chips.all}
             </Chip>
             <Chip active={view === 'ready'} onClick={() => setView('ready')} count={plan.filter((r) => inView('ready', r)).length}>
-              Ready to add
+              {w.chips.ready}
             </Chip>
             <Chip active={view === 'needs'} onClick={() => setView('needs')} count={plan.filter((r) => inView('needs', r)).length}>
-              Needs details
+              {w.chips.needs}
             </Chip>
             <Chip active={view === 'left'} onClick={() => setView('left')} count={plan.filter((r) => inView('left', r)).length}>
-              Not added
+              {w.chips.left}
             </Chip>
             <span className="ml-auto text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-              From {source.via}
+              {w.from(via)}
             </span>
           </div>
           <Section>
@@ -276,13 +293,13 @@ export function WhatsAppDieselImport() {
               rowKey={(r) => r.claim.key}
               onRowClick={(r) => setSelectedKey(r.claim.key)}
               selectedKey={selectedKey ?? undefined}
-              rail={(r) => ({ status: OUTCOME[r.outcome].family, provenance: 'proposed' })}
-              isDormant={(r) => OUTCOME[r.outcome].family === 'dormant' || overrides[r.claim.key]?.leaveOut === true}
+              rail={(r) => ({ status: OUTCOME_FAMILY[r.outcome], provenance: 'proposed' })}
+              isDormant={(r) => OUTCOME_FAMILY[r.outcome] === 'dormant' || overrides[r.claim.key]?.leaveOut === true}
               empty={
                 plan.length === 0 ? (
-                  <EmptyState fact="No diesel messages in this chat." because="Nothing in it mentions a fill or carries a slip photo." />
+                  <EmptyState fact={w.noDiesel} />
                 ) : (
-                  <EmptyState fact="Nothing in this view." because="Every message read is in another view." action={{ label: 'Show everything read', onClick: () => setView('all') }} />
+                  <EmptyState fact={w.noneInList} action={{ label: w.showAll, onClick: () => setView('all') }} />
                 )
               }
             />
@@ -292,24 +309,21 @@ export function WhatsAppDieselImport() {
             style={{ background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-strong)' }}
           >
             <div className="min-w-0 max-w-[720px]">
-              <p className="font-serif text-[15px] italic" style={{ color: 'var(--text-primary)' }}>
-                {ready.length} bills ready · {formatINR(readyAmount)} · {readyLitres.toLocaleString('en-IN')} L
+              <p className="text-[16px]" style={{ color: 'var(--text-primary)' }}>
+                {w.readyLine(ready.length, formatINR(readyAmount), readyLitres)}
               </p>
-              <p className="mt-1 font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                Every figure was read by Linck. Adding them sends them for validation, where each is checked against its slip.
+              <p className="mt-1 text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
+                {w.readySub}
               </p>
             </div>
             <Button variant="primary" disabled={ready.length === 0} onClick={() => setConfirming(true)}>
-              Add {ready.length} bills for validation
+              {w.addN(ready.length)}
             </Button>
           </div>
         </>
       ) : !progress ? (
         <div className="px-6 pt-6">
-          <EmptyState
-            fact="No slips fetched yet."
-            because="Fetch what drivers sent to the business number, import a group's chat export, or try the demo slips."
-          />
+          <EmptyState fact={w.nothingYet} because={w.nothingYetHow} />
         </div>
       ) : null}
       <div className="h-10" />
@@ -318,16 +332,13 @@ export function WhatsAppDieselImport() {
         open={confirming}
         onClose={() => setConfirming(false)}
         onConfirm={commit}
-        title="Add these diesel bills"
-        confirmLabel={`Add ${ready.length} bills`}
+        title={w.confirmTitle}
+        confirmLabel={w.addN(ready.length)}
         consequence={
           <>
-            <span className="block">
-              {ready.length} diesel bills, {readyLitres.toLocaleString('en-IN')} litres, {formatINR(readyAmount)} in all, go to the fleet
-              desk as awaiting validation.
-            </span>
+            <span className="block">{w.confirmBody(ready.length, readyLitres, formatINR(readyAmount))}</span>
             <span className="mt-3 block" style={{ color: 'var(--text-tertiary)' }}>
-              Messages that are repeats, already in Linck, not a fill, or still missing details are left where they are.
+              {w.confirmRest}
             </span>
           </>
         }
@@ -339,7 +350,7 @@ export function WhatsAppDieselImport() {
         width="split"
         title={selected ? (driverName(selected.claim.driverId) ?? selected.claim.sender) : ''}
         identifier={selected ? formatDateTime(selected.claim.at) : undefined}
-        {...(selected ? { status: { family: OUTCOME[selected.outcome].family, label: OUTCOME[selected.outcome].label } } : {})}
+        {...(selected ? { status: { family: OUTCOME_FAMILY[selected.outcome], label: w.outcome[selected.outcome] } } : {})}
       >
         {selected ? (
           <ClaimDetail
@@ -356,15 +367,15 @@ export function WhatsAppDieselImport() {
 }
 
 function OutcomeStamp({ row, leftOut }: { row: Row; leftOut: boolean }) {
-  if (leftOut) return <StatusStamp status="dormant" label="Left out" />;
-  const o = OUTCOME[row.outcome];
+  const w = useWords(expenseWords).whatsapp;
+  if (leftOut) return <StatusStamp status="dormant" label={w.leftOutStamp} />;
   const checks = row.outcome === 'add' ? row.claim.issues.length : 0;
   return (
     <span className="flex items-center gap-1.5">
-      <StatusStamp status={o.family} label={o.label} provisional={row.outcome === 'add'} />
+      <StatusStamp status={OUTCOME_FAMILY[row.outcome]} label={w.outcome[row.outcome]} provisional={row.outcome === 'add'} />
       {checks > 0 ? (
-        <span className="text-[11px]" style={{ color: 'var(--status-attention)' }}>
-          {checks} to check
+        <span className="text-[12px]" style={{ color: 'var(--status-attention)' }}>
+          {w.toCheckCount(checks)}
         </span>
       ) : null}
     </span>
@@ -382,6 +393,8 @@ function ClaimDetail({
   override: Override;
   onOverride: (o: Override) => void;
 }) {
+  const t = useWords(expenseWords);
+  const w = t.whatsapp;
   const c = row.claim;
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -394,52 +407,52 @@ function ClaimDetail({
 
   return (
     <>
-      <SheetSection caption="What the driver sent">
-        {url ? <img src={url} alt="Slip photo from WhatsApp" className="max-h-[420px] w-full object-contain" /> : null}
+      <SheetSection caption={w.sent}>
+        {url ? <img src={url} alt={w.slipAlt} className="max-h-[420px] w-full object-contain" /> : null}
         {!url && demoText ? (
           <pre className="whitespace-pre-wrap p-2 font-mono text-[11px]" style={FIELD_STYLE}>
             {demoText}
           </pre>
         ) : null}
-        {!url && !demoText ? <Note>{c.attachments.length > 0 ? 'The photo is not in this export.' : 'No photo — words only.'}</Note> : null}
-        <p className="mt-2 text-[13px]" style={{ color: c.text ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-          {c.text || 'No words with it.'}
+        {!url && !demoText ? <Note>{c.attachments.length > 0 ? w.photoNotInFile : w.noPhoto}</Note> : null}
+        <p className="mt-2 text-[14px]" style={{ color: c.text ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+          {c.text || w.noWords}
         </p>
       </SheetSection>
 
-      <SheetSection caption="What Linck read">
+      <SheetSection caption={w.read}>
         <DetailGrid>
-          <Detail label="Vehicle">{reg(c.vehicleId) ?? '–'}</Detail>
-          <Detail label="Driver">{driverName(c.driverId) ?? `Not on the roster (${c.sender})`}</Detail>
-          <Detail label="Litres">{c.litres ?? '–'}</Detail>
-          <Detail label="Amount">{c.amount === null ? '–' : formatINR(c.amount)}</Detail>
-          <Detail label="₹ a litre">{c.ratePerLitre ?? '–'}</Detail>
-          <Detail label="Bunk">{c.vendor ?? '–'}</Detail>
-          <Detail label="Bill number">{c.billNumber ?? '–'}</Detail>
-          <Detail label="Slip read by">{slip?.engine ?? 'Not read'}</Detail>
+          <Detail label={t.detail.fields.vehicle!}>{reg(c.vehicleId) ?? '–'}</Detail>
+          <Detail label={w.driver}>{driverName(c.driverId) ?? w.notOnList(c.sender)}</Detail>
+          <Detail label={t.detail.fields.litres!}>{c.litres ?? '–'}</Detail>
+          <Detail label={t.detail.fields.amount!}>{c.amount === null ? '–' : formatINR(c.amount)}</Detail>
+          <Detail label={w.perLitre}>{c.ratePerLitre ?? '–'}</Detail>
+          <Detail label={w.bunk}>{c.vendor ?? '–'}</Detail>
+          <Detail label={t.detail.fields.billNumber!}>{c.billNumber ?? '–'}</Detail>
+          <Detail label={w.slip}>{slip ? w.slipRead : w.slipNotRead}</Detail>
         </DetailGrid>
         {c.filledFromSlip.length > 0 ? (
-          <p className="mt-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-            From the slip, not the message: {c.filledFromSlip.join(', ')}.
+          <p className="mt-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+            {w.fromSlip(c.filledFromSlip.map((f) => w.slipParts[f]))}
           </p>
         ) : null}
       </SheetSection>
 
       {row.reason || c.issues.length > 0 ? (
-        <SheetSection caption="To check">
-          <ul className="flex list-disc flex-col gap-1 pl-5 text-[13px]" style={{ color: 'var(--text-primary)' }}>
-            {row.reason ? <li>{row.reason}</li> : null}
-            {c.issues.map((i) => (
-              <li key={i}>{i}</li>
+        <SheetSection caption={w.toCheck}>
+          <ul className="flex list-disc flex-col gap-1 pl-5 text-[14px]" style={{ color: 'var(--text-primary)' }}>
+            {row.reason ? <li>{t.reason(row.reason)}</li> : null}
+            {c.issues.map((i, n) => (
+              <li key={`${i.code}-${n}`}>{t.notice(i)}</li>
             ))}
           </ul>
         </SheetSection>
       ) : null}
 
       {row.outcome === 'add' || row.outcome === 'needs_details' ? (
-        <SheetSection caption="Settle what the slip could not">
+        <SheetSection caption={w.fix}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Labelled label="Vehicle">
+            <Labelled label={t.detail.fields.vehicle!}>
               <select
                 value={override.vehicleId ?? c.vehicleId ?? ''}
                 onChange={(e) => onOverride({ vehicleId: e.target.value })}
@@ -454,14 +467,14 @@ function ClaimDetail({
                 ))}
               </select>
             </Labelled>
-            <Labelled label="Driver who filled">
+            <Labelled label={w.driver}>
               <select
                 value={override.driverId ?? c.driverId ?? ''}
                 onChange={(e) => onOverride({ driverId: e.target.value })}
                 className={FIELD_CLASS}
                 style={FIELD_STYLE}
               >
-                <option value="">Not known</option>
+                <option value="">{w.notKnown}</option>
                 {DRIVERS.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
@@ -469,7 +482,7 @@ function ClaimDetail({
                 ))}
               </select>
             </Labelled>
-            <Labelled label="Litres, as on the slip">
+            <Labelled label={t.detail.fields.litres!}>
               <input
                 inputMode="decimal"
                 value={override.litres ?? (c.litres === null ? '' : String(c.litres))}
@@ -478,7 +491,7 @@ function ClaimDetail({
                 style={FIELD_STYLE}
               />
             </Labelled>
-            <Labelled label="Amount ₹, as on the slip">
+            <Labelled label={t.detail.fields.amountRupees!}>
               <input
                 inputMode="decimal"
                 value={override.amount ?? (c.amount === null ? '' : String(c.amount))}
@@ -489,7 +502,7 @@ function ClaimDetail({
             </Labelled>
           </div>
           <div className="mt-3">
-            <Button onClick={() => onOverride({ leaveOut: !override.leaveOut })}>{override.leaveOut ? 'Put it back in' : 'Leave this one out'}</Button>
+            <Button onClick={() => onOverride({ leaveOut: !override.leaveOut })}>{override.leaveOut ? w.putBack : w.leaveOut}</Button>
           </div>
         </SheetSection>
       ) : null}
@@ -500,7 +513,7 @@ function ClaimDetail({
 function Labelled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
+      <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
         {label}
       </span>
       {children}

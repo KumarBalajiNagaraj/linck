@@ -127,35 +127,36 @@ describe('extractDieselClaims', () => {
   it('reads an unlabelled pair only because it makes a diesel price, and says so', () => {
     const c = claims[2]!;
     expect(c).toMatchObject({ litres: 150, amount: 14325, litresInferred: true, amountInferred: true, vehicleId: 'veh-003' });
-    expect(c.issues.join(' ')).toMatch(/unlabelled numbers/);
-    expect(c.issues).toContain('No bill photo posted with it.');
+    expect(c.issues).toContainEqual({ code: 'inferred', litres: 150, amount: 14325 });
+    expect(c.issues).toContainEqual({ code: 'no-photo' });
   });
 
   it('recognises the same slip posted again', () => {
     const repeat = claims[3]!;
     expect(repeat.duplicateOf).toBe(claims[0]!.key);
     expect(repeat.duplicateReason).toBe('same_photo');
-    expect(repeat.issues[0]).toMatch(/same photo as the message on line 3/);
+    expect(repeat.issues[0]).toEqual({ code: 'same-photo-as-line', line: 3 });
   });
 
   it('does not pick one of two vehicles that share the last four digits', () => {
     const c = claims[4]!;
     expect(c.vehicleId).toBeNull();
-    expect(c.issues.join(' ')).toMatch(/"1050" does not match exactly one vehicle/);
+    expect(c.issues).toContainEqual({ code: 'vehicle-unmatched', text: '1050' });
   });
 
   it('will not read a number as rupees when it makes no diesel price, and says why', () => {
     const c = claims[5]!;
     expect(c.litres).toBe(100);
     expect(c.amount).toBeNull();
-    expect(c.issues.join(' ')).toMatch(/30000 is written but was not read as rupees — with 100 litres it would be ₹300.00 a litre/);
+    // 30000 is written but not read as rupees: with 100 litres it would be ₹300 a litre.
+    expect(c.issues).toContainEqual({ code: 'no-amount', near: 30000, litres: 100 });
     expect(c.driverId).toBeNull();
   });
 
   it('flags a labelled price no bunk charges', () => {
     const [c] = extractDieselClaims(parseWhatsAppExport('06/08/26, 7:42 am - Murugan S: 1001 diesel 100 ltr rs 30000'), { fleet: FLEET, drivers: DRIVERS });
     expect(c!.ratePerLitre).toBe(300);
-    expect(c!.issues.join(' ')).toMatch(/outside ₹80–120/);
+    expect(c!.issues).toContainEqual({ code: 'rate-out-of-band', rate: 300, min: 80, max: 120 });
   });
 
   it('never invents a figure the message does not contain', () => {
@@ -201,7 +202,7 @@ describe('pairing a photo with its caption', () => {
     expect(paired).toHaveLength(1);
     expect(paired[0]).toMatchObject({ attachments: ['IMG-20260806-WA0012.jpg'], text: '1001 diesel 432 ltr Rs 41,277', mergedLines: [2] });
     const [claim] = extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS });
-    expect(claim!.issues).not.toContain('No bill photo posted with it.');
+    expect(claim!.issues).not.toContainEqual({ code: 'no-photo' });
   });
 
   it('joins figures sent just before the photo, when nothing follows it', () => {
@@ -261,7 +262,7 @@ describe('planDieselImport', () => {
     const plan = planDieselImport(claims, none);
     expect(plan[0]!.outcome).toBe('add');
     expect(plan.find((p) => p.claim.vehicleText === '1050')!.outcome).toBe('needs_details');
-    expect(plan.find((p) => p.claim.vehicleText === '1050')!.reason).toMatch(/the vehicle/);
+    expect(plan.find((p) => p.claim.vehicleText === '1050')!.reason).toEqual({ code: 'needs-details', vehicle: true, amount: false });
   });
 
   it('does not add the same photo twice', () => {
@@ -279,7 +280,7 @@ describe('planDieselImport', () => {
     ];
     const withSlip = claims.map((c, i) => (i === 2 ? { ...c, vendor: 'Sakthi Fuels', billNumber: 'BK / 48213' } : c));
     const plan = planDieselImport(withSlip, ledger);
-    expect(plan[1]).toMatchObject({ outcome: 'already_imported', reason: 'Already imported on 06-08-2026.' });
+    expect(plan[1]).toMatchObject({ outcome: 'already_imported', reason: { code: 'already-imported', on: '2026-08-06T04:00:00Z' } });
     expect(plan[2]!.outcome).toBe('already_in_linck');
   });
 
@@ -303,6 +304,6 @@ describe('a slip photo posted on its own', () => {
     expect(extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS })).toHaveLength(0);
     const [c] = extractDieselClaims(chat, { fleet: FLEET, drivers: DRIVERS, photoOnly: true });
     expect(c).toMatchObject({ litres: null, amount: null, noFill: false, driverId: 'drv-003' });
-    expect(c!.issues[0]).toMatch(/figures can only come from the slip/);
+    expect(c!.issues[0]).toEqual({ code: 'photo-only' });
   });
 });

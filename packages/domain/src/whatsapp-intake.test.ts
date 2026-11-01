@@ -39,7 +39,7 @@ describe('diesel slips from WhatsApp, end to end', () => {
 
   it('puts a message that disagrees with its slip in front of the fleet manager', () => {
     const p = byFile('IMG-20260806-WA0033.jpg');
-    expect(p.claim.issues[0]).toMatch(/message says ₹25440 but the slip reads ₹23887.5 — the slip's figure is used/);
+    expect(p.claim.issues[0]).toEqual({ code: 'slip-amount-differ', message: 25440, slip: 23887.5 });
     expect(p.claim.amount).toBe(23887.5);
   });
 
@@ -56,7 +56,7 @@ describe('diesel slips from WhatsApp, end to end', () => {
   it('holds a slip it cannot read, and says so', () => {
     const p = byFile('IMG-20260807-WA0040.jpg');
     expect(p.outcome).toBe('needs_details');
-    expect(p.claim.issues.join(' ')).toMatch(/could not be read/);
+    expect(p.claim.issues).toContainEqual({ code: 'slip-unreadable' });
     expect(p.claim.vendor).toBeNull();
   });
 
@@ -72,7 +72,7 @@ describe('diesel slips from WhatsApp, end to end', () => {
     expect(plan.filter((p) => p.outcome === 'add')).toHaveLength(8);
     // The number not on the roster still gets its bill; who sent it is for the fleet manager to settle.
     expect(byFile('IMG-20260807-WA0047.jpg')).toMatchObject({ outcome: 'add' });
-    expect(byFile('IMG-20260807-WA0047.jpg').claim.issues.join(' ')).toMatch(/not a driver on the roster/);
+    expect(byFile('IMG-20260807-WA0047.jpg').claim.issues).toContainEqual(expect.objectContaining({ code: 'not-a-driver' }));
     expect(plan.filter((p) => p.claim.attachments.length > 0)).toHaveLength(10);
   });
 });

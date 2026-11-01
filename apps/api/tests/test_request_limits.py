@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from conftest import TOO_BIG, Feed, Person, Tenant
 
-from app.core.limits import WHATSAPP_WEBHOOK_MAX_BYTES, body_cap
+from app.core.limits import WHATSAPP_IMPORT_MAX_BYTES, WHATSAPP_WEBHOOK_MAX_BYTES, body_cap
 from app.core.settings import Settings, get_settings
 from app.core.storage import MULTIPART_MARGIN, UploadSizeLimit
 
@@ -82,6 +82,7 @@ async def test_every_route_refuses_a_body_over_its_cap_before_reading_it(api) ->
     caps = {
         "/expenses/attachments": settings.file_max_bytes + MULTIPART_MARGIN,
         "/webhooks/whatsapp": WHATSAPP_WEBHOOK_MAX_BYTES,
+        "/whatsapp/imports": WHATSAPP_IMPORT_MAX_BYTES,
     }
     routes = app.openapi()["paths"]
     assert {"/expenses", "/auth/refresh", *caps} <= routes.keys(), "this is not the app's route table"
@@ -130,3 +131,18 @@ def test_every_path_under_the_upload_cap_keeps_it() -> None:
     settings = get_settings()
     for path in paths:
         assert body_cap(path, settings) >= settings.file_max_bytes + MULTIPART_MARGIN, path
+
+
+async def test_a_full_whatsapp_import_is_not_refused_for_size(api) -> None:  # type: ignore[no-untyped-def]
+    # A 500-claim import measures about 0.9 MB in English and more in Tamil
+    # (three bytes a letter), so it has its own cap above the general one.
+    assert body_cap("/whatsapp/imports") == WHATSAPP_IMPORT_MAX_BYTES > get_settings().max_body_bytes
+    size = get_settings().max_body_bytes + 512 * 1024
+    r = await api().post("/whatsapp/imports", content=json_of(size), headers=JSON)
+    # Signed out, so it is refused, but for who is asking, not for its size.
+    assert r.status_code != 413
+    over = WHATSAPP_IMPORT_MAX_BYTES + 1
+    feed = Feed(json_of(over))
+    r = await api().post("/whatsapp/imports", content=feed, headers={**JSON, "Content-Length": str(over)})
+    assert r.status_code == 413 and r.json() == TOO_BIG
+    assert feed.taken == 0

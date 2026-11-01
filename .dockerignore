@@ -1,0 +1,17 @@
+# The API image builds from the repository root (docker build -f
+# apps/api/Dockerfile ., and App Platform's source_dir: /), so this file has to
+# live here, at the root of the build context. Everything is left out, then
+# only what apps/api/Dockerfile copies is let back in: a .env file, the web app
+# and node_modules never reach the builder.
+*
+!apps/api/pyproject.toml
+!apps/api/uv.lock
+!apps/api/alembic.ini
+!apps/api/alembic/
+!apps/api/app/
+!apps/api/scripts/bootstrap_roles.py
+
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*

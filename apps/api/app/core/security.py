@@ -47,7 +47,7 @@ from joserfc.jwk import KeySet
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 
 settings = get_settings()
 
@@ -88,6 +88,24 @@ SESSION_COOKIE_SALT = "linck.session.cookie"
 _session_signer = URLSafeTimedSerializer(settings.session_secret, salt=SESSION_COOKIE_SALT)
 _refresh_signer = URLSafeTimedSerializer(settings.session_secret, salt="linck.refresh")
 _flow_signer = URLSafeTimedSerializer(settings.session_secret, salt="linck.oauth-flow")
+
+
+def session_secret_problems(config: Settings) -> list[str]:
+    """Why the signing secret is unsafe to serve with, if it is. Checked at boot.
+
+    An empty secret signs as happily as a real one, so a deploy where nobody
+    pasted it would mint cookies anyone can forge, with nothing failing.
+    """
+    if config.environment == "local":
+        return []
+    secret = config.session_secret
+    if len(secret) < 32 or secret == Settings.model_fields["session_secret"].default:
+        return [
+            "LINCK_SESSION_SECRET is empty, shorter than 32 characters or the development default, so "
+            "session cookies could be forged. Generate one with: "
+            "python -c 'import secrets; print(secrets.token_urlsafe(48))'"
+        ]
+    return []
 
 
 def _cookie_kwargs() -> dict[str, Any]:

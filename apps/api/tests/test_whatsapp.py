@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from conftest import TOO_BIG, Feed, Tenant
+from conftest import TOO_BIG, FakeS3, Feed, Person, Tenant
 from sqlalchemy import select
 
 from app.api import whatsapp as intake
@@ -117,7 +117,8 @@ def configured(monkeypatch: pytest.MonkeyPatch, tenant_a: Tenant, tmp_path) -> N
     monkeypatch.setattr(settings, "whatsapp_organization_id", str(tenant_a.org_id))
     monkeypatch.setattr(settings, "whatsapp_phone_number_id", PHONE_NUMBER_ID)
     monkeypatch.setattr(settings, "whatsapp_access_token", "token")
-    monkeypatch.setattr(settings, "whatsapp_media_dir", str(tmp_path))
+    # Photos go through the file store, as bill scans do: here a directory of this test's own.
+    monkeypatch.setattr(settings, "file_storage_dir", str(tmp_path))
 
 
 async def test_a_retried_delivery_is_stored_once(
@@ -170,17 +171,103 @@ async def test_the_photo_is_fetched_kept_by_hash_and_acknowledged(
     await intake.fetch_media(row_id, message, client)
 
     digest = hashlib.sha256(jpeg).hexdigest()
-    assert (tmp_path / f"{digest}.jpg").read_bytes() == jpeg
+    # Under the number's tenant, named by its hash, exactly as an uploaded scan is.
+    assert (tmp_path / str(tenant_a.org_id) / digest).read_bytes() == jpeg
     async with tenant_session(tenant_a.org_id) as db:
         row = await db.get(WhatsAppMessage, row_id)
         assert (
             row is not None
             and row.media_sha256 == digest
             and row.media_bytes == len(jpeg)
+            and row.media_mime == "image/jpeg"
             and row.media_error is None
         )
     assert ("POST", f"/v21.0/{PHONE_NUMBER_ID}/messages") in calls
     await client.aclose()
+
+
+def meta_serving(content: bytes, mime: str, calls: list[tuple[str, str]]) -> WhatsAppClient:
+    """A Graph API that hands out `content` for any media id, labelled `mime`, and takes reactions."""
+
+    def graph(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.host == "lookaside.example":
+            return httpx.Response(200, content=content)
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": [{"id": "wamid.ack"}]})
+        return httpx.Response(200, json={"url": "https://lookaside.example/media", "mime_type": mime})
+
+    return WhatsAppClient(
+        "https://graph.example/v21.0",
+        "token",
+        PHONE_NUMBER_ID,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(graph)),
+    )
+
+
+async def fetched(tenant: Tenant, client: WhatsAppClient, **media: str) -> uuid.UUID:
+    """One message from a driver, stored, with its media fetched through `client`."""
+    body = {**SLIP_PHOTO["image"], **media}
+    kind = "document" if "filename" in media else "image"
+    [message] = messages_from_webhook(
+        payload({**SLIP_PHOTO, "id": f"wamid.{uuid.uuid4().hex}", "type": kind, kind: body})
+    )
+    [(row_id, _)] = await intake.store_messages(str(tenant.org_id), [message])
+    await intake.fetch_media(row_id, message, client)
+    await client.aclose()
+    return row_id
+
+
+async def test_the_photo_is_served_back_from_the_bucket_inside_its_tenant_only(  # type: ignore[no-untyped-def]
+    configured: None,
+    bucket: FakeS3,
+    tenant_a: Tenant,
+    tenant_b: Tenant,
+    make_person,
+    api,
+) -> None:
+    jpeg = b"\xff\xd8\xff another slip, this time in the bucket"
+    row_id = await fetched(tenant_a, meta_serving(jpeg, "image/jpeg", []))
+    digest = hashlib.sha256(jpeg).hexdigest()
+    assert bucket.keys() == {f"{tenant_a.org_id}/{digest}"}
+
+    manager: Person = make_person(tenant_a, "Fleet Manager", [intake.IMPORT_PERMISSION])
+    [row] = [r for r in (await api(manager).get("/whatsapp/inbox")).json() if r["id"] == str(row_id)]
+    got = await api(manager).get(row["media_url"])
+    assert got.status_code == 200 and got.content == jpeg
+    assert got.headers["content-type"] == "image/jpeg"
+    assert got.headers["x-content-type-options"] == "nosniff"
+    assert got.headers["cache-control"] == "private, no-cache"
+
+    # The same key in another tenant: the message is not even there to name.
+    outsider: Person = make_person(tenant_b, "Fleet Manager", [intake.IMPORT_PERMISSION])
+    assert (await api(outsider).get(row["media_url"])).status_code == 404
+
+
+async def test_a_document_that_is_not_a_photo_or_a_pdf_is_not_kept(
+    configured: None, tenant_a: Tenant, tmp_path
+) -> None:
+    """Meta labels a document with what the sender's phone said it was. The bytes decide."""
+    calls: list[tuple[str, str]] = []
+    page = b"<html><script>fetch('/api/expenses')</script></html>"
+    row_id = await fetched(tenant_a, meta_serving(page, "image/jpeg", calls), filename="slip.jpg")
+    async with tenant_session(tenant_a.org_id) as db:
+        row = await db.get(WhatsAppMessage, row_id)
+        assert row is not None and row.media_sha256 is None and row.media_error == "not kept: wrong-file"
+    assert not any(p.is_file() for p in tmp_path.rglob("*"))
+    # No thumbs-up for a photo that was not kept.
+    assert not any(path.endswith("/messages") for _, path in calls)
+
+
+async def test_a_bucket_that_fails_is_recorded_on_the_message(
+    configured: None, bucket: FakeS3, tenant_a: Tenant
+) -> None:
+    bucket.refuse = True
+    row_id = await fetched(tenant_a, meta_serving(b"\xff\xd8\xff slip", "image/jpeg", []))
+    async with tenant_session(tenant_a.org_id) as db:
+        row = await db.get(WhatsAppMessage, row_id)
+        assert row is not None and row.media_sha256 is None
+        assert row.media_error == "not stored: the file store failed"
 
 
 async def test_a_failed_download_is_recorded_not_lost(configured: None, tenant_a: Tenant) -> None:

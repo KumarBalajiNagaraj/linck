@@ -11,6 +11,9 @@
 -- Applied by docker-entrypoint-initdb.d on first boot. For a Homebrew Postgres
 -- used in local development, run this by hand once:
 --   psql -d linck_dev -f apps/api/scripts/init-roles.sql
+--
+-- This needs a superuser. On a managed cluster, whose admin is not one, use
+-- scripts/bootstrap_roles.py instead: the same roles and grants (docs/DEPLOY.md).
 
 DO $$
 BEGIN

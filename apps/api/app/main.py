@@ -29,8 +29,9 @@ from app.api.whatsapp import webhook_router as whatsapp_webhook_router
 from app.api.whatsapp_imports import router as whatsapp_imports_router
 from app.core.db import check_rls_posture, engine
 from app.core.limits import BodySizeLimit
+from app.core.security import session_secret_problems
 from app.core.settings import get_settings
-from app.core.storage import UploadSizeLimit
+from app.core.storage import UploadSizeLimit, file_store_problems
 
 log = logging.getLogger("linck.api")
 
@@ -60,6 +61,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.environment != "local":
             raise RuntimeError("refusing to start: app.api.auth is missing, so nobody can sign in")
         log.warning("app.api.auth not found — starting without sign-in routes (local only)")
+
+    # A forgeable session cookie, or uploads kept on a disk the next deploy
+    # wipes: both look fine until it is too late, so neither is allowed to boot.
+    unsafe = [*session_secret_problems(settings), *file_store_problems(settings)]
+    for problem in unsafe:
+        log.error("configuration: %s", problem)
+    if unsafe:
+        raise RuntimeError(f"refusing to start: {len(unsafe)} configuration problem(s), logged above")
 
     log.info("linck api ready (environment=%s)", settings.environment)
     yield

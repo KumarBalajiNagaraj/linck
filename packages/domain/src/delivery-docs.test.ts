@@ -3,13 +3,16 @@ import {
   classifyDeliveryDocument,
   crossCheckDeliveryDocuments,
   extractDeliveryDocument,
+  materialParts,
   normalizeAmount,
   normalizeDate,
   normalizeMaterial,
   normalizeVehicle,
+  paperName,
   UNCLEAR,
   type ComparedField,
   type CrossCheckResult,
+  type FieldFinding,
 } from './delivery-docs.js';
 
 /*
@@ -75,7 +78,10 @@ Net Wt 50.75 MT`;
 const CLEAN_MEMO = MEMO.replace('Supplier: JSR Blue Metal', 'Supplier: New Raj Agencies');
 
 const status = (r: CrossCheckResult, field: ComparedField) => r.comparisons.find((c) => c.field === field)!.status;
+const finding = (r: CrossCheckResult, field: ComparedField) => r.comparisons.find((c) => c.field === field)!.finding;
 const check = (...texts: string[]) => crossCheckDeliveryDocuments(texts.map((text, i) => ({ id: `p${i}`, text })));
+/** The values a finding quotes, as compared, in paper order. */
+const quoted = (f: FieldFinding | null | undefined) => (f && 'values' in f ? f.values.map((v) => v.value.normalized) : []);
 
 describe('classification', () => {
   it('tells the three papers apart by their own words, not their layout', () => {
@@ -86,17 +92,24 @@ describe('classification', () => {
   });
 
   it('refuses to guess when the text says nothing', () => {
-    expect(classifyDeliveryDocument('Thank you for your business').type).toBe('unknown');
+    const blank = classifyDeliveryDocument('Thank you for your business');
+    expect(blank.type).toBe('unknown');
+    expect(blank.note).toEqual({ code: 'no-delivery-words' });
+    expect(classifyDeliveryDocument(DC).note).toBeNull();
   });
 
   it('needs more than one stray word, and knows other papers when it sees them', () => {
     // GSTIN alone once made a tax invoice a DC "at 100%".
     const invoice = classifyDeliveryDocument('ANNAI TYRES\nGSTIN: 33AAACA1234B1Z5\nTAX INVOICE\nTyre 10.00-20');
     expect(invoice.type).toBe('unknown');
-    expect(invoice.note).toMatch(/tax invoice/);
-    expect(classifyDeliveryDocument('WEIGHMENT SLIP\nGross Wt: 68.10\nTare Wt: 17.35').type).toBe('unknown');
+    expect(invoice.note).toEqual({ code: 'other-paper', paper: 'tax-invoice' });
+    const slip = classifyDeliveryDocument('WEIGHMENT SLIP\nGross Wt: 68.10\nTare Wt: 17.35');
+    expect(slip.type).toBe('unknown');
+    expect(slip.note).toEqual({ code: 'other-paper', paper: 'weighbridge-slip' });
     expect(classifyDeliveryDocument('SRI MURUGAN FUELS\nCASH MEMO\nHSD 120 L').type).toBe('unknown');
-    expect(classifyDeliveryDocument('Printed by GSTIN portal').type).toBe('unknown');
+    const stray = classifyDeliveryDocument('Printed by GSTIN portal');
+    expect(stray.type).toBe('unknown');
+    expect(stray.note).toEqual({ code: 'weak', type: 'delivery_challan', evidence: ['GSTIN'] });
   });
 });
 
@@ -111,7 +124,9 @@ describe('normalization', () => {
     const v = normalizeVehicle('TN 22 E? 98');
     expect(v.normalized).toBe(UNCLEAR);
     expect(v.raw).toBe('TN 22 E? 98');
+    expect(v.note).toEqual({ code: 'marked-unreadable' });
     expect(normalizeDate('3?.3.26').normalized).toBe(UNCLEAR);
+    expect(normalizeVehicle('TN 22 EH 9857 / TN 22 EH 9587').note).toEqual({ code: 'two-registrations', found: ['TN22EH9857', 'TN22EH9587'] });
   });
 
   it('reads day-first dates in the forms Indian paper uses', () => {
@@ -119,6 +134,7 @@ describe('normalization', () => {
     expect(normalizeDate('13-03-2026 09:47 am').normalized).toBe('2026-03-13');
     expect(normalizeDate('13 Mar 2026').normalized).toBe('2026-03-13');
     expect(normalizeDate('31.02.26').normalized).toBe(UNCLEAR);
+    expect(normalizeDate('31.02.26').note).toEqual({ code: 'no-such-date' });
   });
 
   it('reads full month names, and refuses a year with a digit missing', () => {
@@ -142,20 +158,25 @@ describe('normalization', () => {
   it('says what it assumed for a bare number, and takes the paper unit as written', () => {
     const bare = normalizeAmount('50');
     expect(bare.unit).toBe('MT');
-    expect(bare.note).toMatch(/No unit written/);
+    expect(bare.note).toEqual({ code: 'read-as-tonnes' });
+    expect(normalizeAmount('50750').note).toEqual({ code: 'read-as-kg', figure: 50750 });
     expect(normalizeAmount('50750', { paperUnit: 'kg' }).amount).toBe(50.75);
     expect(normalizeAmount('50750', { labelUnit: 'kg' }).amount).toBe(50.75);
+    expect(normalizeAmount('50750', { labelUnit: 'kg' }).note).toEqual({ code: 'written-in-kg' });
     expect(normalizeAmount('50750 (Kg)').amount).toBe(50.75);
-    expect(normalizeAmount('50.75', { paperUnit: 'MT' }).note).toMatch(/as the paper's other weights are/);
+    expect(normalizeAmount('50.75', { paperUnit: 'MT' }).note).toEqual({ code: 'unit-from-paper', unit: 'MT' });
   });
 
   it('marks a garbled or impossible weight UNCLEAR rather than reading part of it', () => {
     expect(normalizeAmount('50..75 MT').normalized).toBe(UNCLEAR);
     expect(normalizeAmount('50..75 MT').raw).toBe('50..75 MT');
-    expect(normalizeAmount('68.10 17.35 50.75').normalized).toBe(UNCLEAR);
+    expect(normalizeAmount('50..75 MT').note).toEqual({ code: 'bad-number', token: '50..75' });
+    expect(normalizeAmount('68.10 17.35 50.75').note).toEqual({ code: 'many-numbers' });
     expect(normalizeAmount('50750 MT').normalized).toBe(UNCLEAR);
-    expect(normalizeAmount('subject to 2% variation').normalized).toBe(UNCLEAR);
+    expect(normalizeAmount('50750 MT').note).toEqual({ code: 'not-a-load', tonnes: 50750 });
+    expect(normalizeAmount('subject to 2% variation').note).toEqual({ code: 'percentage' });
     expect(normalizeAmount('1 Load').normalized).toBe(UNCLEAR);
+    expect(normalizeAmount('1 Load').note).toEqual({ code: 'not-a-unit', word: 'Load' });
   });
 
   it('treats one product under three trade names as one product', () => {
@@ -163,11 +184,16 @@ describe('normalization', () => {
     expect(normalizeMaterial('VSI 12 MM').normalized).toBe('AGGREGATE 12MM');
     expect(normalizeMaterial('12mm blue metal').normalized).toBe('AGGREGATE 12MM');
     expect(normalizeMaterial('M-Sand').normalized).toBe('M-SAND');
+    expect(materialParts('AGGREGATE 12MM')).toEqual({ kind: 'AGGREGATE', name: 'AGGREGATE', size: '12MM' });
+    expect(materialParts('RIVER SAND')).toEqual({ kind: 'RIVER SAND', name: 'RIVER SAND', size: null });
   });
 
   it('does not make aggregate out of a size alone', () => {
     expect(normalizeMaterial('12 MM TMT Bar').normalized).toBe('TMT BAR 12MM');
+    expect(normalizeMaterial('12 MM TMT Bar').note).toEqual({ code: 'material-unknown' });
+    expect(materialParts('TMT BAR 12MM')).toEqual({ kind: null, name: 'TMT BAR', size: '12MM' });
     expect(normalizeMaterial('20 MM').normalized).toBe('20MM');
+    expect(normalizeMaterial('20 MM').note).toEqual({ code: 'size-only' });
   });
 });
 
@@ -192,15 +218,24 @@ describe('extraction', () => {
   });
 
   it('checks net = gross − tare on the paper itself, to the kilogram', () => {
-    expect(extractDeliveryDocument('dc', DC).netCheck.status).toBe('OK');
+    const dc = extractDeliveryDocument('dc', DC).netCheck;
+    expect(dc.status).toBe('OK');
+    expect(dc.finding).toEqual({ code: 'adds-up', grossKg: 68100, tareKg: 17350, netKg: 50750 });
     const wrong = extractDeliveryDocument('dc', DC.replace('Net Qty: 50.75 MT', 'Net Qty: 52.75 MT'));
     expect(wrong.netCheck.status).toBe('MISMATCH');
     expect(wrong.netCheck.calculated).toBe(50.75);
-    // 40 kg is not "as written".
+    // 40 kg is not "as written": the paper says 40 kg less than gross − tare.
     const close = extractDeliveryDocument('dc', DC.replace('Net Qty: 50.75 MT', 'Net Qty: 50.71 MT'));
     expect(close.netCheck.status).toBe('MISMATCH');
     expect(close.netCheck.differenceKg).toBe(-40);
-    expect(close.netCheck.explanation).toMatch(/40 kg less/);
+    expect(close.netCheck.finding).toEqual({
+      code: 'does-not-add-up',
+      grossKg: 68100,
+      tareKg: 17350,
+      calculatedKg: 50750,
+      statedKg: 50710,
+      differenceKg: -40,
+    });
     // No floating-point doubt: 85.45 − 17.35 is 68.10 exactly.
     const round = extractDeliveryDocument('dc', DC.replace('Full Qty: 68.10 MT', 'Full Qty: 85.45 MT').replace('Net Qty: 50.75 MT', 'Net Qty: 68.10 MT'));
     expect(round.netCheck.status).toBe('OK');
@@ -210,8 +245,10 @@ describe('extraction', () => {
     const r = extractDeliveryDocument('rcv', RECEIVED);
     expect(r.fields.tareWeight).toBeUndefined();
     expect(r.netCheck.status).toBe('NOT_POSSIBLE');
+    expect(r.netCheck.finding).toEqual({ code: 'no-gross-or-tare', gross: 'read', tare: 'absent' });
     // "Load Wt 50" under "Net Wt 50.75" is a misread or a mis-write; say so.
     expect(r.netCheck.implausible).toBe(true);
+    expect(r.netCheck.conflicts).toEqual([{ code: 'net-above-gross', netKg: 50750, grossKg: 50000 }]);
     // "Customer Signature" is a signature box, not a party called Signature.
     expect(r.fields.party?.raw).toBe('GMS - Muthukadu');
     expect(r.fields.documentNumber?.normalized).toBe('013');
@@ -220,7 +257,7 @@ describe('extraction', () => {
   it('reads a bare number in the unit the same paper weighs in', () => {
     const r = extractDeliveryDocument('rcv', RECEIVED);
     expect(r.fields.grossWeight?.unit).toBe('MT');
-    expect(r.fields.grossWeight?.note).toMatch(/No unit written/);
+    expect(r.fields.grossWeight?.note).toEqual({ code: 'unit-from-paper', unit: 'MT' });
   });
 
   it('keeps kg as kg for a bare figure, and never takes a unit from the quantity', () => {
@@ -317,25 +354,30 @@ describe('cross-check', () => {
     expect(status(r, 'quantity')).toBe('MATCH');
     // The memo names JSR Blue Metal as its supplier; neither other paper was issued by them.
     expect(status(r, 'party')).toBe('MISMATCH');
-    expect(r.comparisons.find((c) => c.field === 'party')!.explanation).toMatch(/JSR Blue Metal/);
+    expect(finding(r, 'party')).toMatchObject({ code: 'party-not-issuer', breaks: [{ docId: 'p1', party: 'JSR Blue Metal' }] });
     expect(r.overall).toBe('PARTIALLY MATCHED');
-    expect(r.explanations.some((e) => /Load Wt|net .* more than the gross/i.test(e))).toBe(true);
+    // "Load Wt 50" under "Net Wt 50.75 MT": the transporter's net is more than its gross.
+    expect(r.issues).toContainEqual(
+      expect.objectContaining({ code: 'net', docId: 'p2', conflicts: [{ code: 'net-above-gross', netKg: 50750, grossKg: 50000 }] }),
+    );
   });
 
   it('matches cleanly when everything agrees', () => {
     const r = check(DC, CLEAN_MEMO, CLEAN_RECEIVED);
-    expect(r.explanations).toEqual([]);
+    expect(r.issues).toEqual([]);
     expect(r.overall).toBe('MATCHED');
     expect(r.mismatchCount).toBe(0);
     expect(status(r, 'party')).toBe('MATCH');
+    expect(finding(r, 'party')?.code).toBe('party-linked');
   });
 
   it('calls a different truck a mismatch and says why, even with only a full stop between labels', () => {
     const r = check(DC, MEMO.replace('Supplier: JSR Blue Metal\nLorry No. TN 22 EH 9857', 'Supplier: JSR Blue Metal Lorry No. TN 22 EH 9587'));
     expect(status(r, 'vehicle')).toBe('MISMATCH');
     expect(r.overall).toBe('MISMATCHED');
-    expect(r.explanations[0]).toMatch(/TN22EH9587/);
-    expect(r.explanations[0]).toMatch(/TN22EH9857/);
+    const first = r.issues[0];
+    expect(first).toMatchObject({ code: 'field', field: 'vehicle', status: 'MISMATCH', finding: { code: 'differs' } });
+    expect(quoted(first?.code === 'field' ? first.finding : null)).toEqual(['TN22EH9857', 'TN22EH9587']);
   });
 
   it('calls a net weight off by more than the tolerance a mismatch', () => {
@@ -349,26 +391,37 @@ describe('cross-check', () => {
     expect(status(r, 'netWeight')).toBe('MISMATCH');
     expect(status(r, 'quantity')).toBe('MISMATCH');
     expect(r.overall).toBe('MISMATCHED');
-    expect(r.explanations.filter((e) => /30 MT/.test(e))).toHaveLength(1);
+    expect(r.issues.filter((i) => i.code === 'field' && quoted(i.finding).includes('30 MT'))).toHaveLength(1);
   });
 
   it('allows one weighbridge step between papers, to the kilogram', () => {
     const r = check(DC.replace('Full Qty: 68.10 MT', 'Full Qty: 85.45 MT').replace('Net Qty: 50.75 MT', 'Net Qty: 68.10 MT'), CLEAN_RECEIVED.replace('Load Wt 68.10', 'Load Wt 85.50').replace('Net Wt 50.75 MT', 'Net Wt 68.15 MT'));
     expect(status(r, 'netWeight')).toBe('MATCH');
-    expect(r.comparisons.find((c) => c.field === 'netWeight')!.explanation).toMatch(/50 kg apart/);
+    expect(finding(r, 'netWeight')).toEqual({
+      code: 'close-enough',
+      pairs: [{ docIds: ['p0', 'p1'], note: { code: 'kg-apart', kg: 50 } }],
+      allowance: { code: 'kg', kg: 50 },
+    });
   });
 
   it('reports an unreadable value as UNCLEAR, not as a match', () => {
     const r = check(DC, RECEIVED.replace('Vehicle No. TN22EH9857', 'Vehicle No. [illegible]'));
     expect(status(r, 'vehicle')).toBe('UNCLEAR');
+    expect(finding(r, 'vehicle')).toEqual({ code: 'unreadable', docIds: ['p1'], note: { code: 'marked-unreadable' } });
     expect(r.overall).toBe('PARTIALLY MATCHED');
   });
 
   it('compares units with CFT at 100 CFT a unit, and does not pretend to weigh a volume', () => {
     const units = check('Delivery Challan\nTruck #: TN 22 EH 9857\nQuantity: 2 Units', 'Delivery Memo\nLorry No. TN 22 EH 9857\nQuantity Recd: 200 CFT');
     expect(status(units, 'quantity')).toBe('MATCH');
+    expect(finding(units, 'quantity')).toEqual({
+      code: 'close-enough',
+      pairs: [{ docIds: ['p0', 'p1'], note: { code: 'same-volume', cft: 200 } }],
+      allowance: null,
+    });
     const mixed = check('Delivery Challan\nTruck #: TN 22 EH 9857\nQuantity: 2 Units', 'Delivery Memo\nLorry No. TN 22 EH 9857\nQuantity Recd: 9.9 MT');
     expect(status(mixed, 'quantity')).toBe('UNCLEAR');
+    expect(finding(mixed, 'quantity')?.code).toBe('weight-and-volume');
     expect(mixed.overall).not.toBe('MISMATCHED');
   });
 
@@ -377,11 +430,13 @@ describe('cross-check', () => {
     expect(status(bar, 'material')).toBe('MISMATCH');
     const sizeless = check(DC.replace('Item: VSI 12 MM', 'Item: Blue Metal'), CLEAN_MEMO);
     expect(status(sizeless, 'material')).toBe('MISSING');
+    expect(finding(sizeless, 'material')).toMatchObject({ code: 'size-on-one-paper', size: '12MM' });
   });
 
   it('allows a day either side for a load that crosses midnight, and no more', () => {
     const nextDay = check(DC, CLEAN_MEMO.replace('Date: 13.3.26', 'Date: 14.3.26'), CLEAN_RECEIVED);
     expect(status(nextDay, 'date')).toBe('MATCH');
+    expect(finding(nextDay, 'date')).toMatchObject({ code: 'close-enough', allowance: { code: 'days', days: 1 } });
     expect(nextDay.overall).toBe('MATCHED');
     const week = check(DC, CLEAN_MEMO.replace('Date: 13.3.26', 'Date: 20.3.26'), CLEAN_RECEIVED);
     expect(status(week, 'date')).toBe('MISMATCH');
@@ -403,7 +458,9 @@ describe('cross-check', () => {
   it('never calls papers MATCHED when nothing was compared', () => {
     const titlesOnly = check('DELIVERY CHALLAN\nOM SAKTHI ENTERPRISES', 'DELIVERY MEMO\nGMS ELEGANT BUILDERS');
     expect(titlesOnly.overall).toBe('PARTIALLY MATCHED');
-    expect(titlesOnly.explanations.length).toBeGreaterThan(0);
+    expect(titlesOnly.issues.length).toBeGreaterThan(0);
+    expect(titlesOnly.issues).toContainEqual({ code: 'field', field: 'vehicle', status: 'MISSING', finding: { code: 'on-no-paper' } });
+    expect(titlesOnly.issues).toContainEqual({ code: 'no-weights-anywhere' });
     const oneField = check('Delivery Challan\nTruck #: TN 22 EH 9857', 'Delivery Memo\nLorry No. TN 22 EH 9857');
     expect(oneField.overall).toBe('PARTIALLY MATCHED');
   });
@@ -412,15 +469,19 @@ describe('cross-check', () => {
     const twoOnly = check(DC, CLEAN_MEMO);
     expect(twoOnly.missingTypes).toEqual(['material_received']);
     expect(twoOnly.overall).toBe('PARTIALLY MATCHED');
+    expect(twoOnly.issues).toContainEqual({ code: 'papers-missing', types: ['material_received'] });
     const twice = check(DC, DC, CLEAN_MEMO, CLEAN_RECEIVED);
-    expect(twice.explanations.some((e) => /2 papers read as Delivery Challan\/DC/.test(e))).toBe(true);
+    expect(twice.issues).toContainEqual({ code: 'same-type-twice', type: 'delivery_challan', docIds: ['p0', 'p1'] });
     const photo = crossCheckDeliveryDocuments([
       { id: 'a', text: DC },
       { id: 'b', text: CLEAN_MEMO },
       { id: 'c', text: '', name: 'IMG_0412.jpg' },
     ]);
     expect(photo.overall).toBe('PARTIALLY MATCHED');
-    expect(photo.explanations.some((e) => /IMG_0412\.jpg/.test(e))).toBe(true);
+    expect(photo.issues).toContainEqual({ code: 'no-text', docId: 'c' });
+    expect(paperName(photo.documents[2]!, photo.documents)).toEqual({ code: 'name', name: 'IMG_0412.jpg' });
+    const one = check(DC);
+    expect(one.issues).toContainEqual({ code: 'too-few-papers' });
   });
 
   it('names papers by what they are, and by name where two share a type', () => {
@@ -429,8 +490,20 @@ describe('cross-check', () => {
       { id: '2', name: 'image.jpg', text: MEMO.replace('TN 22 EH 9857', 'TN 22 EH 9587') },
     ]);
     expect(r.documents.map((d) => d.type)).toEqual(['delivery_challan', 'delivery_memo']);
-    expect(r.explanations[0]).toMatch(/Delivery Challan\/DC says/);
-    expect(r.explanations[0]).toMatch(/Delivery Memo says/);
+    // The finding points at each paper by id; the paper's name says what it is.
+    expect(r.issues[0]).toMatchObject({ code: 'field', field: 'vehicle', finding: { code: 'differs', values: [{ docId: '1' }, { docId: '2' }] } });
+    expect(r.documents.map((d) => paperName(d, r.documents))).toEqual([
+      { code: 'type', type: 'delivery_challan' },
+      { code: 'type', type: 'delivery_memo' },
+    ]);
+    const twice = check(DC, DC, CLEAN_MEMO);
+    expect(paperName(twice.documents[1]!, twice.documents)).toEqual({ code: 'type-and-name', type: 'delivery_challan', name: 'p1' });
+    const stray = crossCheckDeliveryDocuments([
+      { id: 'x', name: 'scan.txt', text: 'Thank you for your business' },
+      { id: 'y', text: DC },
+    ]);
+    expect(paperName(stray.documents[0]!, stray.documents)).toEqual({ code: 'name', name: 'scan.txt' });
+    expect(stray.issues).toContainEqual({ code: 'unknown-paper', docId: 'x', note: { code: 'no-delivery-words' } });
   });
 
   it('counts each disagreement once for the stamp', () => {

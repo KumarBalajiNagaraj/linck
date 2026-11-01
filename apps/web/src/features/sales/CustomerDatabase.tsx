@@ -1,15 +1,8 @@
-import { useMemo } from 'react';
-import {
-  CUSTOMERS_MASTER,
-  invoicesForSite,
-  isInvoiceOverdue,
-  purchaseOrdersForSite,
-  SITES,
-  tripsForSite,
-  type Customer,
-} from '@linck/mock';
+import { useMemo, useState } from 'react';
+import { can } from '@linck/domain';
 import {
   AsOfStamp,
+  Button,
   Chip,
   DataTable,
   EmptyState,
@@ -23,6 +16,8 @@ import {
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { useAddCustomer, useChangeCustomer, useCustomerRows, useCustomers, type CustomerRow, type CustomerRows } from './customers.js';
+import { CustomerSheet, useCustomerProblem } from './CustomerSheet.js';
 import { customerWords, salesWords, type CustomerText, type SalesText } from './words.js';
 
 /**
@@ -38,47 +33,44 @@ import { customerWords, salesWords, type CustomerText, type SalesText } from './
  * invoices and orders the dispatch board, ledger and order list show at that
  * scope — so a customer counted on the command board is always findable here.
  * "Our site" is the customer's usual plant, a fact about them, not a filter.
+ *
+ * LIVE (VITE_API_URL set) the customers and their orders are the API's
+ * (customers.ts), and the sales desk adds and changes customers here. Loads
+ * and invoices are not on the API yet, so live a site's list is the
+ * customers served from it or with an order there, and what they owe is left
+ * out rather than shown from the sample invoices.
  */
 
 type View = 'all' | 'overdue' | 'open_orders';
 const VIEWS: readonly View[] = ['all', 'overdue', 'open_orders'];
 
-interface CustomerRow {
-  customer: Customer;
-  outstanding: number;
-  overdueCount: number;
-  openOrders: number;
-  siteName: string;
-}
+/** Columns read off invoices: shown only where invoices are known. */
+const DUE_COLUMNS = ['outstanding', 'overdue'];
 
 export function CustomerDatabase() {
-  const { siteScope, density } = useApp();
+  const { persona, siteScope, density } = useApp();
   const [view, setView] = useViewParam(VIEWS, 'all');
   const t = useWords(customerWords);
   const s = useWords(salesWords);
-  const columns = useMemo(() => customerColumns(t, s), [t, s]);
+  const list = useCustomerRows(siteScope);
+  const { rows, dues, orderCounts } = list;
+  const customers = useCustomers().rows;
+  const add = useAddCustomer();
+  const change = useChangeCustomer();
+  /** The sheet: a customer's id, 'new', or closed. Live only; the demo's master is read-only. */
+  const [sheet, setSheet] = useState<string | null>(null);
+  const columns = useMemo(
+    () => customerColumns(t, s).filter((c) => (dues || !DUE_COLUMNS.includes(c.key)) && (orderCounts || c.key !== 'orders')),
+    [t, s, dues, orderCounts],
+  );
 
-  const rows = useMemo<CustomerRow[]>(() => {
-    const invoices = invoicesForSite(siteScope);
-    const orders = purchaseOrdersForSite(siteScope);
-    const trips = tripsForSite(siteScope);
-    const active = new Set([...invoices, ...orders, ...trips].map((x) => x.customerId));
-    return CUSTOMERS_MASTER.filter((c) => siteScope === null || active.has(c.id)).map((c) => {
-      const theirs = invoices.filter((i) => i.customerId === c.id && i.status !== 'draft' && i.status !== 'closed');
-      return {
-        customer: c,
-        outstanding: theirs.reduce((s, i) => s + Number.parseFloat(i.balanceDue), 0),
-        overdueCount: theirs.filter(isInvoiceOverdue).length,
-        openOrders: orders.filter(
-          (p) => p.customerId === c.id && (p.status === 'pending_approval' || p.status === 'approved' || p.status === 'part_dispatched'),
-        ).length,
-        siteName: SITES.find((s) => s.id === c.servedFromSiteId)?.name ?? '–',
-      };
-    });
-  }, [siteScope]);
-
-  const visible =
-    view === 'overdue' ? rows.filter((r) => r.overdueCount > 0) : view === 'open_orders' ? rows.filter((r) => r.openOrders > 0) : rows;
+  // A view whose figures are not known here shows everyone, not nobody.
+  const shown: View = (view === 'overdue' && !dues) || (view === 'open_orders' && !orderCounts) ? 'all' : view;
+  const overdue = rows.filter((r) => (r.overdueCount ?? 0) > 0);
+  const withOrders = rows.filter((r) => (r.openOrders ?? 0) > 0);
+  const visible = shown === 'overdue' ? overdue : shown === 'open_orders' ? withOrders : rows;
+  const mayAdd = add !== null && can(persona.grants, 'sales.customer.write', { siteId: siteScope });
+  const open = sheet === 'new' ? null : (customers.find((c) => c.id === sheet) ?? null);
 
   return (
     <>
@@ -86,18 +78,29 @@ export function CustomerDatabase() {
         eyebrow={s.eyebrow}
         title={t.title}
         // From sales.customers.
-        meta={<AsOfStamp asOf="14:42" source={s.src.customers} freshness="live" />}
+        meta={<AsOfStamp asOf={list.asOf} source={s.src.customers} freshness="live" />}
+        actions={
+          mayAdd ? (
+            <Button variant="primary" onClick={() => setSheet('new')}>
+              {t.add}
+            </Button>
+          ) : undefined
+        }
       />
       <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <Chip active={view === 'all'} onClick={() => setView('all')} count={rows.length}>
+        <Chip active={shown === 'all'} onClick={() => setView('all')} count={rows.length}>
           {s.all}
         </Chip>
-        <Chip active={view === 'overdue'} onClick={() => setView('overdue')} count={rows.filter((r) => r.overdueCount > 0).length}>
-          {t.overdueInvoices}
-        </Chip>
-        <Chip active={view === 'open_orders'} onClick={() => setView('open_orders')} count={rows.filter((r) => r.openOrders > 0).length}>
-          {t.openOrders}
-        </Chip>
+        {dues ? (
+          <Chip active={shown === 'overdue'} onClick={() => setView('overdue')} count={overdue.length}>
+            {t.overdueInvoices}
+          </Chip>
+        ) : null}
+        {orderCounts ? (
+          <Chip active={shown === 'open_orders'} onClick={() => setView('open_orders')} count={withOrders.length}>
+            {t.openOrders}
+          </Chip>
+        ) : null}
       </div>
       <Section>
         <DataTable
@@ -105,16 +108,20 @@ export function CustomerDatabase() {
           columns={columns}
           rows={visible}
           rowKey={(r) => r.customer.id}
-          rail={(r) => (r.overdueCount > 0 ? { status: 'critical' } : undefined)}
+          rail={(r) => ((r.overdueCount ?? 0) > 0 ? { status: 'critical' } : undefined)}
+          // Live, a row opens the customer, to read in full and change.
+          {...(change ? { onRowClick: (r: CustomerRow) => setSheet(r.customer.id), selectedKey: open?.id } : {})}
           empty={
             // Genuinely empty and filtered-empty are different problems and
             // never share copy (see EmptyState). Empty at a site means nobody
             // has a load, an invoice or an order there yet.
-            rows.length === 0 ? (
+            list.state !== 'ready' ? (
+              <CustomersNotHere list={list} />
+            ) : rows.length === 0 ? (
               <EmptyState fact={t.noneAtSite} />
             ) : (
               <EmptyState
-                fact={view === 'overdue' ? t.noneOverdue : t.noneWithOrders}
+                fact={shown === 'overdue' ? t.noneOverdue : t.noneWithOrders}
                 action={{ label: s.showAll, onClick: () => setView('all') }}
               />
             )
@@ -122,8 +129,18 @@ export function CustomerDatabase() {
         />
       </Section>
       <div className="h-10" />
+      {sheet === 'new' || open ? <CustomerSheet key={sheet} customer={open} onClose={() => setSheet(null)} /> : null}
     </>
   );
+}
+
+/** Live only: the customers are on their way, or could not be read. */
+function CustomersNotHere({ list }: { list: CustomerRows }) {
+  const t = useWords(customerWords);
+  const s = useWords(salesWords);
+  const say = useCustomerProblem();
+  if (list.state === 'loading') return <EmptyState fact={t.loading} />;
+  return <EmptyState fact={t.failed} {...(list.problem ? { because: say(list.problem) } : {})} action={{ label: s.retry, onClick: list.retry }} />;
 }
 
 function customerColumns(t: CustomerText, s: SalesText): Column<CustomerRow>[] {
@@ -151,7 +168,7 @@ function customerColumns(t: CustomerText, s: SalesText): Column<CustomerRow>[] {
       group: t.groups.details,
       render: (r) => <Stacked primary={r.customer.contactName} secondary={r.customer.phone} />,
     },
-    { key: 'site', header: t.ourSite, group: t.groups.details, render: (r) => r.siteName },
+    { key: 'site', header: t.ourSite, group: t.groups.details, render: (r) => r.siteName ?? t.otherSite },
     {
       key: 'terms',
       header: t.creditDays,
@@ -185,7 +202,7 @@ function customerColumns(t: CustomerText, s: SalesText): Column<CustomerRow>[] {
       width: 130,
       group: t.groups.money,
       render: (r) => (
-        <span className="num tabular-nums" style={{ color: r.overdueCount > 0 ? 'var(--status-critical)' : undefined }}>
+        <span className="num tabular-nums" style={{ color: (r.overdueCount ?? 0) > 0 ? 'var(--status-critical)' : undefined }}>
           {r.overdueCount}
         </span>
       ),

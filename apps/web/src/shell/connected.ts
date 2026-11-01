@@ -13,11 +13,14 @@
  * by being the demo.
  */
 
+/** A count on a board that is the API's while the rest of the board is not. */
+export type RealPart = 'bills' | 'breakdowns' | 'orders';
+
 export type Connection =
   /** On the API: the company's own data. */
   | 'api'
-  /** Sample data, but for its bill counts, which are the API's. */
-  | 'bills'
+  /** Sample data, but for the counts named, which are the API's. */
+  | { except: readonly RealPart[] }
   /** Sample data. */
   | 'sample';
 
@@ -29,10 +32,17 @@ const CONNECTED: Readonly<Record<string, Connection>> = {
   '/overview/expenses': 'api',
   '/fleet/diesel-summary': 'api',
   '/fleet/whatsapp': 'api',
+  // LIN-21: customers, their orders and the breakdown register. A customer's
+  // money due comes from invoices, which are not on the API yet: live, the
+  // customer screen leaves it out rather than show the sample figure.
+  '/sales/customers': 'api',
+  '/sales/orders': 'api',
+  '/fleet/breakdowns': 'api',
   // LIN-10: the news digest is built on the server.
   '/overview/industry': 'api',
-  // The fleet board's "bills to check" is the API's; its other counts are not yet.
-  '/fleet/board': 'bills',
+  // The boards: these counts are the API's; their other counts are not yet.
+  '/fleet/board': { except: ['bills', 'breakdowns'] },
+  '/sales/board': { except: ['orders'] },
 };
 
 export function connectionOf(route: string): Connection {

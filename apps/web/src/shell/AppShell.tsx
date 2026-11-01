@@ -18,6 +18,8 @@ import { MODULES, navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js
 import { useApp } from './store.js';
 import { shellWords } from './words.js';
 import { useBills } from '../features/expenses/bills.js';
+import { downAt } from '../features/fleet/breakdownApi.js';
+import { useBreakdowns } from '../features/fleet/breakdowns.js';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { persona, siteScope, enabledModules, density, theme, signedIn, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
@@ -606,6 +608,7 @@ function BottomTabs({
 
 function useBadges(siteScope: string | null): Record<string, { count: number; tone: 'critical' | 'neutral' }> {
   const { bills } = useBills();
+  const breakdowns = useBreakdowns().rows;
   return useMemo(() => {
     // The bill counts read the bills the expense screens read: live, the API's.
     const expenses = {
@@ -613,8 +616,12 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
       awaiting_director: { count: expensesForSite(siteScope, null, bills).filter((e) => e.status === 'validated').length, tone: 'neutral' as const },
     };
     // Every other count is the demo's sample data. Live, none is shown
-    // against a real company's menu until its screen is on the API.
-    if (LIVE) return expenses;
+    // against a real company's menu until its screen is on the API — but
+    // the vehicles off the road, which live are the breakdown register's.
+    if (LIVE) {
+      const down = downAt(breakdowns, siteScope);
+      return { ...expenses, breakdowns: { count: down, tone: down > 0 ? 'critical' : 'neutral' } };
+    }
     const docs = documentExposure(siteScope);
     const fleet = fleetCounts(siteScope);
     return {
@@ -625,7 +632,7 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
       breakdowns: { count: fleet.breakdown, tone: fleet.breakdown > 0 ? 'critical' : 'neutral' },
       ...expenses,
     };
-  }, [siteScope, bills]);
+  }, [siteScope, bills, breakdowns]);
 }
 
 function ScopeSwitcher({

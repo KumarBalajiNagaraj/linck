@@ -83,8 +83,9 @@ async def test_recycled_connection_sees_no_rows(
     """
     async with tenant_session(str(tenant_a.org_id)) as session:
         assert (
-            await session.execute(text("SELECT count(*) FROM core.sites WHERE id = :id"),
-                                  {"id": str(tenant_a.site_id)})
+            await session.execute(
+                text("SELECT count(*) FROM core.sites WHERE id = :id"), {"id": str(tenant_a.site_id)}
+            )
         ).scalar_one() == 1
 
     async with tenant_session(None) as session:

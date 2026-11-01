@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     whatsapp_media_dir: str = "var/whatsapp-media"
     whatsapp_react_on_receipt: bool = True
 
+    # Uploaded files (bill scans). One directory per tenant under this root,
+    # one file per SHA-256 of its bytes; core.files holds what makes each one
+    # reachable. Ten megabytes covers a phone photo or a multi-page scan.
+    file_storage_dir: str = "var/files"
+    file_max_bytes: int = 10 * 1024 * 1024
+
     session_secret: str = "dev-only-not-a-secret-change-me"
     session_cookie_name: str = "__Host-linck_session"
     session_ttl_minutes: int = 60

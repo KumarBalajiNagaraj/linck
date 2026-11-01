@@ -182,23 +182,31 @@ async def resolve_pre_registered_user(
     # than incidental — RLS is active and matching nothing.
     async with tenant_session(None) as db:
         row = (
-            await db.execute(
-                text("select user_id, organization_id, status from core.resolve_identity(:p, :s)"),
-                {"p": provider, "s": subject},
+            (
+                await db.execute(
+                    text("select user_id, organization_id, status from core.resolve_identity(:p, :s)"),
+                    {"p": provider, "s": subject},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         identity_exists = row is not None
 
         if row is None:
             row = (
-                await db.execute(
-                    text(
-                        "select user_id, organization_id, status "
-                        "from core.resolve_pending_user(:email, :hd)"
-                    ),
-                    {"email": email, "hd": hosted_domain},
+                (
+                    await db.execute(
+                        text(
+                            "select user_id, organization_id, status "
+                            "from core.resolve_pending_user(:email, :hd)"
+                        ),
+                        {"email": email, "hd": hosted_domain},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
 
     if row is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_REGISTERED)
@@ -345,10 +353,7 @@ async def google_login(
     if not settings.google_client_id:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Google sign-in is not configured on this server "
-                "(LINCK_GOOGLE_CLIENT_ID is empty)."
-            ),
+            detail=("Google sign-in is not configured on this server (LINCK_GOOGLE_CLIENT_ID is empty)."),
         )
 
     metadata = await google_metadata()

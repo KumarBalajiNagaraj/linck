@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.settings import get_settings
+from app.models.base import BUSINESS_SCHEMAS
 
 settings = get_settings()
 
@@ -78,33 +79,38 @@ async def check_rls_posture() -> list[str]:
             await conn.execute(
                 text(
                     """
-                    select c.relname,
+                    select n.nspname || '.' || c.relname,
                            c.relrowsecurity,
                            c.relforcerowsecurity,
                            (select count(*) from pg_policy p where p.polrelid = c.oid) as policies
                     from pg_class c
                     join pg_namespace n on n.oid = c.relnamespace
-                    where c.relkind = 'r'
-                      and n.nspname = 'core'
+                    -- Plain and partitioned tables, in every schema the design
+                    -- names: a table in a schema nobody has migrated yet is
+                    -- checked the day it appears, not the day someone
+                    -- remembers to add the schema here.
+                    where c.relkind in ('r', 'p')
+                      and n.nspname = any(:schemas)
                       -- organizations: its own id IS the tenant key.
                       -- permissions: global reference data with no
                       -- organization_id, so there is nothing for a policy to
                       -- filter on. Both are exempted by migration 0002; this
                       -- list has to agree with it or the app refuses to start
                       -- against a correctly migrated database.
-                      and c.relname not in ('organizations', 'permissions')
+                      and (n.nspname, c.relname) not in (('core', 'organizations'), ('core', 'permissions'))
                     """
-                )
+                ),
+                {"schemas": list(BUSINESS_SCHEMAS)},
             )
         ).all()
 
         for name, enabled, forced, policies in rows:
             if not enabled:
-                problems.append(f"core.{name}: row level security is not enabled")
+                problems.append(f"{name}: row level security is not enabled")
             elif not forced:
-                problems.append(f"core.{name}: RLS is enabled but not FORCED — the owner bypasses it")
+                problems.append(f"{name}: RLS is enabled but not FORCED — the owner bypasses it")
             elif policies == 0:
-                problems.append(f"core.{name}: RLS is forced but no policy exists — the table is unreadable")
+                problems.append(f"{name}: RLS is forced but no policy exists — the table is unreadable")
 
         # No local carve-out here, deliberately.
         #

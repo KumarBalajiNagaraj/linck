@@ -180,9 +180,10 @@ _TEARDOWN_ORDER = [
     "core.users",
 ]
 
-# Those trigger-written rows are stamped from app.current_org_id, which is unset
-# on this privileged connection, so they land with a NULL organization_id and can
-# only be found through the row image the trigger captured.
+# Those trigger-written rows carry their tenant's id although this privileged
+# connection sets no app.current_org_id: since migration 0005 the trigger takes
+# organization_id from the row it audits. The row-image match is for audit rows
+# stamped NULL, as writes with no tenant context were before 0005.
 _DELETE_AUDIT = """
     DELETE FROM core.audit_logs
     WHERE organization_id = ANY(%(ids)s)

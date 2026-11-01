@@ -55,8 +55,8 @@ const indexRoute = createRoute({
 });
 
 /**
- * Where the driver lands (`resolveHome`). His own home is not built yet, so
- * until it is: adding diesel, the one screen he has. Typed `string` like
+ * Where the driver lands (`resolveHome`). The driver's own home is not built
+ * yet, so until it is: adding diesel, the one driver screen there is. Typed `string` like
  * `resolveHome()`'s answer, because the screens' routes come from `route()`.
  */
 const DRIVER_HOME: string = '/fleet/fuel/new';

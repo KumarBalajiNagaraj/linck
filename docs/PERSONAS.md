@@ -304,7 +304,7 @@ This is the best-served domain model in the product:
 
 **The job.** Takes the tipper out, drives the load, fills diesel, gets marked present.
 
-**This persona is effectively not built.** He can key a diesel fill. That is all. His landing route is `/field`, which until LIN-21 was in the home-resolver and *not in the route tree*, so a driver signing in got a bare "Not Found". It now opens diesel entry, his one screen, until the field home exists.
+**This persona is effectively not built.** A driver can key a diesel fill. That is all. The driver's landing route is `/field`, which until LIN-21 was in the home-resolver and *not in the route tree*, so a driver signing in got a bare "Not Found". It now opens diesel entry, the one driver screen there is, until the field home exists.
 
 He also currently reads the whole site's fuel ledger — colleagues' names, amounts, flags — without holding the read permission, and the alert drawer shows him receivables alerts that route to screens he cannot open.
 

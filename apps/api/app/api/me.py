@@ -3,7 +3,7 @@
 The shell calls this once, then decides from it which workspaces exist (the
 tenant's enabled modules), which of them this person may open (grants), and
 which site the scope switcher starts on. So everything it needs arrives in one
-round trip: five small queries against one transaction, none of them per-row.
+round trip: seven small queries against one transaction, none of them per-row.
 """
 
 import uuid
@@ -13,12 +13,22 @@ from sqlalchemy import literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentSessionDep, load_grants
-from app.models.core import LegalEntity, Organization, OrganizationModule, RoleAssignment, Site
+from app.models.core import (
+    GstRegistration,
+    LegalEntity,
+    Organization,
+    OrganizationModule,
+    Role,
+    RoleAssignment,
+    Site,
+)
 from app.schemas.session import (
     SessionGrant,
+    SessionGstRegistration,
     SessionLegalEntity,
     SessionOrganization,
     SessionResponse,
+    SessionRole,
     SessionSite,
     SessionUser,
 )
@@ -87,7 +97,25 @@ async def read_session(current: CurrentSessionDep) -> SessionResponse:
             )
         ).all()
     )
+    registrations = list(
+        (
+            await db.scalars(
+                select(GstRegistration)
+                .where(GstRegistration.organization_id == current.organization_id)
+                .order_by(GstRegistration.gstin)
+            )
+        ).all()
+    )
     sites = await _scoped_sites(db, current.organization_id, user.id)
+    roles = (
+        await db.execute(
+            select(Role.key, Role.label)
+            .join(RoleAssignment, RoleAssignment.role_id == Role.id)
+            .where(Role.organization_id == current.organization_id, RoleAssignment.user_id == user.id)
+            .distinct()
+            .order_by(Role.label, Role.key)
+        )
+    ).all()
     grants = await load_grants(db, user.id)
 
     # Org-wide holders land on "All sites"; a site-scoped person lands on their
@@ -100,9 +128,21 @@ async def read_session(current: CurrentSessionDep) -> SessionResponse:
         user=SessionUser.model_validate(user),
         organization=SessionOrganization.model_validate(organization),
         modules=modules,
-        legal_entities=[SessionLegalEntity.model_validate(entity) for entity in legal_entities],
+        legal_entities=[
+            SessionLegalEntity.model_validate(entity).model_copy(
+                update={
+                    "gst_registrations": [
+                        SessionGstRegistration.model_validate(r)
+                        for r in registrations
+                        if r.legal_entity_id == entity.id
+                    ]
+                }
+            )
+            for entity in legal_entities
+        ],
         sites=[SessionSite.model_validate(site) for site in sites],
         active_site_scope=active_site_scope,
+        roles=[SessionRole(key=key, label=label) for key, label in roles],
         grants={
             key: SessionGrant(org_wide=grant.org_wide, site_ids=grant.site_ids)
             for key, grant in grants.items()

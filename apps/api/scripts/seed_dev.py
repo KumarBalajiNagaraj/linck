@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -271,6 +272,33 @@ ROLES: dict[str, RoleSpec] = {
         ("field.trip.read", "fleet.fuel.create"),
     ),
 }
+
+
+def role_grants(
+    modules: Iterable[str], permission_modules: dict[str, str]
+) -> tuple[dict[str, tuple[str, ...]], list[str]]:
+    """The roles a tenant with ``modules`` switched on gets, and the keys each grants there.
+
+    Returns ``(granted, skipped)``. A role whose vertical is off is not created
+    at all, and a role that survives grants no key from a module the tenant
+    never bought — an accounts clerk at a crusher-only client has no business
+    holding fleet.vehicle.read. scripts/create_org.py applies the same rule.
+    """
+    enabled = set(modules)
+    granted: dict[str, tuple[str, ...]] = {}
+    skipped: list[str] = []
+    for key, role in ROLES.items():
+        if role.requires_module is not None and role.requires_module not in enabled:
+            skipped.append(key)
+            continue
+        keys = tuple(
+            p for p in role.permissions if permission_modules[p] == "core" or permission_modules[p] in enabled
+        )
+        if not keys:
+            skipped.append(key)
+            continue
+        granted[key] = keys
+    return granted, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -927,21 +955,10 @@ async def seed_tenant(spec: TenantSpec, permission_modules: dict[str, str]) -> T
         role_ids: dict[str, uuid.UUID] = {}
         role_rows: list[dict] = []
         perm_rows: list[dict] = []
-        for key, role in ROLES.items():
-            if role.requires_module is not None and role.requires_module not in spec.modules:
-                report.skipped_roles.append(key)
-                continue
-            # A surviving role must still not grant a permission belonging to a
-            # module this tenant never bought — an accounts clerk at a crusher-
-            # only client has no business holding fleet.vehicle.read.
-            granted = tuple(
-                p
-                for p in role.permissions
-                if permission_modules[p] == "core" or permission_modules[p] in spec.modules
-            )
-            if not granted:
-                report.skipped_roles.append(key)
-                continue
+        granted_by_role, skipped = role_grants(spec.modules, permission_modules)
+        report.skipped_roles.extend(skipped)
+        for key, granted in granted_by_role.items():
+            role = ROLES[key]
             role_id = sid("org", spec.slug, "role", key)
             role_ids[key] = role_id
             report.roles.append(key)

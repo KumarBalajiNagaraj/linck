@@ -1,24 +1,22 @@
 /**
- * The real session contract — DELIBERATELY NOT WIRED UP YET.
+ * The real session contract: what `GET /me/session` answers, field for field.
  *
- * Nothing imports this module at runtime. Every screen still renders from
- * `@linck/mock`, and the shell still reads its persona from
- * `auth/personas.ts`. That is on purpose: a half-wired session is worse than
- * no session, because `fetchSession()` failing at boot — API not running, no
- * cookie, tenant not seeded — would take down all eleven screens at once,
- * including the ones that never needed a server.
+ * It is wired up only in LIVE mode, when `VITE_API_URL` is set (auth/api.ts).
+ * In the demo nothing here runs: the shell reads its persona from
+ * `auth/personas.ts` and every screen renders from `@linck/mock`.
  *
- * THE CUTOVER, when the API can actually answer:
- *   1. Ship `GET /me/session` returning exactly `SessionPayload` below.
- *   2. In `main.tsx`, await `fetchSession()` before mounting the router, and
- *      on `SessionError` render the sign-in screen instead of the app — never
- *      an empty shell.
- *   3. Feed `sessionToAppState(payload)` into the store, and delete
- *      `PersonaSwitcher` + `TenantShapeSwitcher` from `AppShell` in the same
- *      commit. Both are demo writers of state that becomes server-owned.
- *   4. Only then swap the mock selectors screen by screen. The shell being on
- *      the real session while a screen is still on mock data is fine; the
- *      reverse is not.
+ * THE CUTOVER, and how far it has got:
+ *   1. Ship `GET /me/session` returning exactly `SessionPayload` below. Done;
+ *      apps/api/tests/test_sign_in.py fails if either side drifts.
+ *   2. Await it before mounting the router, and on a 401 show the sign-in
+ *      screen instead of the app — never an empty shell. Done: auth/LiveApp.tsx.
+ *   3. Feed `sessionToAppState(payload)` into the store, and take
+ *      `PersonaSwitcher` + `TenantShapeSwitcher` out of the shell. Done for
+ *      live mode; the demo keeps both, since it has no server to own them.
+ *   4. Only then swap the mock selectors screen by screen. Not yet: live mode
+ *      signs in for real, with real permissions and the real menu, over the
+ *      same mock data. The shell being on the real session while a screen is
+ *      still on mock data is fine; the reverse is not.
  *
  * Keep this file shaped exactly like the endpoint. It is the one place the
  * frontend states what it needs from the backend, and it is easier to argue
@@ -27,6 +25,7 @@
 
 import type { Grants } from '@linck/domain';
 import type { ModuleKey } from '../shell/nav-manifest.js';
+import { apiRequest } from './api.js';
 import type { Persona } from './personas.js';
 
 /** `core.users` — the person, pre-registered by an admin. Sign-in never creates one. */
@@ -91,6 +90,14 @@ export interface SessionSite {
   stateCode: string;
 }
 
+/** `core.roles`, one per role the user holds at any scope. Printed under their name, never gated on. */
+export interface SessionRole {
+  /** `executive`, `fleet_manager`, …: what the shell words in the reader's language. */
+  key: string;
+  /** As the admin named it, for a role the shell has no words for. */
+  label: string;
+}
+
 export interface SessionPayload {
   user: SessionUser;
   organization: SessionOrganization;
@@ -101,11 +108,11 @@ export interface SessionPayload {
   sites: SessionSite[];
   /** `null` means org-wide: the user may look across every site above. */
   activeSiteScope: string | null;
+  /** Every role they hold. A plant head holds three; all of them are true. */
+  roles: SessionRole[];
   /** Flattened mirror of `user_scope_grants`, keyed by permission. UX only — the API still 403s. */
   grants: Grants;
 }
-
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
 
 /** Thrown for every non-2xx. `status === 401` is "sign in", not "something broke". */
 export class SessionError extends Error {
@@ -120,16 +127,15 @@ export class SessionError extends Error {
 
 /**
  * `credentials: 'include'` because the session is a same-site HttpOnly cookie,
- * not a bearer token in JS. There is nothing for an XSS to steal, and it means
- * no token refresh dance in the client.
+ * not a bearer token in JS. There is nothing for an XSS to steal. An expired
+ * session is renewed once on the way (auth/api.ts); a 401 after that is real.
  */
 export async function fetchSession(signal?: AbortSignal): Promise<SessionPayload> {
-  const response = await fetch(`${API_BASE}/me/session`, {
-    method: 'GET',
-    credentials: 'include',
-    headers: { Accept: 'application/json' },
-    ...(signal ? { signal } : {}),
-  });
+  const response = await apiRequest(
+    '/me/session',
+    { method: 'GET', headers: { Accept: 'application/json' }, ...(signal ? { signal } : {}) },
+    false,
+  );
 
   if (!response.ok) {
     throw new SessionError(response.status, `GET /me/session failed with ${response.status}`);
@@ -138,11 +144,23 @@ export async function fetchSession(signal?: AbortSignal): Promise<SessionPayload
   return (await response.json()) as SessionPayload;
 }
 
+/** Who is signed in, as the shell shows them. Null in the demo. */
+export interface SignedIn {
+  email: string;
+  organizationName: string;
+  roles: SessionRole[];
+  /** The scope switcher's choices: the sites this person is scoped to. */
+  sites: Pick<SessionSite, 'id' | 'code' | 'name'>[];
+  /** The landing route they pinned, if any; `resolveHome()` takes it first. */
+  defaultRoute: string | null;
+}
+
 /** The slice of the store that becomes server-owned at cutover. */
 export interface AppSessionState {
   persona: Persona;
   siteScope: string | null;
   enabledModules: string[];
+  signedIn: SignedIn;
 }
 
 /**
@@ -153,23 +171,35 @@ export interface AppSessionState {
  * The shell already reads nothing from it but `name`, `roleLabel`, `siteIds`,
  * `defaultSiteId` and `grants`, so nothing in the rail has to change.
  *
- * `roleLabel` is filled with the organization name rather than a role: a
- * person routinely holds several roles (a plant head is production + stores +
- * fleet), so picking one to print under their name would be a lie. Which
- * tenant you are signed in to is the fact that is always true and, for anyone
- * who works across two of our clients, the one worth showing.
+ * `roleLabel` is every role they hold, as the admin named them: a person
+ * routinely holds several (a plant head is production + stores + fleet), so
+ * picking one to print under their name would be a lie, and listing all of
+ * them is not. The top bar words them in the reader's language from
+ * `signedIn.roles`; `roleLabel` is what an admin reads on a refusal.
  */
 export function sessionToAppState(payload: SessionPayload): AppSessionState {
   return {
     persona: {
       key: payload.user.id,
       name: payload.user.fullName,
-      roleLabel: payload.organization.displayName,
+      roleLabel: payload.roles.map((role) => role.label).join(', ') || payload.organization.displayName,
       siteIds: payload.sites.map((site) => site.id),
       defaultSiteId: payload.activeSiteScope,
       grants: payload.grants,
     },
     siteScope: payload.activeSiteScope,
     enabledModules: [...payload.modules],
+    signedIn: {
+      email: payload.user.email,
+      organizationName: payload.organization.displayName,
+      roles: payload.roles,
+      sites: payload.sites.map(({ id, code, name }) => ({ id, code, name })),
+      defaultRoute: safeRoute(payload.user.defaultRoute),
+    },
   };
+}
+
+/** A pinned route is data an admin typed: only a path inside this app is taken. */
+function safeRoute(route: string | null): string | null {
+  return route && route.startsWith('/') && !route.startsWith('//') ? route : null;
 }

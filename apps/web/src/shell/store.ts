@@ -1,6 +1,7 @@
 import type { Density } from '@linck/tokens';
 import { create } from 'zustand';
 import { personaByKey, type Persona } from '../auth/personas.js';
+import type { AppSessionState, SignedIn } from '../auth/session.js';
 import { MODULES } from './nav-manifest.js';
 
 /**
@@ -16,8 +17,12 @@ import { MODULES } from './nav-manifest.js';
  * `enabledModules` is tenant configuration, not user preference: it arrives on
  * `GET /me/session` from `core.organization_modules` and nothing in the UI may
  * write it in production. It is defaulted to every module so the mock-data
- * screens keep working untouched; the demo control in AppShell is the only
- * writer today.
+ * screens keep working untouched; the demo control in AppShell is its only
+ * other writer.
+ *
+ * In live mode `applySession` is the one writer of `persona`, `siteScope`'s
+ * starting value, `enabledModules` and `signedIn`, and the two demo writers
+ * stop working: the server says who this is and what the tenant has.
  */
 
 interface AppState {
@@ -28,6 +33,9 @@ interface AppState {
   density: Density;
   theme: 'light' | 'dark';
   navCollapsed: boolean;
+  /** Live mode: who the API says is signed in. Null in the demo, where `persona` is a choice. */
+  signedIn: SignedIn | null;
+  applySession: (session: AppSessionState) => void;
   setPersona: (key: string) => void;
   setSiteScope: (siteId: string | null) => void;
   setEnabledModules: (modules: string[]) => void;
@@ -38,19 +46,26 @@ interface AppState {
 
 const initial = personaByKey('executive');
 
-export const useApp = create<AppState>((set) => ({
+export const useApp = create<AppState>((set, get) => ({
   persona: initial,
   siteScope: initial.defaultSiteId,
   enabledModules: [...MODULES],
   density: 'default',
   theme: 'light',
   navCollapsed: false,
+  signedIn: null,
+  applySession: ({ persona, siteScope, enabledModules, signedIn }) =>
+    set({ persona, siteScope, enabledModules, signedIn }),
   setPersona: (key) => {
+    if (get().signedIn) return;
     const persona = personaByKey(key);
     set({ persona, siteScope: persona.defaultSiteId });
   },
   setSiteScope: (siteId) => set({ siteScope: siteId }),
-  setEnabledModules: (modules) => set({ enabledModules: modules }),
+  setEnabledModules: (modules) => {
+    if (get().signedIn) return;
+    set({ enabledModules: modules });
+  },
   setDensity: (density) => set({ density }),
   toggleTheme: () =>
     set((s) => {

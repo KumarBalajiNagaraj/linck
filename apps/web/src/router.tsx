@@ -48,10 +48,33 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   beforeLoad: () => {
-    const { persona } = useApp.getState();
-    throw redirect({ to: resolveHome(persona.grants) });
+    const { persona, signedIn } = useApp.getState();
+    throw redirect({ to: resolveHome(persona.grants, signedIn?.defaultRoute) });
   },
   component: () => null,
+});
+
+/**
+ * Where the driver lands (`resolveHome`). His own home is not built yet, so
+ * until it is: adding diesel, the one screen he has. Typed `string` like
+ * `resolveHome()`'s answer, because the screens' routes come from `route()`.
+ */
+const DRIVER_HOME: string = '/fleet/fuel/new';
+const fieldRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/field',
+  beforeLoad: () => {
+    throw redirect({ to: DRIVER_HOME });
+  },
+});
+
+/** Signed in, the sign-in page has nothing to show: home. (Signed out, auth/LiveApp.tsx shows it instead of the router.) */
+const signInRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sign-in',
+  beforeLoad: () => {
+    throw redirect({ to: '/' });
+  },
 });
 
 function route(path: string, component: () => React.JSX.Element, permission: string) {
@@ -76,6 +99,8 @@ function hasScope(grant: { orgWide: boolean; siteIds: string[] } | undefined, si
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  fieldRoute,
+  signInRoute,
   route('/overview', () => <ExecutiveDashboard />, 'executive.dashboard.read'),
   route('/overview/sales', () => <SalesTrends />, 'executive.dashboard.read'),
   route('/overview/sales/ahead', () => <SalesAhead />, 'executive.dashboard.read'),

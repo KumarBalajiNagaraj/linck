@@ -25,10 +25,15 @@ Both resolvers are SECURITY DEFINER functions because they run before any
 tenant context exists: RLS cannot scope a query whose entire purpose is to find
 out which tenant to scope to. Everything after that point goes through
 ``tenant_session``.
+
+A refusal is a code, never English (``SignInRefused``): the sign-in screen words
+it in the reader's language. The Google callback hands it to the web app as
+``/sign-in?error=<code>``; dev-login answers ``{"detail": {"problem": {"code"}}}``.
 """
 
 from __future__ import annotations
 
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -41,6 +46,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import tenant_session
@@ -68,16 +74,45 @@ from app.core.settings import get_settings
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 settings = get_settings()
+log = logging.getLogger("linck.auth")
 
-# One message for every way sign-in can fail to find a person. It names the
-# remedy — ask your team admin — because that is genuinely the only route back
-# in, and it deliberately does not distinguish "no such account", "wrong
-# tenant", "wrong Google Workspace domain" or "account stood down". Those
-# distinctions are useful to exactly one audience.
-NOT_REGISTERED = (
-    "This account is not registered for Linck. Ask your team admin to register you, "
-    "then sign in again with the same Google account."
-)
+# Why sign-in let nobody in, as the codes the sign-in screen words.
+#
+# NOT_REGISTERED is one code for every way the lookup can find nobody: no such
+# account, another tenant's account, a tenant pinned to another Google
+# Workspace domain, a pre-registration that was stood down before it was ever
+# used. It names the remedy, ask your admin, because that is the only route
+# back in; telling those cases apart would tell a stranger which addresses
+# some tenant knows. The other codes say nothing about anyone else:
+#
+#   EMAIL_UNVERIFIED     the person can fix it themselves, at Google.
+#   DOMAIN_NOT_ALLOWED   this deployment's own gate, LINCK_ALLOWED_HOSTED_DOMAINS,
+#                        checked before any lookup, so it is the same answer for
+#                        every account on that domain, registered or not.
+#   ACCOUNT_STOPPED      said only to whoever signs in as an identity already
+#                        pinned to the stopped person, i.e. that person.
+#   REGISTERED_TWICE     the same email is pre-registered in two tenants, which
+#                        core.resolve_pending_user refuses to choose between
+#                        (migration 0003). Said only to the address's holder.
+NOT_REGISTERED = "not_registered"
+EMAIL_UNVERIFIED = "email_unverified"
+DOMAIN_NOT_ALLOWED = "domain_not_allowed"
+ACCOUNT_STOPPED = "account_stopped"
+REGISTERED_TWICE = "registered_twice"
+#: /auth/google/login on a server with no LINCK_GOOGLE_CLIENT_ID.
+GOOGLE_OFF = "google_off"
+
+# Postgres' cardinality_violation, raised by core.resolve_pending_user.
+_AMBIGUOUS_SQLSTATE = "21000"
+
+
+class SignInRefused(HTTPException):
+    """A 403 whose detail is a code, ``{"problem": {"code": ...}}``, as problems.py shapes refusals."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail={"problem": {"code": code}})
+        self.code = code
+
 
 SCOPE = "openid email profile"
 
@@ -158,64 +193,63 @@ async def resolve_pre_registered_user(
 ) -> ResolvedUser:
     """Steps 1–4 of the docstring at the top of this file.
 
-    Raises 403 with a single indistinguishable message for every failure that
-    is not "your email is unverified", which is worth saying plainly because
-    the user can fix it themselves.
+    Raises ``SignInRefused`` with one of the codes above. Every failure to find
+    a person is the same NOT_REGISTERED; see there for the few that are not.
     """
     if not email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "This Google account's email address is not verified, so it cannot prove "
-                "who you are. Verify it with Google and sign in again."
-            ),
-        )
+        raise SignInRefused(EMAIL_UNVERIFIED)
 
     # A second, coarser gate in front of the per-tenant one in
     # core.resolve_pending_user. Defence in depth: this one is deployment-wide
     # configuration, so a misconfigured tenant row cannot widen it.
     if settings.allowed_hosted_domains and (hosted_domain or "") not in settings.allowed_hosted_domains:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_REGISTERED)
+        raise SignInRefused(DOMAIN_NOT_ALLOWED)
 
     # No tenant context: that is the whole reason both of these are
     # SECURITY DEFINER. tenant_session(None) makes the absence explicit rather
     # than incidental — RLS is active and matching nothing.
-    async with tenant_session(None) as db:
-        row = (
-            (
-                await db.execute(
-                    text("select user_id, organization_id, status from core.resolve_identity(:p, :s)"),
-                    {"p": provider, "s": subject},
-                )
-            )
-            .mappings()
-            .first()
-        )
-        identity_exists = row is not None
-
-        if row is None:
+    try:
+        async with tenant_session(None) as db:
             row = (
                 (
                     await db.execute(
-                        text(
-                            "select user_id, organization_id, status "
-                            "from core.resolve_pending_user(:email, :hd)"
-                        ),
-                        {"email": email, "hd": hosted_domain},
+                        text("select user_id, organization_id, status from core.resolve_identity(:p, :s)"),
+                        {"p": provider, "s": subject},
                     )
                 )
                 .mappings()
                 .first()
             )
+            identity_exists = row is not None
+
+            if row is None:
+                row = (
+                    (
+                        await db.execute(
+                            text(
+                                "select user_id, organization_id, status "
+                                "from core.resolve_pending_user(:email, :hd)"
+                            ),
+                            {"email": email, "hd": hosted_domain},
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == _AMBIGUOUS_SQLSTATE:
+            raise SignInRefused(REGISTERED_TWICE) from None
+        raise
 
     if row is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_REGISTERED)
+        raise SignInRefused(NOT_REGISTERED)
 
-    # resolve_pending_user filters on status itself; resolve_identity does not,
-    # because a returning user whose account was stood down still has an
-    # identity row. Checked here so both paths agree.
+    # resolve_pending_user filters on status itself, so a stopped person who
+    # never signed in is NOT_REGISTERED above. resolve_identity does not:
+    # whoever reaches this line holds the identity pinned to a stood-down
+    # account, so the account's own holder is the one being told.
     if row["status"] not in ("invited", "active"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_REGISTERED)
+        raise SignInRefused(ACCOUNT_STOPPED)
 
     return ResolvedUser(
         user_id=row["user_id"],
@@ -351,10 +385,10 @@ async def google_login(
 ) -> RedirectResponse:
     """Start the flow: mint state + PKCE verifier + nonce, park them, go to Google."""
     if not settings.google_client_id:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=("Google sign-in is not configured on this server (LINCK_GOOGLE_CLIENT_ID is empty)."),
-        )
+        # The person pressed the sign-in screen's Google button, so they go back
+        # to it, with a line to show, rather than to a page of JSON.
+        log.warning("Google sign-in was asked for, but LINCK_GOOGLE_CLIENT_ID is empty")
+        return _sign_in_error(GOOGLE_OFF)
 
     metadata = await google_metadata()
     code_verifier = generate_token(64)
@@ -454,13 +488,18 @@ async def google_callback(
     email = str(claims.get("email") or "").lower()
     hosted_domain = claims.get("hd")
 
-    resolved = await resolve_pre_registered_user(
-        provider="google",
-        subject=subject,
-        email=email,
-        email_verified=bool(claims.get("email_verified")),
-        hosted_domain=hosted_domain,
-    )
+    try:
+        resolved = await resolve_pre_registered_user(
+            provider="google",
+            subject=subject,
+            email=email,
+            email_verified=bool(claims.get("email_verified")),
+            hosted_domain=hosted_domain,
+        )
+    except SignInRefused as refused:
+        # This is a browser navigation, not a fetch: the person lands back on
+        # the sign-in screen with the reason, not on a page of JSON.
+        return _sign_in_error(refused.code)
 
     credential = await establish_session(
         request,
@@ -652,4 +691,10 @@ if DEV_LOGIN_ENABLED:
         return response
 
 
-__all__ = ["router", "DEV_LOGIN_ENABLED", "NOT_REGISTERED", "resolve_pre_registered_user"]
+__all__ = [
+    "router",
+    "DEV_LOGIN_ENABLED",
+    "NOT_REGISTERED",
+    "SignInRefused",
+    "resolve_pre_registered_user",
+]

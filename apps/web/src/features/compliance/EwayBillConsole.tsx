@@ -7,10 +7,12 @@ import {
   ewbClock,
   ewbHeldByGstin,
   ewbThreshold,
-  ewbTimeLeftLabel,
+  ewbValidityDays,
   EWB_CANCEL_WINDOW_HOURS,
   EWB_INTER_STATE_THRESHOLD,
   EWB_INTRA_STATE_THRESHOLD,
+  EWB_KM_PER_DAY,
+  EWB_ODC_KM_PER_DAY,
   EWB_PART_A_WINDOW_DAYS,
   EWB_PART_B_EXEMPT_KM,
   formatEwbNumber,
@@ -52,7 +54,10 @@ import {
   useMinWidth,
   type Column,
 } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
+import { complianceWords, ENGLISH_MONTH_NAMES, type ComplianceWords } from './words.js';
 
 /**
  * THE E-WAY BILL CONSOLE.
@@ -65,17 +70,26 @@ import { useApp } from '../../shell/store.js';
  *      ₹1,00,000, so most tipper loads are legitimately paperwork-free — the
  *      screen must NOT read them as missing. Cross a border and the limit is
  *      ₹50,000, which almost every load clears. That asymmetry is carried by a
- *      labelled MOVEMENT column, never by hue alone — and by the lane chart,
- *      where the limit is a dashed tick sitting at two different places.
- *   2. PART A AND PART B ARE DIFFERENT DOCUMENTS. Part A stands alone for 15
- *      days waiting for a vehicle number and then dies quietly. That clock is
- *      surfaced, because nothing on the portal shouts when it runs out.
+ *      labelled TYPE column, never by hue alone — and by the route chart,
+ *      where the limit is a dashed tick sitting at two different places. The
+ *      same tipper load can be paperwork-free at home and a detention risk an
+ *      hour up the road; nothing about the material changed, only the border.
+ *   2. PART A AND PART B ARE DIFFERENT DOCUMENTS. Part A is the consignment,
+ *      Part B is the vehicle, and only Part B starts the validity clock. Part
+ *      A stands alone for 15 days waiting for a vehicle number and then dies
+ *      quietly. That clock is surfaced, because nothing on the portal shouts
+ *      when it runs out.
  *   3. A BLANK PART B IS NOT ALWAYS A FAILURE. Under 50 km in the same state,
- *      consignor to transporter, it is simply not required.
+ *      consignor to transporter, it is simply not required (Rule 138(3)).
  *   4. RULE 138E IS NOT A ROW ERROR. Two unfiled GSTR-3B periods and the
  *      portal refuses to generate anything on that GSTIN — every tipper in the
  *      yard stops at once. It belongs to the registration, in a banner, not
  *      repeated forty times down a column.
+ *
+ * Every word on the screen is in ./words.ts, in English and Tamil (LIN-23). A
+ * consignment is a "load" on screen, as everywhere else in the product. The
+ * clock's own `label` and `severity` from @linck/mock are English, so the
+ * screen words them from the clock's numbers instead.
  */
 
 type Filter = 'all' | 'inter' | 'pending' | 'expiring' | 'dead' | 'blocked' | 'exempt';
@@ -104,8 +118,21 @@ const RANK: Record<EwbStanding, number> = {
 
 const HOUR_MS = 3_600_000;
 
+/** The shape a registration takes on the portal: no spaces, no dashes. */
+const PLATE_EXAMPLE = 'TN29AB1015';
+
+/**
+ * The reason the record carries when a bill is cancelled from this console —
+ * what the portal is told. It is data on the record; the screen shows its own
+ * words for a bill cancelled here (see `say.cancelledHere`).
+ */
+const CONSOLE_CANCEL_REASON = 'Cancelled from the console inside the 24-hour window';
+
 export function EwayBillConsole() {
   const { siteScope, density } = useApp();
+  const t = useWords(complianceWords);
+  const standingWords = useWords(statusWords).ewb;
+  const w = t.ewb;
   const [filter, setFilter] = useState<Filter>('all');
   const [lane, setLane] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | undefined>(undefined);
@@ -116,15 +143,16 @@ export function EwayBillConsole() {
   const [draft, setDraft] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
   /**
-   * The lane chart reserves its label gutter in real pixels, so the gutter is a
-   * render decision rather than a stylesheet one: 140px of it on a phone leaves
-   * the bars about a centimetre long. The labels are short — "TN → KA · 7" —
-   * so a narrow gutter costs nothing and gives the bars room to be read. The
-   * same flag compacts the money: four ticks of ₹1,00,000 across 180px of axis
-   * run into each other and print as one smear, where ₹1.00 L does not. The
-   * full figures stay in the chart summary.
+   * The route chart reserves its label gutter in real pixels, so the gutter is
+   * a render decision rather than a stylesheet one: 140px of it on a phone
+   * leaves the bars about a centimetre long. The labels are short — "TN → KA
+   * (7)" — so a narrow gutter costs nothing and gives the bars room to be
+   * read. The same flag compacts the money: four ticks of ₹1,00,000 across
+   * 180px of axis run into each other and print as one smear, where ₹1.00 L
+   * does not. The full figures stay in the chart summary.
    */
   const wideLabels = useMinWidth('sm');
+  const columns = useMemo(() => makeColumns(t, standingWords), [t, standingWords]);
 
   const base = ewayBillsForSite(siteScope);
 
@@ -256,31 +284,37 @@ export function EwayBillConsole() {
   );
   const fleet = vehiclesForSite(siteScope);
   const window_ = current ? cancelWindow(current.bill, NOW) : null;
+  const currentSeverity = current ? severityOf(current, t) : undefined;
 
   const clearFilters = () => {
     setFilter('all');
     setLane(null);
   };
 
+  const inter = formatINR(EWB_INTER_STATE_THRESHOLD, { decimals: 0 });
+  const intra = formatINR(EWB_INTRA_STATE_THRESHOLD, { decimals: 0 });
+
   return (
     <>
       <PageHeader
-        eyebrow="Compliance"
-        title="e-Way bill console"
+        eyebrow={t.common.eyebrow}
+        title={w.title}
         meta={
-          <span className="flex flex-wrap items-center gap-4">
-            <AsOfStamp asOf="14:42" source="v_eway_bill_standing" freshness="live" />
-            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              {summary.interState} consignments cross a state border at a{' '}
-              {formatINR(EWB_INTER_STATE_THRESHOLD, { decimals: 0 })} limit · {summary.intraState} stay inside Tamil
-              Nadu, where the limit is {formatINR(EWB_INTRA_STATE_THRESHOLD, { decimals: 0 })}
+          <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <AsOfStamp asOf="14:42" source={w.source} freshness="live" />
+            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              {w.interLine(summary.interState, inter)}
+            </span>
+            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              {w.intraLine(summary.intraState, intra)}
             </span>
           </span>
         }
       />
 
       {/* Rule 138E stops the whole yard, so it is stated once, against the
-          registration it belongs to — never as forty identical row errors. */}
+          registration it belongs to — never as forty identical row errors.
+          Filing the return lifts the block; nothing on this screen can. */}
       {blocked.length > 0 ? (
         <div className="flex flex-col gap-2 px-6 pt-4">
           {blocked.map((g) => {
@@ -300,17 +334,15 @@ export function EwayBillConsole() {
                   borderRadius: 'var(--r-2)',
                 }}
               >
-                <StatusStamp status="critical" label="blocked 138E" severity={held.length} />
-                <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                  <IdCell>{g.gstin}</IdCell> — {g.legalEntityName} cannot generate any e-way bill.
+                <StatusStamp status="critical" label={standingWords.blocked} severity={held.length} />
+                <span className="text-[14px]" style={{ color: 'var(--text-primary)' }}>
+                  <IdCell>{g.gstin}</IdCell> — {w.banner.cannotMake(g.legalEntityName)}
                 </span>
                 <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  GSTR-3B unfiled for {g.missedReturnPeriods.join(' and ')}; last filed {g.lastFiledPeriod}. Blocked since{' '}
-                  {formatDateTime(g.blockedSince)}.
+                  {w.banner.notFiled(g.missedReturnPeriods.map((p) => periodWords(p, t)).join(', '))}
                 </span>
                 <span className="w-full font-serif text-[13px] italic" style={{ color: 'var(--status-critical)' }}>
-                  {held.length} loads worth {formatINR(value, { decimals: 0 })} are standing in the yard behind this. Filing
-                  the return lifts the block — nothing on this screen can.
+                  {w.banner.held(held.length, formatINR(value, { decimals: 0 }))}
                 </span>
               </div>
             );
@@ -318,94 +350,93 @@ export function EwayBillConsole() {
         </div>
       ) : null}
 
-      {/* One tile per row on a phone. Every delta here is a sentence — "the
-          tightest Part A dies in 4 days" — and at half of 375px it wraps to
-          four lines under a number, which reads as noise rather than a figure. */}
+      {/* One tile per row on a phone: at half of 375px the Tamil eyebrows and
+          deltas wrap to four lines under a number, which reads as noise
+          rather than a figure. */}
       <TileRow className="mt-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 [&>*]:border-b [&>*]:border-r [&>*]:border-[var(--border-subtle)] [&>*:last-child]:border-b-0 sm:[&>*]:border-b-0">
         <KpiTile
-          eyebrow="Bills in force"
+          eyebrow={w.kpi.valid}
           hero
           value={String(summary.inForce)}
-          delta={{ text: `${summary.interStateInForce} of them cross a state border` }}
+          delta={{ text: w.kpi.toOther(summary.interStateInForce) }}
           asOf="14:42"
-          source="v_eway_bill_standing"
+          source={w.source}
         />
+        {/* Part A stands 15 days without a vehicle number, then dies. */}
         <KpiTile
-          eyebrow="Part B pending"
+          eyebrow={standingWords.part_b_pending}
           value={String(summary.partBPending)}
-          delta={{
-            text:
-              summary.partBTightestDaysLeft === null
-                ? `Part A stands ${EWB_PART_A_WINDOW_DAYS} days without a vehicle number`
-                : `The tightest Part A dies in ${summary.partBTightestDaysLeft} days`,
-            tone:
-              summary.partBTightestDaysLeft !== null && summary.partBTightestDaysLeft <= 3 ? 'attention' : 'neutral',
-          }}
+          delta={
+            summary.partBTightestDaysLeft === null
+              ? undefined
+              : {
+                  text: w.kpi.addWithin(summary.partBTightestDaysLeft),
+                  tone: summary.partBTightestDaysLeft <= 3 ? 'attention' : 'neutral',
+                }
+          }
           asOf="14:42"
-          source="v_eway_bill_part_a_window"
+          source={w.source}
         />
+        {/* An extension can be filed 8 hours either side of expiry, and only
+            while the vehicle is still on the road. */}
         <KpiTile
-          eyebrow="Expiring within 24 hours"
+          eyebrow={w.kpi.expiring}
           value={String(summary.expiring)}
           delta={{
-            text: `${summary.expired} already expired · extension is possible 8 hours either side`,
+            text: w.kpi.alreadyExpired(summary.expired),
             tone: summary.expired > 0 ? 'critical' : summary.expiring > 0 ? 'attention' : 'neutral',
           }}
           asOf="14:42"
-          source="v_eway_bill_validity"
+          source={w.source}
         />
         <KpiTile
-          eyebrow="Registrations blocked"
+          eyebrow={w.kpi.blocked}
           value={String(blocked.length)}
           delta={{
-            text:
-              blocked.length === 0
-                ? 'Every GSTIN is current on GSTR-3B'
-                : `${summary.blocked} consignments cannot be raised at all`,
+            text: blocked.length === 0 ? w.kpi.allFiled : w.kpi.cannotGetBill(summary.blocked),
             tone: blocked.length > 0 ? 'critical' : 'neutral',
           }}
           asOf="14:42"
-          source="v_gstin_filing_standing"
+          source={w.returnsSource}
           freshness="materialised"
         />
       </TileRow>
 
       <div className="grid grid-cols-1 xl:grid-cols-2">
-        <Section caption="Every consignment on the board" title="Where the paperwork stands">
+        <Section title={w.standing.title}>
           <div className="px-6">
             <ProportionBar
-              summary={`${all.length} consignments: ${tally.active + tally.expiring} bills in force, ${
-                tally.partBPending
-              } waiting on a vehicle number, ${tally.dead} dead or lapsed, ${tally.cannotRaise} that cannot be raised at all, and ${
-                tally.notRequired
-              } that owe no bill.`}
+              summary={w.standing.summary({
+                all: all.length,
+                valid: tally.active + tally.expiring,
+                noVehicle: tally.partBPending,
+                dead: tally.dead,
+                notMade: tally.cannotRaise,
+                notNeeded: tally.notRequired,
+              })}
               segments={[
-                { label: 'In force', value: tally.active, tone: 'var(--chart-2)' },
-                { label: 'Part B pending', value: tally.partBPending, tone: 'var(--chart-3)' },
-                { label: 'Expiring', value: tally.expiring, tone: 'var(--status-attention)' },
-                { label: 'Expired or lapsed', value: tally.dead, tone: 'var(--status-critical)' },
-                { label: 'Cancelled', value: tally.cancelled, tone: 'var(--chart-5)' },
-                { label: 'Cannot be raised', value: tally.cannotRaise, tone: 'var(--status-critical)' },
-                { label: 'No bill owed', value: tally.notRequired, tone: 'var(--chart-4)' },
+                { label: standingWords.active, value: tally.active, tone: 'var(--chart-2)' },
+                { label: standingWords.part_b_pending, value: tally.partBPending, tone: 'var(--chart-3)' },
+                { label: standingWords.expiring, value: tally.expiring, tone: 'var(--status-attention)' },
+                { label: w.groups.dead, value: tally.dead, tone: 'var(--status-critical)' },
+                { label: standingWords.cancelled, value: tally.cancelled, tone: 'var(--chart-5)' },
+                { label: w.groups.notMade, value: tally.cannotRaise, tone: 'var(--status-critical)' },
+                { label: standingWords.not_required, value: tally.notRequired, tone: 'var(--chart-4)' },
               ].filter((s) => s.value > 0)}
             />
-            <ChartCaption>
-              A fat &ldquo;no bill owed&rdquo; band is not a filing backlog — it is the intra-Tamil Nadu exemption doing
-              its job on short local loads. Only the coloured bands cost anything at a check post, and the blocked ones
-              among them cannot be cleared from this screen at all.
-            </ChartCaption>
+            {/* A fat "not needed" band is not a filing backlog — it is the
+                intra-Tamil Nadu exemption doing its job on short local loads.
+                Only the coloured bands cost anything at a check post. */}
+            <ChartCaption>{w.standing.notNeededOk(standingWords.not_required)}</ChartCaption>
           </div>
         </Section>
 
-        <Section caption="Average consignment value, with the limit that lane actually lives under" title="The threshold asymmetry, drawn">
+        <Section title={w.lanes.title}>
           <div className="px-6">
+            {/* Every route that leaves the state sits under a tick half the
+                height of the one that stays inside it. */}
             <BarChart
-              summary={`Average consignment value by lane. The dashed tick is the applicable limit — ${formatINR(
-                EWB_INTER_STATE_THRESHOLD,
-                { decimals: 0 },
-              )} across a border, ${formatINR(EWB_INTRA_STATE_THRESHOLD, {
-                decimals: 0,
-              })} inside Tamil Nadu — so the same tick sits at two different places.`}
+              summary={w.lanes.summary(inter, intra)}
               data={lanes.map((e) => ({
                 label: laneLabel(e.from, e.to, e.count),
                 value: Math.round(e.average),
@@ -419,11 +450,7 @@ export function EwayBillConsole() {
                 if (hit) setLane(hit.key === lane ? null : hit.key);
               }}
             />
-            <ChartCaption>
-              Every lane that leaves the state sits under a tick half the height of the one that stays inside it. The
-              same tipper load can be paperwork-free at home and a detention risk an hour up the road — nothing about
-              the material changed, only the border. Click a lane to hold the table to it.
-            </ChartCaption>
+            <ChartCaption>{w.lanes.caption}</ChartCaption>
           </div>
         </Section>
       </div>
@@ -433,37 +460,36 @@ export function EwayBillConsole() {
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
         <Chip active={filter === 'all'} onClick={() => setFilter('all')} count={all.length}>
-          Everything moving
+          {t.common.all}
         </Chip>
         <Chip active={filter === 'inter'} onClick={() => setFilter('inter')} count={summary.interState}>
-          Inter-state
+          {w.otherState}
         </Chip>
         <Chip active={filter === 'pending'} onClick={() => setFilter('pending')} count={summary.partBPending}>
-          Part B pending
+          {standingWords.part_b_pending}
         </Chip>
         <Chip active={filter === 'expiring'} onClick={() => setFilter('expiring')} count={summary.expiring}>
-          Expiring in 24h
+          {standingWords.expiring}
         </Chip>
         <Chip active={filter === 'dead'} onClick={() => setFilter('dead')} count={summary.expired + summary.partALapsed}>
-          Expired or lapsed
+          {w.groups.dead}
         </Chip>
         <Chip active={filter === 'blocked'} onClick={() => setFilter('blocked')} count={summary.blocked}>
-          Cannot be raised
+          {w.groups.notMade}
         </Chip>
         <Chip active={filter === 'exempt'} onClick={() => setFilter('exempt')} count={summary.notRequired}>
-          No bill owed
+          {standingWords.not_required}
         </Chip>
         {lane === null ? null : (
-          <Chip active onClick={() => setLane(null)} count={rows.length}>
-            Lane {laneWords(lane)} — clear
+          <Chip active onClick={() => setLane(null)}>
+            {w.lanes.chip(laneWords(lane))}
+            <span className="num tabular-nums opacity-70">{rows.length}</span>
+            <span aria-hidden="true">×</span>
           </Chip>
         )}
       </div>
 
-      <Section
-        caption="Part A is the consignment, Part B is the vehicle — and only Part B starts the clock"
-        title="Consignments and their bills"
-      >
+      <Section title={w.loads}>
         <DataTable
           density={density}
           columns={columns}
@@ -477,13 +503,9 @@ export function EwayBillConsole() {
             provenance: 'human',
             ...(r.clock.fillRatio === null ? {} : { fillRatio: r.clock.fillRatio }),
           })}
-          empty={
-            <EmptyState
-              fact="No consignment matches this view."
-              because="Either nothing here needs a bill today, or the filter is narrower than the day's dispatch."
-              action={{ label: 'Show everything moving', onClick: clearFilters }}
-            />
-          }
+          // Either nothing here needs a bill today, or the filter is narrower
+          // than the day's dispatch — one button answers both.
+          empty={<EmptyState fact={w.empty} action={{ label: t.common.showAll, onClick: clearFilters }} />}
         />
       </Section>
 
@@ -491,53 +513,44 @@ export function EwayBillConsole() {
 
       <SideSheet
         open={current !== undefined}
-        onClose={() => setSelected(undefined)}
+        // Escape reaches the sheet and the cancel dialogue together, and the
+        // sheet closing unmounts the dialogue before its own handler runs — so
+        // the flag is cleared here, or the next bill opened would arrive with
+        // its cancel dialogue already up.
+        onClose={() => {
+          setSelected(undefined);
+          setCancelOpen(false);
+        }}
         width="form"
         title={current?.bill.customerName ?? ''}
         identifier={
-          current
-            ? (formatEwbNumber(current.bill.ewbNumber) ?? `${current.bill.invoiceNumber} · no bill raised`)
-            : undefined
+          current ? (formatEwbNumber(current.bill.ewbNumber) ?? `${current.bill.invoiceNumber} · ${w.notMade}`) : undefined
         }
         {...(current
           ? {
               status: {
                 family: current.clock.family,
-                label: current.clock.label,
-                ...(current.clock.severity === null ? {} : { severity: current.clock.severity }),
+                label: standingWords[current.clock.standing],
+                ...(currentSeverity === undefined ? {} : { severity: currentSeverity }),
                 ...(current.keyed || current.voided ? { provisional: true } : {}),
               },
             }
           : {})}
-        revision={
-          current
-            ? `ATTEMPT ${current.bill.attempt}${current.bill.generatedAt ? ` · ${formatDate(current.bill.generatedAt)}` : ''}`
-            : undefined
-        }
+        revision={current ? revisionOf(current.bill, t) : undefined}
         footer={
           current && window_ && isCancellable(current.bill) ? (
             <>
               <Button variant="destructive" className="shrink-0" onClick={() => setCancelOpen(true)}>
-                Cancel this e-way bill
+                {w.sheet.cancel}
               </Button>
-              {/* The footer bar is one fixed-height row. Beside a 44px button on
-                  a 375px sheet the full sentence needs four lines and spills out
-                  of it, so the narrow reading states the same fact in one. */}
+              {/* The footer bar is one fixed-height row, so the window is
+                  stated in one short line that fits beside the button on a
+                  375px sheet as well as on a desk. */}
               <span
-                className="font-serif text-[12px] italic leading-snug sm:hidden"
+                className="font-serif text-[12px] italic leading-snug sm:text-[13px]"
                 style={{ color: 'var(--text-tertiary)' }}
               >
-                {window_.open
-                  ? `${ewbTimeLeftLabel(window_.msLeft)} left to cancel`
-                  : `Window shut ${ewbTimeLeftLabel(window_.msLeft)} ago`}
-              </span>
-              <span
-                className="hidden font-serif text-[13px] italic sm:inline"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                {window_.open
-                  ? `The portal accepts a cancellation for another ${ewbTimeLeftLabel(window_.msLeft)}.`
-                  : `The ${EWB_CANCEL_WINDOW_HOURS}-hour window closed ${ewbTimeLeftLabel(window_.msLeft)} ago.`}
+                {window_.open ? w.sheet.cancelLeft(t.common.span(window_.msLeft)) : w.sheet.cancelOver}
               </span>
             </>
           ) : undefined
@@ -567,7 +580,9 @@ export function EwayBillConsole() {
 
       {/* Cancellation is legal for 24 hours after generation and not one minute
           longer, so the console offers two different dialogues rather than one
-          that pretends the rule is negotiable. */}
+          that pretends the rule is negotiable. Cancelling voids the number for
+          the trip: the load cannot move on it afterwards, and a fresh bill is
+          raised as the next attempt. The invoice is not touched. */}
       {current && window_ && window_.open ? (
         <ConfirmModal
           open={cancelOpen}
@@ -575,38 +590,40 @@ export function EwayBillConsole() {
           onConfirm={() =>
             setVoided((s) => ({
               ...s,
-              [current.bill.id]: 'Cancelled from the console inside the 24-hour window',
+              [current.bill.id]: CONSOLE_CANCEL_REASON,
             }))
           }
-          title={`Cancel ${formatEwbNumber(current.bill.ewbNumber) ?? 'this bill'}`}
+          title={w.sheet.confirm.title(formatEwbNumber(current.bill.ewbNumber) ?? current.bill.invoiceNumber)}
           destructive
-          confirmLabel="Cancel the bill"
+          confirmLabel={w.sheet.confirm.yes}
           {...(current.bill.ewbNumber === null ? {} : { confirmPhrase: current.bill.ewbNumber })}
           consequence={
             <>
-              Raised {formatDateTime(current.bill.generatedAt)}, {hoursWords(window_.hoursSince)} ago. The window is still
-              open — it closes {formatDateTime(window_.closesAt)}, in {ewbTimeLeftLabel(window_.msLeft)}. Cancelling
-              voids this number for {current.bill.tripNumber}: the load cannot move on it afterwards, and a fresh bill
-              must be raised as attempt {current.bill.attempt + 1}. Invoice {current.bill.invoiceNumber} is not touched.
+              <p>
+                {w.sheet.confirm.made(formatDateTime(current.bill.generatedAt))}{' '}
+                {w.sheet.confirm.canCancelFor(t.common.span(window_.msLeft))}
+              </p>
+              <p className="mt-2">{w.sheet.confirm.after}</p>
+              <p className="mt-2">{w.sheet.confirm.invoiceStays(current.bill.invoiceNumber)}</p>
             </>
           }
         />
       ) : current && window_ ? (
+        // The portal refuses a late cancellation, and so does this console.
+        // What is left is the accounting route: let the bill run out, settle
+        // with a credit note, and raise fresh papers for whatever moved.
         <Modal
           open={cancelOpen}
           onClose={() => setCancelOpen(false)}
-          title="This bill can no longer be cancelled"
-          footer={<Button onClick={() => setCancelOpen(false)}>Understood</Button>}
+          title={w.sheet.tooLate.title}
+          footer={<Button onClick={() => setCancelOpen(false)}>{t.common.ok}</Button>}
         >
           <p className="font-serif text-[14px] italic" style={{ color: 'var(--text-primary)' }}>
-            {formatEwbNumber(current.bill.ewbNumber)} was raised {formatDateTime(current.bill.generatedAt)}, which is{' '}
-            {hoursWords(window_.hoursSince)} ago. Cancellation is only legal within {EWB_CANCEL_WINDOW_HOURS} hours of
-            generation, and that window shut {ewbTimeLeftLabel(window_.msLeft)} ago. The portal will refuse, and so does
-            this console.
+            {w.sheet.tooLate.made(formatEwbNumber(current.bill.ewbNumber) ?? '', formatDateTime(current.bill.generatedAt))}{' '}
+            {w.sheet.tooLate.rule(EWB_CANCEL_WINDOW_HOURS)}
           </p>
-          <p className="mt-3 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-            What is left is the accounting route: let the bill run out, then settle the consignment with a credit note
-            against {current.bill.invoiceNumber} and raise fresh documents for whatever actually moved.
+          <p className="mt-3 text-[14px]" style={{ color: 'var(--text-secondary)' }}>
+            {w.sheet.tooLate.next(current.bill.invoiceNumber)}
           </p>
         </Modal>
       ) : null}
@@ -641,6 +658,16 @@ function ConsignmentDetail({
   onEnter: (vehicle: string) => void;
   onUndo: () => void;
 }) {
+  const t = useWords(complianceWords);
+  const standingWords = useWords(statusWords).ewb;
+  const w = t.ewb;
+  const s = w.sheet;
+  const L = s.labels;
+  /* A wide field spans two columns, and on a phone the grid has only one: the
+     span then invents a second, auto-sized column and every field after it is
+     squeezed beside its neighbour (in Tamil, on top of it). One column, no
+     spans, below `sm`. */
+  const roomy = useMinWidth('sm');
   const { bill, clock, keyed } = row;
   const value = Number.parseFloat(bill.consignmentValue);
   const threshold = ewbThreshold(bill);
@@ -650,73 +677,60 @@ function ConsignmentDetail({
 
   return (
     <>
-      <SheetSection caption="What this means">
-        <Note>{consequence(row)}</Note>
+      <SheetSection caption={t.common.note}>
+        <Note>{consequence(row, t)}</Note>
       </SheetSection>
 
-      <SheetSection caption="Document">
+      <SheetSection caption={s.bill}>
         <DetailGrid>
-          <Detail label="Raised against">
+          <Detail label={L.invoice}>
             <IdCell>{bill.invoiceNumber}</IdCell>
           </Detail>
-          <Detail label="Trip">
+          <Detail label={L.trip}>
             <IdCell>{bill.tripNumber}</IdCell>
           </Detail>
-          <Detail label="Document date">{formatDate(bill.documentDate)}</Detail>
-          <Detail label="Part A accepted">
-            {bill.generatedAt === null ? 'Never raised' : formatDateTime(bill.generatedAt)}
-          </Detail>
-          <Detail label="Supplier registration" wide>
+          <Detail label={L.invoiceDate}>{formatDate(bill.documentDate)}</Detail>
+          <Detail label={L.madeOn}>{bill.generatedAt === null ? w.notMade : formatDateTime(bill.generatedAt)}</Detail>
+          <Detail label={L.gstin} wide={roomy}>
             <IdCell>{bill.supplierGstin}</IdCell>
-            {supplier ? (
-              <span style={{ color: 'var(--text-secondary)' }}> · {supplier.legalEntityName}</span>
-            ) : null}
+            {supplier ? <span style={{ color: 'var(--text-secondary)' }}> · {supplier.legalEntityName}</span> : null}
           </Detail>
         </DetailGrid>
       </SheetSection>
 
-      <SheetSection caption="Consignment and the limit it lives under">
+      <SheetSection caption={s.load}>
         <DetailGrid>
-          <Detail label="Customer" wide>
+          <Detail label={L.customer} wide={roomy}>
             {bill.customerName}
           </Detail>
-          <Detail label="Material">
+          <Detail label={L.material}>
             {bill.productCode} · HSN <IdCell>{bill.hsnCode}</IdCell>
           </Detail>
-          <Detail label="Consignment value">
+          <Detail label={L.amount}>
             <MoneyCell value={bill.consignmentValue} accounting={false} decimals={0} />
           </Detail>
-          <Detail label="Applicable limit">
+          <Detail label={L.limit}>
             <MoneyCell value={threshold} accounting={false} decimals={0} />
             <span style={{ color: 'var(--text-secondary)' }}>
               {' '}
-              · {bill.movement === 'inter_state' ? 'across a border' : 'inside Tamil Nadu'}
+              · {bill.movement === 'inter_state' ? s.toOtherStates : s.insideTamilNadu}
             </span>
           </Detail>
-          <Detail label="Headroom against the limit">
+          {/* Inside Tamil Nadu the same load would face the ₹50,000 limit the
+              moment it crossed into Karnataka. */}
+          <Detail label={L.difference}>
             {headroom >= 0 ? (
-              <>
-                {formatINR(headroom, { decimals: 0 })} under
-              </>
+              s.below(formatINR(headroom, { decimals: 0 }))
             ) : (
-              <span style={{ color: 'var(--text-primary)' }}>
-                {formatINR(Math.abs(headroom), { decimals: 0 })} over — a bill is owed
-              </span>
+              <span style={{ color: 'var(--text-primary)' }}>{s.above(formatINR(Math.abs(headroom), { decimals: 0 }))}</span>
             )}
           </Detail>
         </DetailGrid>
-        {bill.movement === 'intra_state' ? (
-          <Note>
-            The same load crossing into Karnataka would face a{' '}
-            {formatINR(EWB_INTER_STATE_THRESHOLD, { decimals: 0 })} limit instead, and would owe a bill whatever this
-            one does.
-          </Note>
-        ) : null}
       </SheetSection>
 
-      <SheetSection caption="Route">
+      <SheetSection caption={s.route}>
         <DetailGrid>
-          <Detail label="From">
+          <Detail label={L.from}>
             {bill.fromPlace}
             <span className="font-id" style={{ color: 'var(--text-tertiary)' }}>
               {' '}
@@ -726,7 +740,7 @@ function ConsignmentDetail({
               {GST_STATE_NAMES[bill.fromStateCode] ?? bill.fromStateCode}
             </span>
           </Detail>
-          <Detail label="To">
+          <Detail label={L.to}>
             {bill.toPlace}
             <span className="font-id" style={{ color: 'var(--text-tertiary)' }}>
               {' '}
@@ -736,38 +750,38 @@ function ConsignmentDetail({
               {GST_STATE_NAMES[bill.toStateCode] ?? bill.toStateCode}
             </span>
           </Detail>
-          <Detail label="Movement">{bill.movement === 'inter_state' ? 'Inter-state' : 'Intra-state'}</Detail>
-          <Detail label="Distance">
-            <QuantityCell value={bill.distanceKm} decimals={0} uom="km" />
+          <Detail label={L.type}>{bill.movement === 'inter_state' ? w.otherState : w.insideTn}</Detail>
+          <Detail label={L.distance}>
+            <QuantityCell value={bill.distanceKm} decimals={0} uom={t.common.km} />
           </Detail>
         </DetailGrid>
       </SheetSection>
 
       {clock.partADeadline !== null ? (
-        <SheetSection caption={`Part A window — ${EWB_PART_A_WINDOW_DAYS} days to find a vehicle`}>
+        <SheetSection caption={s.partAWindow}>
           <DetailGrid>
-            <Detail label="Dies at">{formatDateTime(clock.partADeadline)}</Detail>
-            <Detail label="Days left">
+            <Detail label={L.endsAt}>{formatDateTime(clock.partADeadline)}</Detail>
+            <Detail label={L.daysLeft}>
               {clock.partBDaysLeft === null
                 ? '–'
                 : clock.partBDaysLeft > 0
-                  ? `${clock.partBDaysLeft} of ${EWB_PART_A_WINDOW_DAYS}`
-                  : 'Gone'}
+                  ? s.daysOf(clock.partBDaysLeft, EWB_PART_A_WINDOW_DAYS)
+                  : standingWords.part_a_lapsed}
             </Detail>
           </DetailGrid>
           {clock.partBDaysLeft !== null && clock.partBDaysLeft > 0 ? (
             <div className="pt-1">
               <ProportionBar
                 height={20}
-                summary={`${clock.partBDaysLeft} of ${EWB_PART_A_WINDOW_DAYS} days left before Part A dies unused.`}
+                summary={s.windowSummary(clock.partBDaysLeft, EWB_PART_A_WINDOW_DAYS)}
                 segments={[
                   {
-                    label: 'Spent',
+                    label: s.used,
                     value: EWB_PART_A_WINDOW_DAYS - clock.partBDaysLeft,
                     tone: 'var(--chart-5)',
                   },
                   {
-                    label: 'Left',
+                    label: s.leftPart,
                     value: clock.partBDaysLeft,
                     tone: clock.partBDaysLeft <= 3 ? 'var(--status-attention)' : 'var(--chart-2)',
                   },
@@ -775,10 +789,9 @@ function ConsignmentDetail({
               />
             </div>
           ) : (
-            <Note>
-              The window ran out. This number cannot be completed at all — the vehicle goes on a fresh bill, not on this
-              one.
-            </Note>
+            // The window ran out: this number can never be completed, so the
+            // vehicle goes on a fresh bill, not on this one.
+            <Note>{s.windowOver}</Note>
           )}
 
           {/* Entering Part B. The only write that changes the clock: a vehicle
@@ -789,14 +802,14 @@ function ConsignmentDetail({
             keyed ? (
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  Part B keyed as
+                  {s.addedAs}
                 </span>
                 <Provisional confirmed={false}>
                   <span className="font-id text-[13px]">{spacedReg(bill.partBVehicle ?? '')}</span>
                 </Provisional>
-                <Button onClick={onUndo}>Undo Part B</Button>
+                <Button onClick={onUndo}>{t.common.undo}</Button>
                 <span className="w-full font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                  The clock started at 14:42. Still to be acknowledged by the portal.
+                  {s.portalWaiting}
                 </span>
               </div>
             ) : (
@@ -813,14 +826,12 @@ function ConsignmentDetail({
         </SheetSection>
       ) : null}
 
-      <SheetSection caption="Part B and the validity it buys">
+      <SheetSection caption={s.validity}>
         <DetailGrid>
-          <Detail label="Vehicle">
+          <Detail label={L.vehicle}>
             {bill.partBVehicle === null ? (
               bill.partBExemptUnder50km ? (
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  Not required — {bill.distanceKm} km, same state
-                </span>
+                <span style={{ color: 'var(--text-secondary)' }}>{w.notNeededKm(bill.distanceKm)}</span>
               ) : (
                 '–'
               )
@@ -832,34 +843,32 @@ function ConsignmentDetail({
               <span className="font-id">{spacedReg(bill.partBVehicle)}</span>
             )}
           </Detail>
-          <Detail label="Transporter">
+          <Detail label={L.transporter}>
             {bill.transporterName ?? '–'}
-            {interCompany ? (
-              <span style={{ color: 'var(--text-secondary)' }}> · inter-company leg</span>
-            ) : null}
+            {interCompany ? <span style={{ color: 'var(--text-secondary)' }}> · {w.otherCompany}</span> : null}
           </Detail>
-          <Detail label="Part B entered">
+          <Detail label={L.vehicleAdded}>
             {bill.partBEnteredAt === null ? '–' : formatDateTime(bill.partBEnteredAt)}
           </Detail>
-          <Detail label="Validity slab used">
-            {bill.overDimensional
-              ? `1 day per 20 km — over-dimensional cargo`
-              : `1 day per 200 km or part thereof`}
+          {/* One day per 200 km or part thereof; over-dimensional cargo — a
+              plant move, not a tipper load — earns a day per 20 km. */}
+          <Detail label={L.rule}>
+            {s.rule(bill.overDimensional ? EWB_ODC_KM_PER_DAY : EWB_KM_PER_DAY, bill.overDimensional)}
           </Detail>
-          <Detail label="Days granted">
-            {clock.validityDays === null ? '–' : `${clock.validityDays} for ${bill.distanceKm} km`}
+          <Detail label={L.daysGiven}>
+            {clock.validityDays === null ? '–' : s.daysFor(clock.validityDays, bill.distanceKm)}
           </Detail>
-          <Detail label="Valid until">{clock.validUntil === null ? '–' : formatDateTime(clock.validUntil)}</Detail>
-          <Detail label="Time remaining" wide>
+          <Detail label={L.validTill}>{clock.validUntil === null ? '–' : formatDateTime(clock.validUntil)}</Detail>
+          <Detail label={L.timeLeft} wide={roomy}>
             {clock.msLeft === null ? (
               '–'
             ) : clock.msLeft <= 0 ? (
-              <span style={{ color: 'var(--status-critical)' }}>{ewbTimeLeftLabel(clock.msLeft)} ago</span>
+              <span style={{ color: 'var(--status-critical)' }}>{w.ago(t.common.span(clock.msLeft))}</span>
             ) : (
               <span
                 style={{ color: clock.standing === 'expiring' ? 'var(--status-attention)' : 'var(--text-primary)' }}
               >
-                {ewbTimeLeftLabel(clock.msLeft)} left
+                {w.left(t.common.span(clock.msLeft))}
               </span>
             )}
           </Detail>
@@ -871,13 +880,13 @@ function ConsignmentDetail({
               height={20}
               summary={
                 clock.msLeft !== null && clock.msLeft <= 0
-                  ? `Validity fully spent — expired ${ewbTimeLeftLabel(clock.msLeft)} ago.`
-                  : `${Math.round(clock.fillRatio * 100)}% of the granted validity is still unspent.`
+                  ? s.validitySpent(t.common.span(clock.msLeft))
+                  : s.validityLeft(Math.round(clock.fillRatio * 100))
               }
               segments={[
-                { label: 'Run down', value: Math.max(0.001, 1 - clock.fillRatio), tone: 'var(--chart-5)' },
+                { label: s.used, value: Math.max(0.001, 1 - clock.fillRatio), tone: 'var(--chart-5)' },
                 {
-                  label: 'Left',
+                  label: s.leftPart,
                   value: clock.fillRatio,
                   tone:
                     clock.standing === 'expired'
@@ -890,57 +899,52 @@ function ConsignmentDetail({
             />
           </div>
         ) : null}
-
-        {bill.overDimensional ? (
-          <Note>
-            Over-dimensional cargo earns a day per 20 km instead of 200, so {bill.distanceKm} km buys{' '}
-            {ewbValidityWords(bill.distanceKm, true)} rather than one. A plant move is not a tipper load and the portal
-            knows it.
-          </Note>
-        ) : null}
       </SheetSection>
 
-      <SheetSection caption={`Generation attempts on ${bill.tripNumber}`}>
+      <SheetSection caption={s.history}>
         {history.length <= 1 ? (
-          <Note>
-            One attempt. Nothing has been cancelled and regenerated against this trip, so this number is the only paper
-            that has ever existed for the load.
-          </Note>
+          // One attempt: nothing was cancelled and regenerated against this
+          // trip, so this number is the only paper that ever existed for it.
+          <Note>{s.onlyOne}</Note>
         ) : (
           <ul>
-            {history.map((h) => (
-              <li
-                key={h.bill.id}
-                className="flex flex-col gap-1 px-2 py-2"
-                style={{
-                  borderBottom: '1px solid var(--border-subtle)',
-                  background: h.bill.id === bill.id ? 'var(--surface-selected)' : undefined,
-                }}
-              >
-                <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                  <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                    Attempt {h.bill.attempt} ·{' '}
-                    {h.bill.ewbNumber ? (
-                      <IdCell>{formatEwbNumber(h.bill.ewbNumber)}</IdCell>
-                    ) : (
-                      <span style={{ color: 'var(--text-tertiary)' }}>none raised</span>
-                    )}
+            {history.map((h) => {
+              const severity = severityOf(h, t);
+              return (
+                <li
+                  key={h.bill.id}
+                  className="flex flex-col gap-1 px-2 py-2"
+                  style={{
+                    borderBottom: '1px solid var(--border-subtle)',
+                    background: h.bill.id === bill.id ? 'var(--surface-selected)' : undefined,
+                  }}
+                >
+                  <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                      {w.nth(h.bill.attempt)} ·{' '}
+                      {h.bill.ewbNumber ? (
+                        <IdCell>{formatEwbNumber(h.bill.ewbNumber)}</IdCell>
+                      ) : (
+                        <span style={{ color: 'var(--text-tertiary)' }}>{w.notMade}</span>
+                      )}
+                    </span>
+                    <StatusStamp
+                      status={h.clock.family}
+                      label={standingWords[h.clock.standing]}
+                      {...(severity === undefined ? {} : { severity })}
+                      {...(h.keyed || h.voided ? { provisional: true } : {})}
+                    />
                   </span>
-                  <StatusStamp
-                    status={h.clock.family}
-                    label={h.clock.label}
-                    {...(h.clock.severity === null ? {} : { severity: h.clock.severity })}
-                    {...(h.keyed || h.voided ? { provisional: true } : {})}
-                  />
-                </span>
-                <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  Raised {formatDateTime(h.bill.generatedAt)}
-                  {h.bill.cancelledAt === null ? '' : ` · cancelled ${formatDateTime(h.bill.cancelledAt)}`}
-                  {h.bill.partBVehicle === null ? '' : ` · ${spacedReg(h.bill.partBVehicle)}`}
-                </span>
-                {h.bill.cancelReason ? <Note>{h.bill.cancelReason}</Note> : null}
-              </li>
-            ))}
+                  <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                    {s.made(formatDateTime(h.bill.generatedAt))}
+                    {h.bill.cancelledAt === null ? '' : ` · ${s.cancelledAt(formatDateTime(h.bill.cancelledAt))}`}
+                    {h.bill.partBVehicle === null ? '' : ` · ${spacedReg(h.bill.partBVehicle)}`}
+                  </span>
+                  {/* A reason somebody typed is shown as typed. */}
+                  {h.voided ? <Note>{w.say.cancelledHere}</Note> : h.bill.cancelReason ? <Note>{h.bill.cancelReason}</Note> : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </SheetSection>
@@ -954,7 +958,8 @@ function ConsignmentDetail({
  * The number goes in unspaced because that is what the portal accepts, and the
  * button stays disabled until the pattern is one a registration plate can
  * actually take — rejecting it after submission would mean losing the clock to
- * a typo.
+ * a typo. Spaces and dashes are stripped before the check, so the only fix
+ * worth saying is the shape of a real number.
  */
 function PartBEntry({
   bill,
@@ -971,33 +976,41 @@ function PartBEntry({
   fleet: { reg: string; label: string; model: string }[];
   onEnter: (vehicle: string) => void;
 }) {
+  const t = useWords(complianceWords);
+  const s = t.ewb.sheet;
   const cleaned = draft.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
   const valid = /^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}$/.test(cleaned);
+  const wrong = draft !== '' && !valid;
 
   return (
-    <div className="mt-3 flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2">
+    <div className="mt-3 flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:gap-x-3 sm:gap-y-2">
       {/* Full measure on a phone, 190px once there is a row to sit in. The
           height follows the same rule as Button: 44px where the pointer cannot
-          hover, 34px on a desk where density is the point. */}
-      <input
-        value={draft}
-        onChange={(e) => onDraft(e.target.value)}
-        list="ewb-fleet"
-        placeholder="TN29AB1015"
-        aria-label="Part B vehicle number"
-        inputMode="text"
-        autoCapitalize="characters"
-        autoCorrect="off"
-        autoComplete="off"
-        spellCheck={false}
-        className="font-id h-11 w-full px-2 text-[14px] uppercase sm:w-[190px] [@media(hover:hover)]:h-[34px]"
-        style={{
-          background: 'var(--surface)',
-          color: 'var(--text-primary)',
-          boxShadow: 'inset 0 0 0 1px var(--border-strong)',
-          borderRadius: 'var(--r-1)',
-        }}
-      />
+          hover, 38px on a desk. */}
+      <label className="flex w-full flex-col gap-1 sm:w-[190px]">
+        <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+          {s.vehicleNo}
+        </span>
+        <input
+          value={draft}
+          onChange={(e) => onDraft(e.target.value)}
+          list="ewb-fleet"
+          placeholder={PLATE_EXAMPLE}
+          inputMode="text"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          aria-invalid={wrong}
+          className="font-id h-11 w-full px-2 text-[14px] uppercase [@media(hover:hover)]:h-[38px]"
+          style={{
+            background: 'var(--surface)',
+            color: 'var(--text-primary)',
+            boxShadow: `inset 0 0 0 1px ${wrong ? 'var(--status-attention)' : 'var(--border-strong)'}`,
+            borderRadius: 'var(--r-1)',
+          }}
+        />
+      </label>
       <datalist id="ewb-fleet">
         {fleet.map((v) => (
           <option key={v.reg} value={v.reg}>
@@ -1005,21 +1018,16 @@ function PartBEntry({
           </option>
         ))}
       </datalist>
-      <Button
-        variant="primary"
-        disabled={!valid}
-        onClick={() => onEnter(cleaned)}
-        className="w-full sm:w-auto"
-      >
-        Enter Part B and start the clock
+      <Button variant="primary" disabled={!valid} onClick={() => onEnter(cleaned)} className="w-full sm:w-auto">
+        {s.add}
       </Button>
-      <span className="w-full font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-        {draft !== '' && !valid
-          ? 'That is not a registration number the portal will take. No spaces, no dashes.'
-          : `${daysLeft ?? 0}d left on Part A. Entering it grants ${ewbValidityWords(
-              bill.distanceKm,
-              bill.overDimensional,
-            )}.`}
+      <span
+        className="w-full font-serif text-[13px] italic"
+        style={{ color: wrong ? 'var(--status-attention)' : 'var(--text-tertiary)' }}
+      >
+        {wrong
+          ? s.typeLike(PLATE_EXAMPLE)
+          : s.hint(daysLeft ?? 0, ewbValidityDays(bill.distanceKm, bill.overDimensional))}
       </span>
     </div>
   );
@@ -1032,7 +1040,7 @@ function laneKey(bill: EwayBill): string {
 }
 
 function laneLabel(from: string, to: string, count: number): string {
-  return `${GST_STATE_ABBR[from] ?? from} → ${GST_STATE_ABBR[to] ?? to} · ${count}`;
+  return `${GST_STATE_ABBR[from] ?? from} → ${GST_STATE_ABBR[to] ?? to} (${count})`;
 }
 
 function laneWords(key: string): string {
@@ -1049,10 +1057,8 @@ function isCancellable(bill: EwayBill): boolean {
 
 interface CancelWindow {
   open: boolean;
-  hoursSince: number;
   /** Positive while the window is open, negative once it has shut. */
   msLeft: number;
-  closesAt: string;
 }
 
 /**
@@ -1063,20 +1069,11 @@ interface CancelWindow {
  */
 function cancelWindow(bill: EwayBill, now: Date): CancelWindow | null {
   if (!bill.generatedAt) return null;
-  const generated = Date.parse(bill.generatedAt);
-  const closes = generated + EWB_CANCEL_WINDOW_HOURS * HOUR_MS;
+  const closes = Date.parse(bill.generatedAt) + EWB_CANCEL_WINDOW_HOURS * HOUR_MS;
   return {
     open: now.getTime() < closes,
-    hoursSince: (now.getTime() - generated) / HOUR_MS,
     msLeft: closes - now.getTime(),
-    closesAt: new Date(closes).toISOString(),
   };
-}
-
-function hoursWords(hours: number): string {
-  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} minutes`;
-  if (hours < 48) return `${Math.round(hours)} hours`;
-  return `${Math.round(hours / 24)} days`;
 }
 
 function spacedReg(reg: string): string {
@@ -1084,41 +1081,85 @@ function spacedReg(reg: string): string {
   return m ? `${m[1]} ${m[2]} ${m[3]} ${m[4]}` : reg;
 }
 
-function ewbValidityWords(distanceKm: number, odc: boolean): string {
-  const days = Math.max(1, Math.ceil(distanceKm / (odc ? 20 : 200)));
-  return `${days} day${days === 1 ? '' : 's'} at 1 day per ${odc ? 20 : 200} km`;
+/** A return period as the data writes it ("May 2026"), in the reader's language. */
+function periodWords(period: string, t: ComplianceWords): string {
+  const m = /^([A-Za-z]+) (\d{4})$/.exec(period);
+  const index = m ? ENGLISH_MONTH_NAMES.indexOf(m[1] ?? '') : -1;
+  return m && index >= 0 ? t.common.monthLong(index, Number(m[2])) : period;
+}
+
+/** `2nd bill · 08-08-2026` under the sheet title. A first bill needs no number. */
+function revisionOf(bill: EwayBill, t: ComplianceWords): string | undefined {
+  const parts = [bill.attempt > 1 ? t.ewb.nth(bill.attempt) : null, bill.generatedAt ? formatDate(bill.generatedAt) : null].filter(
+    (p): p is string => p !== null,
+  );
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+/**
+ * The integer beside the status word, in the reader's language: days on the
+ * Part A window, time left (or since) on a running bill, and how long after
+ * it was raised a bill was cancelled. The same figures the clock carries.
+ */
+function severityOf(row: Row, t: ComplianceWords): string | undefined {
+  const { bill, clock } = row;
+  switch (clock.standing) {
+    case 'part_b_pending':
+    case 'part_a_lapsed':
+      return clock.partBDaysLeft === null ? undefined : t.common.daysShort(Math.abs(clock.partBDaysLeft));
+    case 'active':
+    case 'expiring':
+    case 'expired':
+      return clock.msLeft === null ? undefined : t.common.span(clock.msLeft);
+    case 'cancelled':
+      return bill.cancelledAt && bill.generatedAt
+        ? t.common.hours(Math.round((Date.parse(bill.cancelledAt) - Date.parse(bill.generatedAt)) / HOUR_MS))
+        : undefined;
+    default:
+      return undefined;
+  }
 }
 
 /**
  * What the row means, in the words the person at the check post would use.
  * Every standing gets a different sentence — an expired bill and a load that
  * never needed one are not the same fact and must never share copy.
+ *
+ * The why behind each, kept here: an expired bill on a moving load is
+ * detention and penalty under section 129; an extension can be filed 8 hours
+ * either side of expiry, only while the vehicle is in transit; a lapsed Part
+ * A can never be completed; a 138E block lifts only when the returns are
+ * filed.
  */
-function consequence(row: Row): string {
+function consequence(row: Row, t: ComplianceWords): string {
   const { bill, clock } = row;
-  const headroom = ewbThreshold(bill) - Number.parseFloat(bill.consignmentValue);
+  const say = t.ewb.say;
 
   switch (clock.standing) {
-    case 'not_required':
-      return `${bill.exemptReason ?? 'Below the limit for this movement'} — ${formatINR(headroom, { decimals: 0 })} of headroom. The invoice alone carries this load.`;
+    case 'not_required': {
+      // Below the limit is the everyday case and is worded from the numbers.
+      // Any other exemption is shown as it was recorded.
+      const headroom = ewbThreshold(bill) - Number.parseFloat(bill.consignmentValue);
+      if (headroom >= 0) return say.notNeeded;
+      return bill.exemptReason ? `${say.notNeededShort} ${bill.exemptReason}` : say.notNeededShort;
+    }
     case 'blocked':
-      return `${gstinStanding(bill.supplierGstin)?.legalEntityName ?? 'This registration'} is blocked under Rule 138E. Nothing can be raised on this GSTIN until the returns are filed.`;
+      return say.blocked;
     case 'to_generate':
-      return 'Part A has not been raised. The tipper does not leave the gate on this one.';
+      return say.toMake;
     case 'part_b_pending':
-      return `Part A dies in ${clock.partBDaysLeft} days. Key the vehicle number before then, or raise the bill again from scratch.`;
+      return say.addVehicle(clock.partBDaysLeft ?? 0);
     case 'part_a_lapsed':
-      return `Part A stood ${EWB_PART_A_WINDOW_DAYS} days without a vehicle number and is now dead. This number cannot be completed — generate a fresh bill.`;
+      return say.lapsed;
     case 'active':
-      return bill.partBExemptUnder50km
-        ? `Under ${EWB_PART_B_EXEMPT_KM} km inside Tamil Nadu, consignor to transporter — Part B is not required. The blank is correct.`
-        : `Valid until ${formatDateTime(clock.validUntil)} — ${ewbValidityWords(bill.distanceKm, bill.overDimensional)}.`;
+      return bill.partBExemptUnder50km ? say.under50(EWB_PART_B_EXEMPT_KM) : say.validTill(formatDateTime(clock.validUntil));
     case 'expiring':
-      return `Runs out at ${formatDateTime(clock.validUntil)}. Extension can be filed 8 hours either side of expiry, and only while the vehicle is still in transit.`;
+      return say.endsSoon(formatDateTime(clock.validUntil));
     case 'expired':
-      return `Expired ${ewbTimeLeftLabel(clock.msLeft ?? 0)} ago. A load moving on this number is detention and penalty under section 129.`;
+      return say.expired;
     case 'cancelled':
-      return `Cancelled ${clock.severity ?? ''} after generation, inside the 24-hour window. ${bill.cancelReason ?? ''}`;
+      if (row.voided) return say.cancelledHere;
+      return bill.cancelReason ? `${say.cancelled} ${bill.cancelReason}` : say.cancelled;
     default:
       return '';
   }
@@ -1126,242 +1167,232 @@ function consequence(row: Row): string {
 
 /* ----------------------------------------------------------------- columns */
 
-const columns: Column<Row>[] = [
-  {
-    key: 'ewb',
-    header: 'EWB number',
-    type: 'id',
-    sticky: true,
-    width: 196,
-    group: 'Document',
-    render: (r) => (
-      <Stacked
-        primary={
-          r.bill.ewbNumber ? (
-            <IdCell>{formatEwbNumber(r.bill.ewbNumber)}</IdCell>
-          ) : (
-            <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              none raised
-            </span>
-          )
-        }
-        secondary={r.bill.generatedAt ? formatDate(r.bill.generatedAt) : formatDate(r.bill.documentDate)}
-      />
-    ),
-  },
-  {
-    key: 'against',
-    header: 'Against',
-    width: 172,
-    group: 'Document',
-    render: (r) => (
-      <Stacked
-        primary={<span className="font-id text-[12px]">{r.bill.invoiceNumber}</span>}
-        secondary={
-          r.bill.attempt > 1
-            ? `${r.bill.tripNumber} · attempt ${r.bill.attempt}`
-            : r.bill.tripNumber
-        }
-      />
-    ),
-  },
-  {
-    key: 'customer',
-    header: 'Customer',
-    width: 216,
-    group: 'Consignment',
-    render: (r) => <Stacked primary={r.bill.customerName} secondary={`${r.bill.productCode} · HSN ${r.bill.hsnCode}`} />,
-  },
-  {
-    key: 'movement',
-    header: 'Movement',
-    width: 146,
-    group: 'Consignment',
-    // The asymmetry, said in words inside its own column. A boxed rule marks
-    // inter-state so the distinction survives with every hue stripped out.
-    render: (r) => (
-      <Stacked
-        primary={
-          r.bill.movement === 'inter_state' ? (
-            <span
-              className="inline-flex h-[18px] items-center px-1.5 text-[11px] font-medium uppercase tracking-[0.06em]"
-              style={{
-                boxShadow: 'inset 0 0 0 1px var(--border-strong)',
-                borderRadius: 'var(--r-1)',
-                color: 'var(--text-primary)',
-              }}
-            >
-              Inter-state
-            </span>
-          ) : (
-            <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-secondary)' }}>
-              Intra-state
-            </span>
-          )
-        }
-        secondary={`limit ${formatINR(ewbThreshold(r.bill), { decimals: 0 })}`}
-      />
-    ),
-  },
-  {
-    key: 'route',
-    header: 'From → to',
-    width: 208,
-    group: 'Consignment',
-    render: (r) => (
-      <span
-        title={`${GST_STATE_NAMES[r.bill.fromStateCode] ?? r.bill.fromStateCode} to ${GST_STATE_NAMES[r.bill.toStateCode] ?? r.bill.toStateCode}`}
-      >
+/**
+ * The console's columns, in the reader's language. No supra-header groups —
+ * each header already names its column, and a second row of captions was a
+ * second set of words to read before the first row of data.
+ */
+function makeColumns(t: ComplianceWords, standingWords: Record<EwbStanding, string>): Column<Row>[] {
+  const w = t.ewb;
+  return [
+    {
+      key: 'ewb',
+      header: w.columns.number,
+      type: 'id',
+      sticky: true,
+      width: 196,
+      render: (r) => (
         <Stacked
-          primary={`${r.bill.fromPlace} → ${r.bill.toPlace}`}
-          secondary={
-            <span className="font-id">
-              {r.bill.fromStateCode} {GST_STATE_ABBR[r.bill.fromStateCode] ?? ''} → {r.bill.toStateCode}{' '}
-              {GST_STATE_ABBR[r.bill.toStateCode] ?? ''}
-            </span>
+          primary={
+            r.bill.ewbNumber ? (
+              <IdCell>{formatEwbNumber(r.bill.ewbNumber)}</IdCell>
+            ) : (
+              <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
+                {w.notMade}
+              </span>
+            )
           }
-        />
-      </span>
-    ),
-  },
-  {
-    key: 'value',
-    header: 'Value',
-    unit: '₹',
-    type: 'money',
-    width: 128,
-    group: 'Consignment',
-    render: (r) => <MoneyCell value={r.bill.consignmentValue} decimals={0} />,
-  },
-  {
-    key: 'partb',
-    header: 'Part B vehicle',
-    width: 208,
-    group: 'Vehicle',
-    render: (r) => {
-      const { bill, clock, keyed } = r;
-      if (bill.partBExemptUnder50km && bill.partBVehicle === null) {
-        return (
-          <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-secondary)' }}>
-            Not required — {bill.distanceKm} km, same state
-          </span>
-        );
-      }
-      if (bill.partBVehicle === null) {
-        return clock.standing === 'part_b_pending' || clock.standing === 'part_a_lapsed' ? (
-          <span
-            className="text-[12px]"
-            style={{ color: clock.standing === 'part_a_lapsed' ? 'var(--status-critical)' : 'var(--text-secondary)' }}
-          >
-            {clock.standing === 'part_a_lapsed'
-              ? 'Never entered — window gone'
-              : `Awaiting a vehicle · ${clock.partBDaysLeft}d of ${EWB_PART_A_WINDOW_DAYS} left`}
-          </span>
-        ) : null;
-      }
-      const interCompany = bill.transporterGstin !== null && bill.transporterGstin !== bill.supplierGstin;
-      const reg = <span className="font-id">{spacedReg(bill.partBVehicle)}</span>;
-      return (
-        <Stacked
-          primary={keyed ? <Provisional confirmed={false}>{reg}</Provisional> : reg}
-          secondary={
-            interCompany ? `${bill.transporterName} — inter-company leg` : (bill.transporterName ?? undefined)
-          }
-        />
-      );
-    },
-  },
-  {
-    key: 'validUntil',
-    header: 'Valid until',
-    width: 156,
-    group: 'Validity',
-    render: (r) =>
-      r.clock.validUntil === null ? null : (
-        <Stacked
-          primary={formatDateTime(r.clock.validUntil)}
-          secondary={`${r.clock.validityDays}d granted${r.bill.overDimensional ? ' · ODC' : ''}`}
+          secondary={r.bill.generatedAt ? formatDate(r.bill.generatedAt) : formatDate(r.bill.documentDate)}
         />
       ),
-  },
-  {
-    key: 'distance',
-    header: 'Distance',
-    unit: 'km',
-    type: 'num',
-    width: 106,
-    group: 'Validity',
-    render: (r) => (
-      <Stacked
-        primary={<QuantityCell value={r.bill.distanceKm} decimals={0} />}
-        secondary={r.bill.overDimensional ? '1d / 20 km' : '1d / 200 km'}
-      />
-    ),
-  },
-  {
-    key: 'left',
-    header: 'Time left',
-    width: 122,
-    group: 'Validity',
-    render: (r) => {
-      if (r.clock.msLeft === null) {
-        // A Part A with no Part B has a clock of its own — a different one.
-        return r.clock.partBDaysLeft === null ? null : (
-          <span className="num tabular-nums text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-            Part A {r.clock.partBDaysLeft > 0 ? `${r.clock.partBDaysLeft}d` : 'gone'}
+    },
+    {
+      key: 'against',
+      header: w.columns.invoice,
+      width: 172,
+      render: (r) => (
+        <Stacked
+          primary={<span className="font-id text-[12px]">{r.bill.invoiceNumber}</span>}
+          secondary={r.bill.attempt > 1 ? `${r.bill.tripNumber} · ${w.nth(r.bill.attempt)}` : r.bill.tripNumber}
+        />
+      ),
+    },
+    {
+      key: 'customer',
+      header: w.columns.customer,
+      width: 216,
+      render: (r) => <Stacked primary={r.bill.customerName} secondary={`${r.bill.productCode} · HSN ${r.bill.hsnCode}`} />,
+    },
+    {
+      key: 'movement',
+      header: w.columns.type,
+      width: 150,
+      // The asymmetry, said in words inside its own column. A boxed rule marks
+      // a load leaving the state so the distinction survives with every hue
+      // stripped out.
+      render: (r) => (
+        <Stacked
+          primary={
+            r.bill.movement === 'inter_state' ? (
+              <span
+                className="inline-flex min-h-[20px] items-center px-1.5 text-[11px] font-medium uppercase tracking-[0.06em]"
+                style={{
+                  boxShadow: 'inset 0 0 0 1px var(--border-strong)',
+                  borderRadius: 'var(--r-1)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                {w.otherState}
+              </span>
+            ) : (
+              <span className="text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-secondary)' }}>
+                {w.insideTn}
+              </span>
+            )
+          }
+          secondary={w.limit(formatINR(ewbThreshold(r.bill), { decimals: 0 }))}
+        />
+      ),
+    },
+    {
+      key: 'route',
+      header: w.columns.route,
+      width: 208,
+      render: (r) => (
+        <span
+          title={w.routeTitle(
+            GST_STATE_NAMES[r.bill.fromStateCode] ?? r.bill.fromStateCode,
+            GST_STATE_NAMES[r.bill.toStateCode] ?? r.bill.toStateCode,
+          )}
+        >
+          <Stacked
+            primary={`${r.bill.fromPlace} → ${r.bill.toPlace}`}
+            secondary={
+              <span className="font-id">
+                {r.bill.fromStateCode} {GST_STATE_ABBR[r.bill.fromStateCode] ?? ''} → {r.bill.toStateCode}{' '}
+                {GST_STATE_ABBR[r.bill.toStateCode] ?? ''}
+              </span>
+            }
+          />
+        </span>
+      ),
+    },
+    {
+      key: 'value',
+      header: w.columns.amount,
+      unit: '₹',
+      type: 'money',
+      width: 128,
+      render: (r) => <MoneyCell value={r.bill.consignmentValue} decimals={0} />,
+    },
+    {
+      key: 'partb',
+      header: w.columns.vehicle,
+      width: 208,
+      render: (r) => {
+        const { bill, clock, keyed } = r;
+        if (bill.partBExemptUnder50km && bill.partBVehicle === null) {
+          return (
+            <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-secondary)' }}>
+              {w.notNeededKm(bill.distanceKm)}
+            </span>
+          );
+        }
+        if (bill.partBVehicle === null) {
+          return clock.standing === 'part_b_pending' || clock.standing === 'part_a_lapsed' ? (
+            <span
+              className="text-[12px]"
+              style={{ color: clock.standing === 'part_a_lapsed' ? 'var(--status-critical)' : 'var(--text-secondary)' }}
+            >
+              {clock.standing === 'part_a_lapsed' ? w.notAddedInTime : w.kpi.addWithin(clock.partBDaysLeft ?? 0)}
+            </span>
+          ) : null;
+        }
+        // A vehicle that belongs to another of the group's companies.
+        const interCompany = bill.transporterGstin !== null && bill.transporterGstin !== bill.supplierGstin;
+        const reg = <span className="font-id">{spacedReg(bill.partBVehicle)}</span>;
+        return (
+          <Stacked
+            primary={keyed ? <Provisional confirmed={false}>{reg}</Provisional> : reg}
+            secondary={
+              interCompany ? `${bill.transporterName ?? ''} · ${w.otherCompany}` : (bill.transporterName ?? undefined)
+            }
+          />
+        );
+      },
+    },
+    {
+      key: 'validUntil',
+      header: w.columns.validTill,
+      width: 156,
+      render: (r) =>
+        r.clock.validUntil === null ? null : (
+          <Stacked
+            primary={formatDateTime(r.clock.validUntil)}
+            secondary={`${t.common.days(r.clock.validityDays ?? 0)}${r.bill.overDimensional ? ` · ${w.oversize}` : ''}`}
+          />
+        ),
+    },
+    {
+      key: 'distance',
+      header: w.columns.distance,
+      unit: t.common.km,
+      type: 'num',
+      width: 106,
+      render: (r) => <QuantityCell value={r.bill.distanceKm} decimals={0} />,
+    },
+    {
+      key: 'left',
+      header: w.columns.timeLeft,
+      width: 128,
+      render: (r) => {
+        if (r.clock.msLeft === null) {
+          // A Part A with no Part B has a clock of its own — a different one.
+          return r.clock.partBDaysLeft === null ? null : (
+            <span className="num tabular-nums text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+              {r.clock.partBDaysLeft > 0 ? w.partA(r.clock.partBDaysLeft) : w.partALapsed}
+            </span>
+          );
+        }
+        const dead = r.clock.msLeft <= 0;
+        const span = t.common.span(r.clock.msLeft);
+        return (
+          <span
+            className="num tabular-nums"
+            style={{
+              color: dead
+                ? 'var(--status-critical)'
+                : r.clock.standing === 'expiring'
+                  ? 'var(--status-attention)'
+                  : undefined,
+            }}
+          >
+            {dead ? w.ago(span) : span}
           </span>
         );
-      }
-      const dead = r.clock.msLeft <= 0;
-      return (
+      },
+    },
+    {
+      key: 'standing',
+      header: w.columns.status,
+      type: 'status',
+      width: 186,
+      render: (r) => (
+        <StatusStamp
+          status={r.clock.family}
+          label={standingWords[r.clock.standing]}
+          severity={severityOf(r, t)}
+          fillRatio={r.clock.fillRatio ?? undefined}
+          provisional={r.keyed || r.voided}
+        />
+      ),
+    },
+    {
+      key: 'note',
+      header: t.common.note,
+      render: (r) => (
         <span
-          className="num tabular-nums"
+          className="font-serif text-[13px] italic"
           style={{
-            color: dead
-              ? 'var(--status-critical)'
-              : r.clock.standing === 'expiring'
-                ? 'var(--status-attention)'
-                : undefined,
+            color:
+              r.clock.standing === 'expired' || r.clock.standing === 'part_a_lapsed' || r.clock.standing === 'blocked'
+                ? 'var(--status-critical)'
+                : 'var(--text-secondary)',
           }}
         >
-          {ewbTimeLeftLabel(r.clock.msLeft)}
-          {dead ? ' ago' : ''}
+          {consequence(r, t)}
         </span>
-      );
+      ),
     },
-  },
-  {
-    key: 'standing',
-    header: 'Standing',
-    type: 'status',
-    width: 186,
-    group: 'Standing',
-    render: (r) => (
-      <StatusStamp
-        status={r.clock.family}
-        label={r.clock.label}
-        severity={r.clock.severity ?? undefined}
-        fillRatio={r.clock.fillRatio ?? undefined}
-        provisional={r.keyed || r.voided}
-      />
-    ),
-  },
-  {
-    key: 'note',
-    header: 'What it means',
-    group: 'Standing',
-    render: (r) => (
-      <span
-        className="font-serif text-[13px] italic"
-        style={{
-          color:
-            r.clock.standing === 'expired' || r.clock.standing === 'part_a_lapsed' || r.clock.standing === 'blocked'
-              ? 'var(--status-critical)'
-              : 'var(--text-secondary)',
-        }}
-      >
-        {consequence(r)}
-      </span>
-    ),
-  },
-];
+  ];
+}

@@ -43,6 +43,11 @@ APP_PASSWORD = os.environ.get("LINCK_TEST_APP_PASSWORD", "linck_app")
 # nothing behind that the next run cannot identify and sweep.
 SLUG_PREFIX = "zz-test-"
 
+# The schemas migration 0011 created, and its tables the app role may only
+# INSERT into and read, like core.audit_logs.
+GRANTED_SCHEMAS = ("master", "sales", "fleet", "finance")
+APPEND_ONLY_TABLES = ("finance.payments", "finance.expense_bill_events")
+
 
 def _split(url: str) -> tuple[str, int, str]:
     parts = urlsplit(url)
@@ -84,6 +89,25 @@ def _provision_app_role() -> None:
         # the migration, which targets PUBLIC rather than a named role.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE ON core.audit_logs FROM {}").format(role))
 
+        # The business schemas migration 0011 created grant linck_app what core
+        # does, from the migration itself. Only where the role did not exist when
+        # the migration ran (so it skipped the grants) are they restated here,
+        # append-only tables included; otherwise the suite tests the
+        # migration's own grants rather than this file's.
+        cur.execute(
+            "SELECT nspname FROM pg_namespace"
+            " WHERE nspname = ANY(%s) AND NOT has_schema_privilege(%s, oid, 'USAGE')",
+            (list(GRANTED_SCHEMAS), APP_ROLE),
+        )
+        for (schema,) in cur.fetchall():
+            name = sql.Identifier(schema)
+            cur.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(name, role))
+            dml = sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {}")
+            cur.execute(dml.format(name, role))
+            for table in APPEND_ONLY_TABLES:
+                if table.startswith(f"{schema}."):
+                    cur.execute(sql.SQL("REVOKE UPDATE, DELETE ON {} FROM {}").format(sql.SQL(table), role))
+
 
 _provision_app_role()
 
@@ -108,21 +132,31 @@ class Tenant:
 
 # Child-first. organization_id carries ON DELETE RESTRICT, so nothing is cascaded
 # for us and the order below is load-bearing. audit_logs comes LAST of the
-# children: five of the tables above carry the audit trigger, so deleting them
+# children: most of these tables carry the audit trigger, so deleting them
 # writes fresh audit rows, and clearing the log any earlier would leave them.
 _TEARDOWN_ORDER = [
-    "whatsapp_messages",
-    "sessions",
-    "user_identities",
-    "role_assignments",
-    "role_permissions",
-    "invitations",
-    "roles",
-    "sites",
-    "gst_registrations",
-    "legal_entities",
-    "organization_modules",
-    "users",
+    "finance.expense_bill_events",
+    "finance.expense_bill_fields",
+    "finance.expense_bills",
+    "finance.payments",
+    "finance.whatsapp_import_claims",
+    "finance.whatsapp_import_batches",
+    "fleet.breakdowns",
+    "sales.purchase_orders",
+    "master.parties",
+    "core.files",
+    "core.whatsapp_messages",
+    "core.sessions",
+    "core.user_identities",
+    "core.role_assignments",
+    "core.role_permissions",
+    "core.invitations",
+    "core.roles",
+    "core.sites",
+    "core.gst_registrations",
+    "core.legal_entities",
+    "core.organization_modules",
+    "core.users",
 ]
 
 # Those trigger-written rows are stamped from app.current_org_id, which is unset
@@ -139,7 +173,7 @@ def _delete_orgs(cur: psycopg.Cursor, org_ids: list[uuid.UUID]) -> None:
     if not org_ids:
         return
     for table in _TEARDOWN_ORDER:
-        cur.execute(f"DELETE FROM core.{table} WHERE organization_id = ANY(%s)", (org_ids,))
+        cur.execute(f"DELETE FROM {table} WHERE organization_id = ANY(%s)", (org_ids,))
     cur.execute(_DELETE_AUDIT, {"ids": org_ids})
     cur.execute("DELETE FROM core.organizations WHERE id = ANY(%s)", (org_ids,))
 
@@ -289,3 +323,119 @@ def tenant_a(make_tenant: Callable[..., Tenant]) -> Tenant:
 @pytest.fixture(scope="session")
 def tenant_b(make_tenant: Callable[..., Tenant]) -> Tenant:
     return make_tenant("bravo")
+
+
+@dataclass(frozen=True)
+class Person:
+    """A signed-in user: a pre-registered row, a role with exactly these keys, and a live session."""
+
+    user_id: uuid.UUID
+    name: str
+    headers: dict[str, str]
+
+    @property
+    def actor_id(self) -> str:
+        return f"user:{self.user_id}"
+
+
+@pytest.fixture(scope="session")
+def make_site(admin: psycopg.Connection) -> Callable[..., uuid.UUID]:
+    """A further site in a tenant, for the tests where scope is the point."""
+
+    def _make(tenant: Tenant, name: str, site_type: str = "workshop") -> uuid.UUID:
+        site_id = uuid.uuid4()
+        with admin.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO core.sites
+                    (id, organization_id, legal_entity_id, code, name, site_type, state_code)
+                VALUES (%s, %s, %s, %s, %s, %s, '33')
+                """,
+                (site_id, tenant.org_id, tenant.legal_entity_id, f"SITE-{site_id.hex[:8]}", name, site_type),
+            )
+        return site_id
+
+    return _make
+
+
+@pytest.fixture(scope="session")
+def make_person(admin: psycopg.Connection, make_user: Callable[..., uuid.UUID]) -> Callable[..., Person]:
+    """Someone holding `permissions` org-wide, or only at `sites`, already signed in.
+
+    The session row and the signed cookie are the real ones the API reads, so
+    every request a test makes goes through the same authentication, RLS and
+    grant checks as the browser's.
+    """
+    from app.api.deps import session_cookie_name, sign_session_cookie
+
+    def _make(
+        tenant: Tenant,
+        name: str,
+        permissions: tuple[str, ...] | list[str],
+        *,
+        sites: list[uuid.UUID] | None = None,
+    ) -> Person:
+        user_id = make_user(tenant, f"person-{uuid.uuid4().hex[:12]}@example.com", name)
+        role_id = uuid.uuid4()
+        session_id = uuid.uuid4()
+        with admin.cursor() as cur:
+            cur.execute(
+                "INSERT INTO core.roles (id, organization_id, key, label) VALUES (%s, %s, %s, %s)",
+                (role_id, tenant.org_id, f"test-{role_id.hex[:12]}", name),
+            )
+            for key in permissions:
+                cur.execute(
+                    "INSERT INTO core.role_permissions (organization_id, role_id, permission_key)"
+                    " VALUES (%s, %s, %s)",
+                    (tenant.org_id, role_id, key),
+                )
+            for site_id in sites if sites is not None else [None]:
+                cur.execute(
+                    "INSERT INTO core.role_assignments (organization_id, user_id, role_id, site_id)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (tenant.org_id, user_id, role_id, site_id),
+                )
+            cur.execute(
+                """
+                INSERT INTO core.sessions (id, organization_id, user_id, refresh_token_hash, expires_at)
+                VALUES (%s, %s, %s, 'test-only', now() + interval '1 hour')
+                """,
+                (session_id, tenant.org_id, user_id),
+            )
+        cookie = f"{session_cookie_name()}={sign_session_cookie(session_id, tenant.org_id)}"
+        return Person(user_id=user_id, name=name, headers={"Cookie": cookie})
+
+    return _make
+
+
+@pytest.fixture
+async def api():  # type: ignore[no-untyped-def]
+    """`api(person)` is an HTTP client signed in as that person, against the real app in-process."""
+    import httpx
+
+    from app.main import app
+
+    clients: list[httpx.AsyncClient] = []
+
+    def _client(person: Person | None = None) -> httpx.AsyncClient:
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://api",
+            headers=person.headers if person else {},
+        )
+        clients.append(client)
+        return client
+
+    yield _client
+    for client in clients:
+        await client.aclose()
+
+
+@pytest.fixture
+def file_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Uploaded scans go to a directory of this test's own."""
+    from app.core.settings import get_settings
+
+    root = tmp_path / "files"
+    monkeypatch.setattr(get_settings(), "file_storage_dir", str(root))
+    return root

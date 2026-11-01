@@ -40,6 +40,7 @@ core.users cannot leak a name, a phone number or an email through them.
 Revision ID: 0004_identity_role
 Revises: 0003_resolve_ambiguity
 """
+
 from collections.abc import Sequence
 
 from alembic import op

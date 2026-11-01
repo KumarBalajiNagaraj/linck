@@ -39,6 +39,7 @@ TWO CHANGES:
 Revision ID: 0005_audit_writer
 Revises: 0004_identity_role
 """
+
 from collections.abc import Sequence
 
 from alembic import op

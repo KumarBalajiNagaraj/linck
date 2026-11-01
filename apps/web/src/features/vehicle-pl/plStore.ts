@@ -110,9 +110,31 @@ export type PlProblem =
   | { code: 'diesel-bill-on-sheet'; field: string; billNumber: string; sheetNumber: string }
   | { code: 'not-paid-in-full'; due: string }
   | { code: 'name-used' | 'code-used'; name: string }
-  | { code: 'gstin-set'; gstin: string };
+  | { code: 'gstin-set'; gstin: string }
+  /** LIN-27: a sale line on a draft or issued invoice stays as billed. */
+  | { code: 'sale-invoiced'; field?: string; tripNumber: string; invoiceId: string; invoiceNumber: string | null; status: string };
 
 export type SaveResult = { ok: true; id: string } | { ok: false; problem: PlProblem };
+
+/**
+ * What a sheet's save and delete answer to besides the sheet itself: the
+ * party invoices made from its trips (LIN-27). invoiceStore.ts registers it,
+ * so this store needs nothing of invoices, as the API's sheet service calls
+ * app/services/party_invoices.py's hooks.
+ */
+export interface SheetGuard {
+  /** A refusal for a save that would change or remove a sale line a live invoice bills. */
+  check(input: PlSheetInput, existing: PlSheetRecord | null): PlProblem | null;
+  /** After a save: matches of payments changed or removed go, cancelled invoices let go of removed lines. */
+  saved(before: PlSheetRecord | null, after: PlSheetRecord): void;
+  /** A refusal for deleting a sheet a live invoice bills; else, as `saved`, before it goes. */
+  removing(sheet: PlSheetRecord): PlProblem | null;
+}
+
+let sheetGuard: SheetGuard | null = null;
+export function guardSheets(guard: SheetGuard): void {
+  sheetGuard = guard;
+}
 
 export interface Who {
   name: string;
@@ -131,7 +153,7 @@ interface PlState {
   sheetSerial: number;
   tripSerial: number;
   save(input: PlSheetInput, id: string | null, who: Who, bills: readonly ExpenseBill[]): SaveResult;
-  remove(id: string, who: Who): boolean;
+  remove(id: string, who: Who): SaveResult;
   close(sheetId: string, tripId: string, partyId: string, who: Who, bills: readonly ExpenseBill[], close: boolean): SaveResult;
   addParty(input: { role: PlPartyRole; name: string; gstin?: string | null; phone?: string; locations?: string[] }): PlParty;
   patchParty(id: string, patch: { gstin?: string | null; phone?: string }): { ok: true; party: PlParty } | { ok: false; problem: PlProblem };
@@ -167,7 +189,7 @@ export const usePl = create<PlState>((set, get) => ({
   save(input, id, who, bills) {
     const state = get();
     const existing = id ? (state.sheets.find((s) => s.id === id) ?? null) : null;
-    const problem = check(state, input, existing, who, bills);
+    const problem = check(state, input, existing, who, bills) ?? sheetGuard?.check(input, existing) ?? null;
     if (problem) return { ok: false, problem };
     const at = new Date().toISOString();
     let { sheetSerial, tripSerial } = state;
@@ -189,14 +211,18 @@ export const usePl = create<PlState>((set, get) => ({
       sheetSerial,
       tripSerial,
     });
+    sheetGuard?.saved(existing, saved);
     return { ok: true, id: sheetId };
   },
 
   remove(id, who) {
     const sheet = get().sheets.find((s) => s.id === id);
-    if (!sheet || !can(who.grants, WRITE, { siteId: sheet.siteId })) return false;
+    if (!sheet) return { ok: false, problem: { code: 'invalid', field: 'sheetId', reason: 'no such sheet' } };
+    if (!can(who.grants, WRITE, { siteId: sheet.siteId })) return { ok: false, problem: { code: 'needs-permission', permission: WRITE } };
+    const problem = sheetGuard?.removing(sheet) ?? null;
+    if (problem) return { ok: false, problem };
     set({ sheets: get().sheets.filter((s) => s.id !== id) });
-    return true;
+    return { ok: true, id };
   },
 
   close(sheetId, tripId, partyId, who, bills, close) {
@@ -289,7 +315,8 @@ export const usePl = create<PlState>((set, get) => ({
   },
 }));
 
-function fy(day: string): string {
+/** '26-27' for any day of April 2026 to March 2027, as the API's TenantCalendar names it. */
+export function fy(day: string): string {
   const [y, m] = day.split('-').map(Number) as [number, number];
   const startYear = m >= 4 ? y : y - 1;
   return `${String(startYear % 100).padStart(2, '0')}-${String((startYear + 1) % 100).padStart(2, '0')}`;

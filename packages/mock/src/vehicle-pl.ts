@@ -146,16 +146,74 @@ export const PL_VENDORS: PlParty[] = [
 const QUARRIES = PL_VENDORS.slice(0, 4);
 const BUNKS = PL_VENDORS.slice(4);
 
-/** The customer database the sales desk keeps, with where each takes delivery. */
-export const PL_CUSTOMERS: PlParty[] = CUSTOMERS_MASTER.map((c) => ({
-  id: c.id,
-  name: c.name,
-  gstin: c.gstin,
-  phone: c.phone === '–' ? '' : c.phone,
-  contactName: c.contactName,
-  roles: ['customer'],
-  locations: loc(c.id, [c.name.length % 2 ? 'Site office' : 'Main site', 'Second block']),
-}));
+/**
+ * Where each customer is billed and where it takes delivery (LIN-27): the
+ * address an invoice prints, and each site's state, which is the place of
+ * supply. Alliance Infra's first site is in Puducherry, so its loads are
+ * billed IGST; the counter's buyers take the load at the gate, no state.
+ */
+const CUSTOMER_PLACES: Record<string, { address: string; sites: { name: string; address: string; stateCode: string | null }[] }> = {
+  'cus-01': {
+    address: 'No. 111, LB Road, Thiruvanmiyur, Chennai - 600041',
+    sites: [
+      { name: 'Sholinganallur Phase 2', address: 'Off OMR, Sholinganallur, Chennai - 600119', stateCode: '33' },
+      { name: 'Second block', address: 'Off OMR, Sholinganallur, Chennai - 600119', stateCode: '33' },
+    ],
+  },
+  'cus-02': {
+    address: 'No. 12, Velachery Main Road, Medavakkam, Chennai - 600100',
+    sites: [
+      { name: 'Perumbakkam Site', address: 'Perumbakkam Main Road, Chennai - 600100', stateCode: '33' },
+      { name: 'Second block', address: '', stateCode: '33' },
+    ],
+  },
+  'cus-03': {
+    address: 'Radiance House, 46 Anna Salai, Teynampet, Chennai - 600018',
+    sites: [
+      { name: 'Navalur Block C', address: 'OMR, Navalur, Chengalpattu - 603103', stateCode: '33' },
+      { name: 'Second block', address: '', stateCode: '33' },
+    ],
+  },
+  'cus-04': {
+    address: 'Collectorate Road, Kancheepuram - 631501',
+    sites: [
+      { name: 'NH-48 Package 3', address: 'NH-48, Sriperumbudur, Kancheepuram - 602105', stateCode: '33' },
+      { name: 'Second block', address: '', stateCode: '33' },
+    ],
+  },
+  'cus-05': {
+    address: 'Alliance Towers, 2 OMR, Perungudi, Chennai - 600096',
+    sites: [
+      { name: 'Puducherry site', address: 'ECR, Kalapet, Puducherry - 605014', stateCode: '34' },
+      { name: 'Thalambur Layout', address: 'Thalambur, Chengalpattu - 600130', stateCode: '33' },
+    ],
+  },
+  'cus-06': { address: '', sites: [{ name: 'Ex-plant', address: '', stateCode: null }] },
+  'cus-07': {
+    address: 'Purva Windermere, Pallikaranai, Chennai - 600100',
+    sites: [
+      { name: 'Padur Site 1', address: 'OMR, Padur, Chengalpattu - 603103', stateCode: '33' },
+      { name: 'Second block', address: '', stateCode: '33' },
+    ],
+  },
+};
+
+/** The customer database the sales desk keeps, with where each is billed and takes delivery. */
+export const PL_CUSTOMERS: PlParty[] = CUSTOMERS_MASTER.map((c) => {
+  const places = CUSTOMER_PLACES[c.id];
+  return {
+    id: c.id,
+    name: c.name,
+    gstin: c.gstin,
+    phone: c.phone === '–' ? '' : c.phone,
+    contactName: c.contactName,
+    roles: ['customer'],
+    address: places?.address ?? '',
+    locations: places
+      ? places.sites.map((x, i) => ({ id: `${c.id}-l${i + 1}`, name: x.name, address: x.address, stateCode: x.stateCode }))
+      : loc(c.id, ['Main site', 'Second block']),
+  };
+});
 
 const MODES = ['UPI', 'NEFT', 'Cash', 'Cheque', 'NEFT', 'UPI'] as const;
 const MAINTENANCE: { kind: PlMaintenanceKind; amount: [number, number]; description?: string }[] = [
@@ -299,7 +357,9 @@ function trip(vehicle: (typeof FLEET)[number], day: string, km: number | null): 
       gstRatePct: gst ? material.gstRatePct : 0,
       partyGstin: c.gstin,
       challanNumber: `DC/${paperSeq}`,
-      invoiceNumber: counter ? '' : `LNK/26-27/${paperSeq}`,
+      // Party invoices are made in Linck now (LIN-27); a number is typed here only for a
+      // bill raised outside it, as the oldest loads were, on the paper bill book.
+      invoiceNumber: !counter && ageOf(day) > 82 ? `PB/${paperSeq}` : '',
       poAttachment: null,
       dcAttachment: null,
     };

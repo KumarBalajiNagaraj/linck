@@ -115,7 +115,7 @@ Unchanged through the 22 September 2025 rationalisation.
 
 16 characters, consecutive and unique **per GSTIN per financial year** — not per organization. A tenant with two GSTINs under one org can otherwise produce a duplicate serial inside a GSTIN.
 
-**Status: Designed.** `core.gst_registrations` is migrated; the document series is designed and not built.
+**Status: Built for trip invoices (LIN-27).** `sales.invoice_series` keeps one counter per GSTIN per financial year. Issuing takes the next serial inside the issuing transaction, under an advisory lock, with UNIQUE (series, serial) behind it, so a series has no gaps and no repeats; a cancelled invoice keeps its number. Numbers read `KBM/26-27/0001`: the registration's prefix (`core.gst_registrations.invoice_prefix`), the year, the serial — at most 16 letters, digits, `-` and `/`. Other document types (credit notes, self-invoices) still have no series.
 
 ## 2.3 Place of supply
 
@@ -173,6 +173,8 @@ Note the two different keys, which are easy to conflate: **e-invoicing applicabi
 The IRP disallows reporting after 30 days. No grace, no retry. A retry counter past T+30 is meaningless.
 
 You need a terminal **`permanently_unreportable`** state: the supply happened, the invoice is valid under section 31, but it has no IRN and is therefore not a valid document under Rule 48(5) — which puts the customer's ITC at risk. That is the situation that generates the ugliest customer disputes, and there is currently no state for it. **Status: Missing.**
+
+**Status:** trip invoices (LIN-27) keep nullable `irn`, `irn_ack_number` and `irn_ack_date` on `sales.invoices`, settable only on an issued invoice. Nothing reports to the IRP yet, and there is no `permanently_unreportable` state.
 
 ## 3.3 Cancellation retires the number permanently
 
@@ -365,7 +367,8 @@ A disputed weighment on an out-of-stamp bridge is an argument you cannot win. Th
 | e-Way Bill thresholds, clocks, 138E, cancellation | **Built** on mock data | Part A generation, then GSP integration |
 | UOM conversion authority | **Built** | Consume it from an invoice line |
 | Multi-entity, GTA flag, GST registrations | **Migrated** | Invoicing that branches on it |
-| GST invoicing, IRN, challans | **Designed** | Phase 2 |
+| GST tax invoices from trips: draft, issue, cancel, numbering per GSTIN | **Built** (LIN-27): API; screens on demo data | IRN, statutory UQC per line, credit notes |
+| IRN, challans | **Designed** | Phase 2 |
 | Returns, IMS, filing locks | **Missing** | Phase 2, and it is larger than it looks |
 | Withholding, GST TDS | **Missing** | Phase 2 — it blocks the invoice-close rule |
 | Mineral permits, transit passes | **Designed** | Phase 2 |

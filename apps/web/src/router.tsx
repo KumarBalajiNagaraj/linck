@@ -29,6 +29,8 @@ import { VerificationQueue } from './features/finance/VerificationQueue.js';
 import { ExtractionReview } from './features/ai/ExtractionReview.js';
 import { DeliveryDocCrossCheck } from './features/ai/DeliveryDocCrossCheck.js';
 import { Forbidden } from './features/Forbidden.js';
+import { InvoiceList } from './features/vehicle-pl/InvoiceList.js';
+import { InvoicePage } from './features/vehicle-pl/InvoicePage.js';
 import { PlReports } from './features/vehicle-pl/PlReports.js';
 import { SheetList } from './features/vehicle-pl/SheetList.js';
 import { SheetPage } from './features/vehicle-pl/SheetPage.js';
@@ -121,6 +123,11 @@ const routeTree = rootRoute.addChildren([
   route('/fleet/pl/sheets/$sheetId', () => <SheetPage />, 'fleet.trip_pl.read'),
   route('/overview/pl', () => <PlReports />, 'finance.pl_report.read'),
   route('/finance/pl', () => <PlReports />, 'finance.pl_report.read'),
+  // LIN-27: GST invoices made from those trips, beside the trip sheets and in Accounts.
+  route('/fleet/pl/invoices', () => <InvoiceList />, 'sales.invoice.read'),
+  route('/fleet/pl/invoices/$invoiceId', () => <InvoicePage />, 'sales.invoice.read'),
+  route('/finance/invoices', () => <InvoiceList />, 'sales.invoice.read'),
+  route('/finance/invoices/$invoiceId', () => <InvoicePage />, 'sales.invoice.read'),
   route('/stores/expenses', () => <ExpenseRegister desk="stores" />, 'stores.expense.read'),
   route('/finance/expenses', () => <ExpenseRegister desk={null} />, 'finance.expense.read'),
   route('/fleet/fuel/new', () => <FuelEntryScreen />, 'fleet.fuel.create'),

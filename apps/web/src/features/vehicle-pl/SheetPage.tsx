@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { calculateSheet, can, decimal, formatDate, purchaseFigures, saleFigures, type SheetCalc, type TripCalc } from '@linck/domain';
-import { DRIVERS, VEHICLES, type PlDieselSource, type PlEnRouteKind, type PlMaintenanceKind, type PlPartyDue, type PlSheetInput, type PlSheetRecord } from '@linck/mock';
+import { DRIVERS, VEHICLES, type PlDieselSource, type PlEnRouteKind, type PlMaintenanceKind, type PlPartyDue, type PlSaleInvoice, type PlSheetInput, type PlSheetRecord } from '@linck/mock';
 import { Button, ConfirmModal, PageHeader, Rail, Section } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useExpenses } from '../expenses/expenseStore.js';
+import { invoicePath, liveInvoices, useInvoices } from './invoiceStore.js';
+import { invoiceWords } from './invoiceWords.js';
 import { CTRL, FIELD_BOX, Signed } from './PlParts.js';
 import {
   CLOSE,
@@ -24,6 +26,7 @@ import {
   WRITE,
   type PlProblem,
 } from './plStore.js';
+import { SheetInvoices } from './SheetInvoices.js';
 import { plWords, sheetWords } from './words.js';
 
 /* ------------------------------------------------------------- the draft */
@@ -203,6 +206,8 @@ function problemText(p: PlProblem, w: SW): string {
       return w.errors[p.code](p.sheetNumber);
     case 'not-paid-in-full':
       return w.errors[p.code](`₹${p.due}`);
+    case 'sale-invoiced':
+      return w.errors[p.code](p.tripNumber, p.status === 'draft' ? null : p.invoiceNumber);
     default:
       return w.errors[p.code];
   }
@@ -402,6 +407,8 @@ export function SheetPage() {
   const bills = useExpenses((st) => st.bills);
   const store = usePl();
   const masters = mastersOf(store);
+  const allInvoices = useInvoices((st) => st.invoices);
+  const invoiced = useMemo(() => liveInvoices(allInvoices), [allInvoices]);
   const record = params.sheetId ? (book.byId.get(params.sheetId) ?? null) : null;
   const writeAt = (siteId: string) => can(persona.grants, WRITE, { siteId });
   const [editing, setEditing] = useState(!params.sheetId);
@@ -482,7 +489,7 @@ export function SheetPage() {
         <div className="min-w-0">
           <Section caption={w.section.vehicle}>
             <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 py-3 md:grid-cols-4 md:px-6">
-              <Field label={w.vehicle.vehicle} error={err('vehicleId')} wide>
+              <Field label={w.vehicle.vehicle} error={err('vehicleId') ?? err('siteId')} wide>
                 <Sel
                   ro={ro || Boolean(record)}
                   value={draft.vehicleId}
@@ -575,6 +582,7 @@ export function SheetPage() {
                   closing={!editing && canClose && record && t.id ? { sheetId: record.id, tripId: t.id } : null}
                   onCloseProblem={setCloseProblem}
                   closedBy={record?.trips.find((x) => x.id === t.id)?.closures ?? []}
+                  invoiced={invoiced}
                 />
               ))}
               {closeProblem && (
@@ -589,6 +597,8 @@ export function SheetPage() {
               )}
             </div>
           </Section>
+
+          {record && !editing && <SheetInvoices record={record} />}
 
           <Section caption={w.section.sheetMoney}>
             <div className="px-4 md:px-6">
@@ -613,7 +623,7 @@ export function SheetPage() {
         >
           <span className="min-w-0 flex-1 text-[13px]">
             {problem ? (
-              <span style={{ color: 'var(--status-critical)' }}>{problemField(problem) ? w.errors.fix : problemText(problem, w)}</span>
+              <span style={{ color: 'var(--status-critical)' }}>{problemField(problem) && problem.code !== 'sale-invoiced' ? w.errors.fix : problemText(problem, w)}</span>
             ) : (
               <span style={{ color: 'var(--text-secondary)' }}>
                 {calc.pl.net.startsWith('-') ? w.box.loss : w.box.profit} <Signed value={calc.pl.net} strong />
@@ -642,7 +652,9 @@ export function SheetPage() {
           open={confirming}
           onClose={() => setConfirming(false)}
           onConfirm={() => {
-            if (store.remove(record.id, { name: persona.name, grants: persona.grants })) void navigate({ to: LIST_PATH });
+            const result = store.remove(record.id, { name: persona.name, grants: persona.grants });
+            if (result.ok) void navigate({ to: LIST_PATH });
+            else setProblem(result.problem);
             setConfirming(false);
           }}
           title={w.confirm.title}
@@ -938,6 +950,7 @@ function TripCard({
   closing,
   onCloseProblem,
   closedBy,
+  invoiced,
 }: {
   index: number;
   trip: DTrip;
@@ -955,6 +968,8 @@ function TripCard({
   closing: { sheetId: string; tripId: string } | null;
   onCloseProblem: (text: string | null) => void;
   closedBy: { partyId: string; closedBy: string }[];
+  /** LIN-27: the live invoice each saved sale line is on. Such a line stays as billed. */
+  invoiced: Map<string, PlSaleInvoice>;
 }) {
   const w = useWords(sheetWords);
   const store = usePl();
@@ -1106,13 +1121,18 @@ function TripCard({
         const customer = partyOf(x.customerId);
         const listId = `pl-${trip.key}-s${i}`;
         const first = trip.purchases[0];
+        // LIN-27: what a draft or issued invoice bills stays as billed. The PO reference, the photos and
+        // the GSTIN (which a draft reads again at issue) are not billed fields, so they stay open.
+        const on = x.id ? invoiced.get(x.id) : undefined;
+        const lro = ro || Boolean(on);
         return (
-          <LineFrame key={x.key} ro={ro} label={w.remove} onRemove={() => onChange({ sales: trip.sales.filter((_, j) => j !== i) })}>
+          <LineFrame key={x.key} ro={lro} label={w.remove} onRemove={() => onChange({ sales: trip.sales.filter((_, j) => j !== i) })}>
+            {on && <InvoiceNote on={on} editing={!ro} />}
             <Field label={w.sold.customer} error={err(`${sat}.customerId`)} wide>
-              <Sel ro={ro} value={x.customerId} options={partyOptions('customer')} placeholder={w.sold.pickCustomer} onChange={(v) => putS(i, { customerId: v, partyGstin: partyOf(v)?.gstin ?? '', poRef: ordersFor(v)[0]?.customerPoRef ?? '', purchaseOrderId: ordersFor(v)[0]?.id ?? '' })} add={{ label: w.adding.customer, onAdd: addParty('customer') }} />
+              <Sel ro={lro} value={x.customerId} options={partyOptions('customer')} placeholder={w.sold.pickCustomer} onChange={(v) => putS(i, { customerId: v, partyGstin: partyOf(v)?.gstin ?? '', poRef: ordersFor(v)[0]?.customerPoRef ?? '', purchaseOrderId: ordersFor(v)[0]?.id ?? '' })} add={{ label: w.adding.customer, onAdd: addParty('customer') }} />
             </Field>
             <Field label={w.sold.location} wide>
-              <Txt ro={ro} value={x.location} list={listId} onChange={(v) => putS(i, { location: v })} />
+              <Txt ro={lro} value={x.location} list={listId} onChange={(v) => putS(i, { location: v })} />
               <datalist id={listId}>
                 {locations(x.customerId).map((l) => (
                   <option key={l.id} value={l.name} />
@@ -1124,7 +1144,7 @@ function TripCard({
             </Field>
             <Field label={w.bought.material} error={err(`${sat}.materialId`)}>
               <Sel
-                ro={ro}
+                ro={lro}
                 value={x.materialId}
                 options={materials}
                 placeholder={w.bought.pickMaterial}
@@ -1135,29 +1155,29 @@ function TripCard({
                 add={{ label: w.adding.material, onAdd: addMaterial(x) }}
               />
             </Field>
-            {!ro && first?.materialId && (
+            {!lro && first?.materialId && (
               <div className="col-span-2 flex items-end">
                 <Button onClick={() => putS(i, { materialId: first.materialId, hsnCode: first.hsnCode, unit: first.unit, quantity: first.quantity, gstRatePct: first.gstRatePct || x.gstRatePct })}>{w.sold.sameAsBought}</Button>
               </div>
             )}
             <Field label={w.bought.hsn}>
-              <Txt ro={ro} inputMode="numeric" value={x.hsnCode} onChange={(v) => putS(i, { hsnCode: v })} />
+              <Txt ro={lro} inputMode="numeric" value={x.hsnCode} onChange={(v) => putS(i, { hsnCode: v })} />
             </Field>
             <Field label={w.bought.unit}>
-              <Txt ro={ro} value={x.unit} list="pl-units" onChange={(v) => putS(i, { unit: v })} />
+              <Txt ro={lro} value={x.unit} list="pl-units" onChange={(v) => putS(i, { unit: v })} />
             </Field>
             <Field label={w.sold.qty} error={err(`${sat}.quantity`)}>
-              <Txt ro={ro} inputMode="decimal" value={x.quantity} onChange={(v) => putS(i, { quantity: v })} />
+              <Txt ro={lro} inputMode="decimal" value={x.quantity} onChange={(v) => putS(i, { quantity: v })} />
             </Field>
             <Field label={w.sold.rate} error={err(`${sat}.rate`)}>
-              <Txt ro={ro} inputMode="decimal" value={x.rate} onChange={(v) => putS(i, { rate: v })} />
+              <Txt ro={lro} inputMode="decimal" value={x.rate} onChange={(v) => putS(i, { rate: v })} />
             </Field>
             <Field label={w.sold.transport}>
-              <Txt ro={ro} inputMode="decimal" value={x.transport} onChange={(v) => putS(i, { transport: v })} />
+              <Txt ro={lro} inputMode="decimal" value={x.transport} onChange={(v) => putS(i, { transport: v })} />
             </Field>
             <Figure label={w.sold.taxable} value={f.taxable} />
             <Field label={w.bought.billing}>
-              <Toggle ro={ro} value={x.gstBilled ? 'gst' : 'none'} options={[{ value: 'gst' as const, label: w.bought.gst }, { value: 'none' as const, label: w.bought.nonGst }]} onChange={(v) => putS(i, { gstBilled: v === 'gst' })} />
+              <Toggle ro={lro} value={x.gstBilled ? 'gst' : 'none'} options={[{ value: 'gst' as const, label: w.bought.gst }, { value: 'none' as const, label: w.bought.nonGst }]} onChange={(v) => putS(i, { gstBilled: v === 'gst' })} />
             </Field>
             {x.gstBilled && (
               <>
@@ -1166,17 +1186,17 @@ function TripCard({
                   {!ro && customer && !customer.gstin && x.partyGstin.length === 15 && <Button onClick={() => store.patchParty(customer.id, { gstin: x.partyGstin })}>{w.adding.gstinTo(customer.name)}</Button>}
                 </Field>
                 <Field label={w.bought.gstRate} error={err(`${sat}.gstRatePct`)}>
-                  <Sel ro={ro} value={x.gstRatePct} options={rateOptions(x.gstRatePct)} onChange={(v) => putS(i, { gstRatePct: v })} add={{ label: w.adding.rate, onAdd: addRate }} />
+                  <Sel ro={lro} value={x.gstRatePct} options={rateOptions(x.gstRatePct)} onChange={(v) => putS(i, { gstRatePct: v })} add={{ label: w.adding.rate, onAdd: addRate }} />
                 </Field>
                 <Figure label={w.sold.gstAmount} value={f.gstAmount} />
               </>
             )}
             <Figure label={w.sold.total} value={f.total} strong />
             <Field label={w.sold.dc}>
-              <Txt ro={ro} value={x.challanNumber} onChange={(v) => putS(i, { challanNumber: v })} />
+              <Txt ro={lro} value={x.challanNumber} onChange={(v) => putS(i, { challanNumber: v })} />
             </Field>
             <Field label={w.sold.invoice}>
-              <Txt ro={ro} value={x.invoiceNumber} onChange={(v) => putS(i, { invoiceNumber: v })} />
+              <Txt ro={lro} value={x.invoiceNumber} onChange={(v) => putS(i, { invoiceNumber: v })} />
             </Field>
             <div className="col-span-2 flex flex-wrap gap-4">
               <Photo ro={ro} label={w.sold.poPhoto} ids={x.poAttachmentId ? [x.poAttachmentId] : []} onChange={(ids) => putS(i, { poAttachmentId: ids[0] ?? null })} />
@@ -1205,7 +1225,7 @@ function TripCard({
           }}
         />
       )}
-      {!ro && (
+      {!ro && !trip.sales.some((x) => x.id && invoiced.has(x.id)) && (
         <div className="flex justify-end pt-2">
           <Button variant="destructive" onClick={onRemove}>
             {w.removeTrip}
@@ -1218,6 +1238,20 @@ function TripCard({
         ))}
       </datalist>
     </div>
+  );
+}
+
+/** Which invoice a sale line is on, and that it stays as billed while it is. */
+function InvoiceNote({ on, editing }: { on: PlSaleInvoice; editing: boolean }) {
+  const iw = useWords(invoiceWords);
+  const text = on.status === 'draft' || !on.number ? iw.sheet.onDraft : iw.sheet.onInvoice(on.number);
+  return (
+    <p className="col-span-2 flex flex-wrap items-baseline gap-x-2 text-[13px] md:col-span-4">
+      <Link to={invoicePath(on.id)} className="underline" style={{ color: 'var(--brand)' }}>
+        {text}
+      </Link>
+      {editing && <span style={{ color: 'var(--text-tertiary)' }}>{iw.sheet.locked}</span>}
+    </p>
   );
 }
 

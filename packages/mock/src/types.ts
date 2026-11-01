@@ -753,6 +753,8 @@ export interface PlSaleOut {
   invoiceNumber: string;
   poAttachment: PlAttachment | null;
   dcAttachment: PlAttachment | null;
+  /** LIN-27: the draft or issued invoice the line is on; while it is, the line stays as billed. */
+  invoice?: PlSaleInvoice | null;
 }
 
 export interface PlPaymentOut {
@@ -902,6 +904,10 @@ export interface PlOutstandingTotal {
 export interface PlLocation {
   id: string;
   name: string;
+  /** LIN-27: where it is, as an invoice prints a delivery address. */
+  address?: string;
+  /** LIN-27: the GST state code; an invoice for goods delivered here takes it as its place of supply. */
+  stateCode?: string | null;
 }
 
 export interface PlParty {
@@ -912,6 +918,8 @@ export interface PlParty {
   contactName: string;
   roles: PlPartyRole[];
   locations: PlLocation[];
+  /** LIN-27: the billing address an invoice prints. */
+  address?: string;
 }
 
 export interface PlMaterial {
@@ -947,4 +955,205 @@ export interface PlDieselBillOption {
   amount: string;
   status: string;
   linkedSheet: { sheetId: string; sheetNumber: string } | null;
+}
+
+/* --------------------------------------------------------- party invoices */
+
+/*
+ * LIN-27, field for field the JSON of /vehicle-pl/invoices (apps/api/app/
+ * schemas/party_invoices.py): GST tax invoices made from the trips above.
+ * Money a two-place string, quantities and rates numbers, dates YYYY-MM-DD.
+ * Every figure is packages/domain/src/party-invoice.ts's.
+ */
+
+export type PlInvoiceStatus = 'draft' | 'issued' | 'cancelled';
+export type PlMoneyStatus = 'due' | 'part_paid' | 'paid';
+export type PlPosBasis = 'delivery_location' | 'buyer_gstin' | 'seller_state' | 'chosen';
+export type PlInvoiceBlocked = 'not-gst' | 'billed-outside' | 'no-hsn';
+
+/** The invoice a trip sale line is on, as the trip page shows it. */
+export interface PlSaleInvoice {
+  id: string;
+  number: string | null;
+  status: PlInvoiceStatus;
+}
+
+export interface PlSeller {
+  legalName: string;
+  tradeName: string;
+  gstin: string;
+  stateCode: string;
+  address: string;
+}
+
+export interface PlBuyer {
+  partyId: string;
+  name: string;
+  gstin: string | null;
+  stateCode: string | null;
+  address: string;
+}
+
+export interface PlInvoiceLine {
+  id: string;
+  position: number;
+  tripSaleId: string | null;
+  tripId: string | null;
+  sheetId: string | null;
+  sheetNumber: string;
+  tripNumber: string;
+  tripDate: string;
+  registrationNumber: string;
+  challanNumber: string;
+  location: string;
+  description: string;
+  hsnCode: string;
+  unit: string;
+  quantity: number;
+  rate: string;
+  amount: string;
+  transport: string;
+  taxable: string;
+  gstRatePct: number;
+  cgstPct: number;
+  sgstPct: number;
+  igstPct: number;
+  cgst: string;
+  sgst: string;
+  igst: string;
+  total: string;
+}
+
+export interface PlTaxRow {
+  hsnCode: string | null;
+  gstRatePct: number;
+  taxable: string;
+  cgst: string;
+  sgst: string;
+  igst: string;
+  tax: string;
+}
+
+export interface PlInvoiceReceipt {
+  id: string;
+  paymentId: string;
+  paidOn: string;
+  mode: PaymentMode;
+  reference: string | null;
+  sheetId: string;
+  sheetNumber: string;
+  tripNumber: string | null;
+  paymentAmount: string;
+  amount: string;
+  matchedBy: string;
+  matchedAt: string;
+}
+
+export interface PlInvoiceUnmatched {
+  paymentId: string;
+  paidOn: string;
+  mode: PaymentMode;
+  reference: string | null;
+  sheetId: string;
+  sheetNumber: string;
+  tripNumber: string | null;
+  onTrip: boolean;
+  paymentAmount: string;
+  free: string;
+}
+
+/** GET /vehicle-pl/invoices/{id}/receipts */
+export interface PlInvoiceReceipts {
+  invoiceId: string;
+  total: string;
+  received: string;
+  due: string;
+  moneyStatus: PlMoneyStatus | null;
+  receipts: PlInvoiceReceipt[];
+  unmatched: PlInvoiceUnmatched[];
+}
+
+export interface PlInvoiceRow {
+  id: string;
+  status: PlInvoiceStatus;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  financialYear: string | null;
+  siteId: string;
+  customerId: string;
+  buyerName: string;
+  buyerGstin: string | null;
+  kind: 'b2b' | 'b2c';
+  sellerGstin: string;
+  placeOfSupply: string;
+  supplyType: 'intra' | 'inter';
+  tripNumbers: string[];
+  lineCount: number;
+  taxable: string;
+  tax: string;
+  total: string;
+  received: string;
+  due: string;
+  moneyStatus: PlMoneyStatus | null;
+  createdBy: string;
+  createdAt: string;
+  issuedAt: string | null;
+  cancelledAt: string | null;
+}
+
+export interface PlInvoiceDetail extends PlInvoiceRow {
+  seller: PlSeller;
+  buyer: PlBuyer;
+  shipTo: { name: string; address: string } | null;
+  posBasis: PlPosBasis;
+  lines: PlInvoiceLine[];
+  byHsn: PlTaxRow[];
+  cgst: string;
+  sgst: string;
+  igst: string;
+  beforeRounding: string;
+  roundOff: string;
+  words: string;
+  notes: string;
+  issuedBy: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
+  irn: string | null;
+  irnAckNumber: string | null;
+  irnAckDate: string | null;
+  receipts: PlInvoiceReceipt[];
+  unmatched: PlInvoiceUnmatched[];
+}
+
+export interface PlInvoiceList {
+  rows: PlInvoiceRow[];
+  total: { invoices: number; total: string; received: string; due: string };
+}
+
+/** A row of GET /vehicle-pl/invoices/trips: a trip's sale lines to one customer no live invoice bills yet. */
+export interface PlInvoiceTripRow {
+  tripId: string;
+  tripNumber: string;
+  tripDate: string;
+  sheetId: string;
+  sheetNumber: string;
+  siteId: string;
+  registrationNumber: string;
+  customerId: string;
+  customerName: string;
+  customerGstin: string | null;
+  materials: string[];
+  lineCount: number;
+  taxable: string;
+  total: string;
+  blocked: PlInvoiceBlocked | null;
+  outsideInvoiceNumber: string;
+}
+
+/** What a draft may still be told (PATCH /vehicle-pl/invoices/{id}). */
+export interface PlInvoicePatch {
+  buyerAddress?: string;
+  shipToAddress?: string;
+  placeOfSupply?: string;
+  notes?: string;
 }

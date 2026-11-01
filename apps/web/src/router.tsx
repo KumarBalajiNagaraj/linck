@@ -1,7 +1,9 @@
 import { createRootRoute, createRoute, createRouter, Outlet, redirect } from '@tanstack/react-router';
 import { resolveHome } from '@linck/domain';
+import { LIVE } from './auth/api.js';
 import { AppShell } from './shell/AppShell.js';
 import { WORKSPACES } from './shell/nav-manifest.js';
+import { SampleBanner } from './shell/SampleBanner.js';
 import { useApp } from './shell/store.js';
 import { ExecutiveDashboard } from './features/overview/ExecutiveDashboard.js';
 import { FleetCommandBoard } from './features/fleet/FleetCommandBoard.js';
@@ -90,7 +92,16 @@ function route(path: string, component: () => React.JSX.Element, permission: str
       // every request must still be assumed capable of returning 403.
       const { persona, siteScope } = useApp();
       const allowed = permission in persona.grants && hasScope(persona.grants[permission], siteScope);
-      return allowed ? component() : <Forbidden permission={permission} role={persona.roleLabel} />;
+      if (!allowed) return <Forbidden permission={permission} role={persona.roleLabel} />;
+      // Live, a screen still on sample data says so at its top (shell/connected.ts).
+      return LIVE ? (
+        <>
+          <SampleBanner route={path} />
+          {component()}
+        </>
+      ) : (
+        component()
+      );
     },
   });
 }

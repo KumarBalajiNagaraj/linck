@@ -16,6 +16,7 @@ import {
   vehiclesForSite,
 } from '@linck/mock';
 import { cn, EmptyState, StatusStamp } from '@linck/ui';
+import { LIVE } from '../auth/api.js';
 import type { Persona } from '../auth/personas.js';
 import { useLang, type Lang } from '../i18n/lang.js';
 import { statusWords } from '../i18n/statusWords.js';
@@ -162,8 +163,14 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
       }
     }
 
+    /* RECORDS are the demo's sample data, every one. Live, a signed-in
+       person is never offered a sample vehicle, invoice, customer, trip or
+       request as their company's: the palette finds pages and actions until
+       those records are on the API. */
+    const records = !LIVE;
+
     /* VEHICLES — the single most-searched record in the product. */
-    if (moduleOn('fleet') && allow(['fleet.vehicle.read'])) {
+    if (records && moduleOn('fleet') && allow(['fleet.vehicle.read'])) {
       for (const v of vehiclesForSite(siteScope)) {
         entries.push({
           id: `veh:${v.id}`,
@@ -188,7 +195,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
     }
 
     /* INVOICES and the customers they belong to. */
-    if (moduleOn('sales') && allow(['sales.invoice.read'])) {
+    if (records && moduleOn('sales') && allow(['sales.invoice.read'])) {
       for (const inv of INVOICES) {
         entries.push({
           id: `inv:${inv.id}`,
@@ -226,7 +233,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
     }
 
     /* TRIPS — scoped through the vehicle, since a trip carries no site of its own. */
-    if (moduleOn('sales') && allow(['sales.dispatch.read'])) {
+    if (records && moduleOn('sales') && allow(['sales.dispatch.read'])) {
       const siteOf = new Map(VEHICLES.map((v) => [v.id, v.siteId] as const));
       const customerOf = new Map(CUSTOMERS_LIST.map((c) => [c.id, c.name] as const));
       for (const t of TRIPS) {
@@ -250,7 +257,7 @@ function useEntries(persona: Persona, siteScope: string | null, enabledModules: 
     }
 
     /* INDENTS. */
-    if (moduleOn('stores') && allow(['stores.indent.read'])) {
+    if (records && moduleOn('stores') && allow(['stores.indent.read'])) {
       for (const ind of INDENTS) {
         if (siteScope !== null && ind.siteId !== siteScope) continue;
         entries.push({
@@ -521,7 +528,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             aria-expanded="true"
             aria-controls="linck-palette-results"
             aria-autocomplete="list"
-            placeholder={t.placeholder}
+            placeholder={LIVE ? t.placeholderLive : t.placeholder}
             className="h-full flex-1 bg-transparent text-[14px] outline-none placeholder:text-[color:var(--text-tertiary)]"
             style={{ color: 'var(--text-primary)' }}
           />

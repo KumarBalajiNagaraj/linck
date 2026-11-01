@@ -23,6 +23,7 @@ from app.api.customers import router as customers_router
 from app.api.expenses import router as expenses_router
 from app.api.me import router as me_router
 from app.api.purchase_orders import router as purchase_orders_router
+from app.api.vehicle_pl import router as vehicle_pl_router
 from app.api.whatsapp import router as whatsapp_router
 from app.api.whatsapp import webhook_router as whatsapp_webhook_router
 from app.api.whatsapp_imports import router as whatsapp_imports_router
@@ -77,7 +78,7 @@ def create_app() -> FastAPI:
     # ahead of authentication. Added first so it is the INNERMOST middleware:
     # inside request_id_middleware below, whose receive runs in a task group
     # that would wrap the refusal into a generic 400.
-    app.add_middleware(UploadSizeLimit, paths=("/expenses/attachments",))
+    app.add_middleware(UploadSizeLimit, paths=("/expenses/attachments", "/vehicle-pl/attachments"))
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next) -> Response:  # type: ignore[no-untyped-def]
@@ -120,6 +121,7 @@ def create_app() -> FastAPI:
     app.include_router(purchase_orders_router)
     app.include_router(breakdowns_router)
     app.include_router(expenses_router)
+    app.include_router(vehicle_pl_router)
 
     return app
 

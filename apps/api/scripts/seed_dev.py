@@ -162,6 +162,9 @@ ROLES: dict[str, RoleSpec] = {
             "stores.expense.read",
             "finance.expense.read",
             "finance.expense.approve",
+            # LIN-22: every trip's profit, and the vehicle-wise, monthly and money-due reports.
+            "fleet.trip_pl.read",
+            "finance.pl_report.read",
         ),
     ),
     "accounts": RoleSpec(
@@ -182,6 +185,8 @@ ROLES: dict[str, RoleSpec] = {
             "finance.expense.read",
             "finance.expense.pass",
             "finance.expense.pay",
+            "fleet.trip_pl.read",
+            "finance.pl_report.read",
         ),
     ),
     "fleet_manager": RoleSpec(
@@ -208,6 +213,9 @@ ROLES: dict[str, RoleSpec] = {
             "sales.dispatch.read",
             "sales.trip.read",
             "ai.extraction.review",
+            # LIN-22: enters trips, and sees each trip's profit.
+            "fleet.trip_pl.read",
+            "fleet.trip_pl.write",
         ),
     ),
     "production_incharge": RoleSpec(

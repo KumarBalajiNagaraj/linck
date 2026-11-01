@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -81,9 +81,17 @@ def _provision_app_role() -> None:
         cur.execute(sql.SQL("ALTER ROLE {} NOSUPERUSER NOBYPASSRLS PASSWORD {}").format(role, password))
         cur.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(database, role))
         cur.execute(sql.SQL("GRANT USAGE ON SCHEMA core TO {}").format(role))
+        # DML on every core table but the permission catalogue, which the app
+        # may only read (migration 0021). A write granted on it here would undo
+        # that revoke on every run, and the suite would test this file rather
+        # than the migration.
         cur.execute(
-            sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA core TO {}").format(role)
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'core' AND tablename <> 'permissions'"
         )
+        for (table,) in cur.fetchall():
+            dml = sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {} TO {}")
+            cur.execute(dml.format(sql.Identifier("core", table), role))
+        cur.execute(sql.SQL("GRANT SELECT ON core.permissions TO {}").format(role))
         cur.execute(sql.SQL("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA core TO {}").format(role))
         # The audit log is append-only for the application. Mirrors the REVOKE in
         # the migration, which targets PUBLIC rather than a named role.
@@ -430,6 +438,25 @@ async def api():  # type: ignore[no-untyped-def]
     yield _client
     for client in clients:
         await client.aclose()
+
+
+#: The refusal of a body over its route's cap (app/core/limits.py).
+TOO_BIG = {"detail": {"problem": {"code": "too-big"}}}
+
+
+class Feed:
+    """A request body streamed a chunk at a time, as a client sends one, counting what the API took."""
+
+    def __init__(self, body: bytes, chunk: int = 64 * 1024) -> None:
+        self.body = body
+        self.chunk = chunk
+        self.taken = 0
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while self.taken < len(self.body):
+            piece = self.body[self.taken : self.taken + self.chunk]
+            self.taken += len(piece)
+            yield piece
 
 
 @pytest.fixture

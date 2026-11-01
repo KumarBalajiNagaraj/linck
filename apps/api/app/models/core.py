@@ -474,6 +474,13 @@ class WhatsAppMessage(Base):
     __tablename__ = "whatsapp_messages"
     __table_args__ = (
         UniqueConstraint("organization_id", "wamid"),
+        # The inbox: what is still waiting to be imported, oldest first.
+        Index(
+            "ix_whatsapp_messages_pending",
+            "organization_id",
+            "sent_at",
+            postgresql_where=text("imported_at IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -494,7 +501,9 @@ class WhatsAppMessage(Base):
     media_error: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = created_at()
     imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    imported_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("core.users.id"))
+    imported_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("core.users.id", ondelete="RESTRICT")
+    )
 
 
 # ---------------------------------------------------------------------------

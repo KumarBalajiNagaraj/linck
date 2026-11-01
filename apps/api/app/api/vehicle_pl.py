@@ -105,6 +105,7 @@ from app.services.vehicle_pl import (
     build_context,
     close_trip,
     delete_sheet,
+    diesel_bill_scope,
     find_sheet_ids,
     latest_vehicle,
     load_bundles,
@@ -493,9 +494,14 @@ async def diesel_bills(
     date_from: DateFrom = None,
     date_to: DateTo = None,
 ) -> list[DieselBillOut]:
-    """A vehicle's diesel bills, newest first, and the sheet each is already linked on."""
-    _scope_or_refuse(await access_for(current), WRITE, READ)
+    """A vehicle's diesel bills, newest first, and the sheet each is already linked on.
+
+    Only bills at the sites the person keeps or reads sheets at (diesel_bill_scope)."""
+    scope = diesel_bill_scope(await access_for(current))
+    if scope.empty:
+        raise needs_permission(WRITE)
     stmt = select(ExpenseBill).where(
+        scope.clause(ExpenseBill.site_id),
         ExpenseBill.desk == "fleet",
         ExpenseBill.kind == "diesel",
         ExpenseBill.status.notin_(VOID_BILL),

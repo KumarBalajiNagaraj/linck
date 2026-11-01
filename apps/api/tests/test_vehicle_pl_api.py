@@ -142,8 +142,9 @@ def plant_bill(
     vehicle: str | None,
     litres: str,
     amount: str,
+    site: uuid.UUID | None = None,
 ) -> str:
-    """A fleet diesel bill already in Expenses, as LIN-20 stores one."""
+    """A fleet diesel bill already in Expenses, as LIN-20 stores one, at the tenant's plant unless `site`."""
     bill_id = uuid.uuid4()
     with admin.cursor() as cur:
         cur.execute(
@@ -157,7 +158,7 @@ def plant_bill(
             (
                 bill_id,
                 tenant.org_id,
-                tenant.site_id,
+                site or tenant.site_id,
                 bill_number,
                 vehicle,
                 litres,
@@ -1056,6 +1057,53 @@ async def test_a_vehicles_diesel_bills_say_which_sheet_links_them(api, book: Boo
     }
     assert (bill["litres"], bill["amount"]) == (30, "2833.21")
     assert all(b["id"] != book.bills["bill-990"] for b in bills)
+
+
+async def test_another_sites_diesel_bills_are_neither_offered_nor_linked(  # type: ignore[no-untyped-def]
+    api, book: Book, admin: psycopg.Connection
+) -> None:
+    """A bill belongs to its site as a sheet does: its number, vendor, litres and amount are that site's."""
+    far = plant_bill(
+        admin, book.tenant, book.far_writer.user_id, "IOC-7070", "veh-7", "20", "1880.00", site=book.elsewhere
+    )
+
+    async def offered(person: Person) -> set[str]:
+        r = await api(person).get("/vehicle-pl/diesel-bills", params={"vehicleId": "veh-7"})
+        assert r.status_code == 200, r.text
+        return {b["id"] for b in r.json()}
+
+    assert far not in await offered(book.writer)
+    assert far in await offered(book.far_writer)
+    assert far in await offered(book.director)  # reads every site
+
+    day = (today() - timedelta(days=1)).isoformat()
+    body = wire(SHEETS["s4"], book) | {
+        "vehicleId": "veh-7",
+        "startDate": day,
+        "diesel": [{"source": "expense_bill", "expenseBillId": far}],
+        "payments": [],
+    }
+    # Answered as for a bill that does not exist, so it says nothing about the other site.
+    r = await api(book.writer).post("/vehicle-pl/sheets", json=body)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["problem"] == {
+        "code": "invalid",
+        "field": "diesel[0].expenseBillId",
+        "reason": "no such bill",
+    }
+    # At its own site, the same bill links.
+    r = await api(book.far_writer).post(
+        "/vehicle-pl/sheets",
+        json=wire(SHEETS["s4"], book, site=book.elsewhere)
+        | {
+            "vehicleId": "veh-7",
+            "startDate": day,
+            "diesel": [{"source": "expense_bill", "expenseBillId": far}],
+            "payments": [],
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["pl"]["diesel"] == "1880.00"
 
 
 async def test_a_correction_to_a_linked_bill_shows_on_the_sheet(  # type: ignore[no-untyped-def]

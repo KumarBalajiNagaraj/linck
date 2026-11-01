@@ -72,6 +72,16 @@ def read_scope(access: Access) -> Scope:
     return access.scope(*READ_KEYS)
 
 
+def diesel_bill_scope(access: Access) -> Scope:
+    """The sites whose diesel bills a person is offered, and may link on a sheet.
+
+    Expense bills belong to a site like sheets do, so someone who keeps sheets
+    at one plant neither sees nor links another plant's bills: what a bill
+    holds (its number, vendor, litres and amount) is that site's.
+    """
+    return access.scope(WRITE, READ)
+
+
 def may_read(access: Access, sheet: TripSheet) -> bool:
     return read_scope(access).covers(sheet.site_id)
 
@@ -801,6 +811,7 @@ def _match_ids(lines: Sequence[_Line], existing: dict[uuid.UUID, Any]) -> None:
 
 async def _check_diesel(
     db: AsyncSession,
+    access: Access,
     body: SheetIn,
     sheet_id: uuid.UUID | None,
     lines: Sequence[_Line],
@@ -834,7 +845,11 @@ async def _check_diesel(
             ):
                 raise invalid(where, "a linked bill's figures come from the bill")
             bill = await db.get(ExpenseBill, d.expense_bill_id, populate_existing=True)
-            if bill is None:
+            # Another site's bill is answered like a missing one. One already on
+            # this sheet stays, so whoever edits the sheet next is not refused for it.
+            if bill is None or (
+                bill.id not in already and not diesel_bill_scope(access).covers(bill.site_id)
+            ):
                 raise invalid(f"{where}.expenseBillId", "no such bill")
             if bill.desk != "fleet" or bill.kind != "diesel":
                 raise invalid(f"{where}.expenseBillId", "not a diesel bill")
@@ -1250,7 +1265,7 @@ async def save_sheet(
     await _check_attachments(db, access, wanted)
 
     # ----- diesel, never counted twice
-    bills = await _check_diesel(db, body, sheet_id, diesel_lines, old_diesel)
+    bills = await _check_diesel(db, access, body, sheet_id, diesel_lines, old_diesel)
     await _check_double_counts(db, body, sheet_id, diesel_lines, bills)
 
     # ----- writes

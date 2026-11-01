@@ -1,14 +1,26 @@
-"""Order to cash on the customer side. Only customer purchase orders so far."""
+"""Order to cash on the customer side: customer purchase orders, and what each trip sold (LIN-22)."""
 
 import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, Index, Integer, Numeric, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Index,
+    Integer,
+    Numeric,
+    SmallInteger,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, created_at, org_fk, pk, tenant_fk, updated_at
+from app.models.master import ITEM_UNITS
 
 SCHEMA = "sales"
 
@@ -80,5 +92,62 @@ class PurchaseOrder(Base):
     decided_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decision_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()
+
+
+class TripSale(Base):
+    """Material a trip delivered and sold: to whom, against which order, at what rate.
+
+    Transport is a line of its own on the customer's bill, income with its own
+    GST rate. The challan and invoice are references to papers raised
+    elsewhere; the sale's value, GST and total are never stored but worked out
+    by app/domain/vehicle_pl.py each time.
+    """
+
+    __tablename__ = "trip_sales"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        tenant_fk("trip_id", "logistics.trips"),
+        tenant_fk("customer_party_id", "master.parties"),
+        tenant_fk("purchase_order_id", "sales.purchase_orders"),
+        tenant_fk("item_id", "master.items"),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint("rate > 0", name="rate_positive"),
+        CheckConstraint("gst_rate_pct >= 0 AND gst_rate_pct <= 100", name="gst_rate_range"),
+        CheckConstraint("transport_amount >= 0", name="transport_not_negative"),
+        CheckConstraint(
+            "transport_gst_rate_pct >= 0 AND transport_gst_rate_pct <= 100", name="transport_gst_rate_range"
+        ),
+        CheckConstraint("hsn_code ~ '^[0-9]{4,8}$'", name="hsn_shape"),
+        CheckConstraint("unit in (" + ", ".join(f"'{u}'" for u in ITEM_UNITS) + ")", name="unit_known"),
+        CheckConstraint("position >= 0", name="position_not_negative"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    customer_party_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    #: The order in Linck it was sold against, when there is one.
+    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    #: The customer's own PO reference, as written on their order.
+    po_ref: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    hsn_code: Mapped[str] = mapped_column(Text, nullable=False)
+    unit: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    gst_billed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    gst_rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    transport_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, server_default=text("0")
+    )
+    transport_gst_rate_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, server_default=text("0")
+    )
+    challan_number: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    invoice_number: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()

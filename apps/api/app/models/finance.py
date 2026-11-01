@@ -116,6 +116,62 @@ class Payment(Base):
     )
 
 
+class TripPayment(Base):
+    """Money received from a customer or paid to a vendor for one trip, as reported (LIN-22).
+
+    Not a finance.payments row: that table is the append-only record of money
+    whose UTR is claimed once for the life of the tenant, and a trip's money
+    line must be correctable and removable by whoever enters the trip. These
+    are the reported side of the owner's cross-verification rule
+    (docs/DATABASE.md): the line a fleet desk records, which a verified
+    payment confirms when receipts are matched to the bank. Part payments
+    are simply several lines.
+    """
+
+    __tablename__ = "trip_payments"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        # The same transfer is not recorded twice on one trip. A lump sum may
+        # cover several trips, so the reference is not unique across them.
+        Index(
+            "uq_trip_payments_organization_id_trip_id_reference_no",
+            "organization_id",
+            "trip_id",
+            "reference_no",
+            unique=True,
+            postgresql_where=text("reference_no IS NOT NULL"),
+        ),
+        tenant_fk("trip_id", "logistics.trips"),
+        tenant_fk("party_id", "master.parties"),
+        tenant_fk("recorded_by", "core.users"),
+        CheckConstraint("direction in ('in', 'out')", name="direction_known"),
+        CheckConstraint(_in("method", PAYMENT_METHODS), name="method_known"),
+        CheckConstraint("amount > 0", name="amount_positive"),
+        CheckConstraint(
+            "reference_no IS NULL OR reference_no ~ '^[A-Z0-9/-]{3,40}$'", name="reference_shape"
+        ),
+        CheckConstraint("position >= 0", name="position_not_negative"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    #: In: received from a customer of the trip. Out: paid to a vendor of the trip.
+    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    party_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    paid_on: Mapped[date] = mapped_column(Date, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)
+    #: UTR, cheque number, UPI reference or cash receipt number, if there is one.
+    reference_no: Mapped[str | None] = mapped_column(Text)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    recorded_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()
+
+
 class WhatsAppImportBatch(Base):
     """One import of driver slips, from the live inbox or a group's chat export."""
 

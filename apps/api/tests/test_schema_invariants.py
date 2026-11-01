@@ -38,6 +38,20 @@ LIN20_TABLES = {
     "finance.expense_bill_events",
 }
 
+# And the tables LIN-22 added, two of them in schemas nothing used before.
+LIN22_TABLES = {
+    "master.items",
+    "logistics.vehicle_duty_logs",
+    "logistics.trips",
+    "logistics.duty_fuel_links",
+    "logistics.trip_diesel",
+    "logistics.trip_costs",
+    "procurement.trip_purchases",
+    "procurement.trip_purchase_files",
+    "sales.trip_sales",
+    "finance.trip_payments",
+}
+
 SCHEMAS = {"schemas": list(BUSINESS_SCHEMAS)}
 
 POSTURE_SQL = """
@@ -57,7 +71,7 @@ async def test_every_tenant_table_enables_and_forces_rls() -> None:
 
     tables = {name: (enabled, forced, policies) for name, enabled, forced, policies in rows}
     assert "core.sites" in tables, "the posture query found nothing — it is checking the wrong catalog"
-    missing = LIN20_TABLES - tables.keys()
+    missing = (LIN20_TABLES | LIN22_TABLES) - tables.keys()
     assert not missing, f"the posture query does not reach {sorted(missing)}"
 
     problems: list[str] = []
@@ -203,7 +217,7 @@ async def test_every_tenant_table_has_the_audit_trigger() -> None:
 
     unaudited = set(rows) - UNAUDITED - NOT_TENANT_SCOPED
     assert unaudited == set(), f"tenant tables without the audit trigger: {sorted(unaudited)}"
-    assert not (LIN20_TABLES & set(rows))
+    assert not ((LIN20_TABLES | LIN22_TABLES) & set(rows))
 
 
 # Single-column references between core tables from before the composite rule
@@ -253,6 +267,7 @@ async def test_every_reference_between_tenant_tables_is_tenant_safe() -> None:
         ).all()
 
     assert any(source in LIN20_TABLES for source, *_ in rows), "the query found none of the new references"
+    assert any(source in LIN22_TABLES for source, *_ in rows), "the query found none of LIN-22's references"
     unsafe = []
     for source, name, target, cols, target_cols in rows:
         if target in NOT_TENANT_SCOPED or source in SINGLE_COLUMN_FKS_FROM:

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { formatDateTime, formatTime } from '@linck/domain';
+import { formatDateTime, formatINR, formatTime } from '@linck/domain';
 import { EXTRACTION_JOBS, SITES, type ExtractedField, type ExtractionJob } from '@linck/mock';
 import {
   AsOfStamp,
@@ -24,16 +24,19 @@ import {
   StatusStamp,
   type HeatCell,
 } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
+import { reviewWords } from './words.js';
 
 /**
- * THE EXTRACTION REVIEW QUEUE.
+ * CHECK READINGS — the queue of what Linck read off photographed papers.
  *
  * The governing idea, and the reason this screen exists at all: Linck is a very
  * fast clerk with excellent handwriting and NO AUTHORITY. It may write in
  * pencil on onionskin. It may never write in ink and it may never post to the
  * ledger. Every value here is hatched until a person looks at the paper and
- * agrees with it.
+ * agrees with it — and nothing is posted until every reading on a paper is
+ * checked, by a named person.
  *
  * Two consequences shape the layout:
  *   - Fields are ordered by ASCENDING CONFIDENCE, worst first, because tab
@@ -42,6 +45,10 @@ import { useApp } from '../../shell/store.js';
  *     make the one task on this screen — reading a number against a scan —
  *     harder, and that produces wrong data. Provenance is carried by the
  *     hatch, the dashed rule and the extraction mark, never by legibility.
+ *
+ * The page says only what is true and what to do (docs/WRITING.md). The
+ * reasons are kept here, in comments; the words, in English and Tamil, are in
+ * `words.ts`.
  */
 
 interface FieldDraft {
@@ -55,33 +62,9 @@ type DraftMap = Record<string, Record<string, FieldDraft>>;
 
 type DocType = ExtractionJob['documentType'];
 
-const FILTERS: { key: DocType | 'all'; label: string }[] = [
-  { key: 'all', label: 'Everything captured' },
-  { key: 'diesel_bill', label: 'Diesel bills' },
-  { key: 'weighbridge_slip', label: 'Weighbridge slips' },
-  { key: 'vendor_invoice', label: 'Vendor invoices' },
-  { key: 'insurance_renewal', label: 'Renewals' },
-];
-
 const DOC_TYPES: readonly DocType[] = ['diesel_bill', 'weighbridge_slip', 'vendor_invoice', 'insurance_renewal'];
 
-const DOC_LABEL: Record<DocType, string> = {
-  diesel_bill: 'Diesel bills',
-  weighbridge_slip: 'Weighbridge slips',
-  vendor_invoice: 'Vendor invoices',
-  insurance_renewal: 'Renewals',
-};
-
-/**
- * The three confidence bands in the reviewer's words rather than the model's.
- * A reviewer does not care that a field scored 0.71; they care whether they are
- * checking it or reading past it.
- */
-const CONFIDENCE_LABEL: Record<1 | 2 | 3, string> = {
-  3: 'Read cleanly',
-  2: 'Worth a look',
-  1: 'Below the floor',
-};
+const FILTERS: readonly (DocType | 'all')[] = ['all', ...DOC_TYPES];
 
 /**
  * OVERRIDE RATE BY DOCUMENT TYPE, SIX WEEKS.
@@ -95,9 +78,13 @@ const CONFIDENCE_LABEL: Record<1 | 2 | 3, string> = {
  * reading from the ledger. In the product it is `v_extraction_override_rate`, a
  * weekly roll-up of the review log keyed on `overriddenFrom` being non-null.
  * The shape is drawn from a real failure mode — a fuel outlet changing its
- * printer, which the model has never seen and the reviewer notices first.
+ * printer, which the model has never seen and the reviewer notices first:
+ * diesel bills were fine until the last week of July, when Sakthi Fuels moved
+ * to a thermal roll that fades within a day in a cab. Nothing about Linck
+ * changed — the paper did, and the litres field is where it shows.
+ * Weighbridge slips are dot-matrix on carbon and have not moved.
  */
-const OVERRIDE_WEEKS = ['W27', 'W28', 'W29', 'W30', 'W31', 'W32'];
+const OVERRIDE_WEEKS = [27, 28, 29, 30, 31, 32] as const;
 
 const OVERRIDE_RATE: Record<DocType, number[]> = {
   diesel_bill: [0.06, 0.07, 0.09, 0.16, 0.27, 0.34],
@@ -111,7 +98,10 @@ const DRIFT_THRESHOLD = 0.25;
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-/** The masthead of the paper each job was photographed from. */
+/**
+ * The masthead of the paper each job was photographed from. It is the paper's
+ * own print, so it stays as the paper has it, in every language.
+ */
 const MASTHEAD: Record<DocType, { name: string; sub: string; kind: string }> = {
   diesel_bill: { name: 'SAKTHI FUELS', sub: 'GST ROAD, KARAPAKKAM · HSD RETAIL OUTLET · 33AABCS9921K1Z4', kind: 'CASH MEMO / FUEL BILL' },
   weighbridge_slip: { name: 'KRP WEIGHBRIDGE', sub: '60 MT ELECTRONIC PLATFORM · LIC 33/WB/2019 · STAMPED 04-2026', kind: 'WEIGHMENT SLIP' },
@@ -121,6 +111,40 @@ const MASTHEAD: Record<DocType, { name: string; sub: string; kind: string }> = {
 
 /** Identifiers get the mono face with a slashed zero; measured values do not. */
 const ID_FIELDS = new Set(['vehicle', 'bill_no', 'ticket', 'policy', 'invoice_no', 'gstin']);
+
+/** Readings whose name already says the unit: a "km reading" needs no "km" after it. */
+const UNIT_IN_NAME = new Set(['odometer']);
+
+/* ---------------------------------------------------- the mock's own text
+   The mock carries a few English sentences where the API will carry parts.
+   Until it does, the screen words the product's part and shows only the
+   data. */
+
+/**
+ * A job's label is "<kind of paper> — <whose, where>". The kind is worded from
+ * `documentType`, so only what follows the dash — names, places and numbers
+ * off the paper — is shown, as it stands.
+ */
+function labelData(label: string): string {
+  const at = label.indexOf(' — ');
+  return at >= 0 ? label.slice(at + 3) : label;
+}
+
+/** "Murugan S (driver)": the name as written, the role in brackets worded. */
+function capturer(capturedBy: string, roles: Record<string, string>): string {
+  const m = /^(.*?)\s*\(([^)]+)\)$/.exec(capturedBy);
+  if (!m) return capturedBy;
+  return `${m[1]} (${roles[m[2]!.toLowerCase()] ?? m[2]})`;
+}
+
+const firstName = (capturedBy: string) => capturedBy.split(' ')[0] ?? capturedBy;
+
+/** The bill number in "Vendor invoice AT/2026/1188 captured 2 days ago", or null. */
+function duplicateRef(duplicateOf: string): string | null {
+  return /[A-Z0-9]+(?:\/[A-Z0-9]+)+/i.exec(duplicateOf)?.[0] ?? null;
+}
+
+const siteName = (siteId: string) => SITES.find((s) => s.id === siteId)?.name ?? '–';
 
 function seedDrafts(): DraftMap {
   const out: DraftMap = {};
@@ -133,6 +157,7 @@ function seedDrafts(): DraftMap {
 }
 
 export function ExtractionReview() {
+  const t = useWords(reviewWords);
   const { siteScope, persona } = useApp();
   const [drafts, setDrafts] = useState<DraftMap>(seedDrafts);
   const [settled, setSettled] = useState<string[]>([]);
@@ -168,10 +193,37 @@ export function ExtractionReview() {
   const remaining = job ? ordered.filter((f) => !draftOf(job.id, f).confirmed).length : 0;
   const activeKey = focusedKey ?? ordered.find((f) => job && !draftOf(job.id, f).confirmed)?.key ?? null;
 
-  const queuedFields = queue.reduce((n, j) => n + j.fields.length, 0);
   const lowConfidence = queue.reduce((n, j) => n + j.fields.filter((f) => f.confidence === 1).length, 0);
 
   const brief = pending.find((j) => j.id === briefId) ?? null;
+
+  /**
+   * What saving a paper does, in a sentence worded from the readings as they
+   * now stand — a corrected litre count is what gets saved, so it is what the
+   * sentence says.
+   */
+  const onSave = (j: ExtractionJob): string => {
+    const value = (key: string) => {
+      const f = j.fields.find((x) => x.key === key);
+      return f ? draftOf(j.id, f).value : '–';
+    };
+    const rupees = (key: string) => {
+      const n = Number.parseFloat(value(key));
+      return Number.isFinite(n) ? formatINR(n, { decimals: 0 }) : value(key);
+    };
+    switch (j.documentType) {
+      case 'diesel_bill':
+        return t.onSave.diesel_bill(value('litres'), value('vehicle'), rupees('amount'));
+      case 'weighbridge_slip':
+        return t.onSave.weighbridge_slip(value('net'));
+      case 'insurance_renewal':
+        return t.onSave.insurance_renewal(value('vehicle'), value('expiry'), rupees('premium'));
+      case 'vendor_invoice': {
+        const unit = j.fields.find((x) => x.key === 'qty')?.unit;
+        return t.onSave.vendor_invoice(`${value('qty')}${unit ? ` ${t.unit[unit] ?? unit}` : ''}`, siteName(j.siteId), rupees('amount'), value('vendor'));
+      }
+    }
+  };
 
   /* ── What is waiting, before you open anything ──────────────────────────
      Two small charts that answer a question a reviewer actually has at 9am:
@@ -180,13 +232,19 @@ export function ExtractionReview() {
      current filter, so narrowing the queue never hides the picture. */
   const fieldsPending = pending.reduce((n, j) => n + j.fields.length, 0);
 
-  const byType = DOC_TYPES.map((t) => ({
-    label: DOC_LABEL[t],
-    value: pending.filter((j) => j.documentType === t).reduce((n, j) => n + j.fields.length, 0),
+  // Counted in readings, not papers: weighbridge slips are five readings each
+  // and diesel bills six, so a queue that looks short in papers is rarely
+  // short in keystrokes.
+  const byType = DOC_TYPES.map((k) => ({
+    label: t.kinds[k],
+    value: pending.filter((j) => j.documentType === k).reduce((n, j) => n + j.fields.length, 0),
   })).filter((s) => s.value > 0);
 
+  // Worst band first, the same order the reading pane uses. "Not sure" means
+  // the model would not have staked anything on it — an odometer half-covered
+  // by a thumb, a GSTIN printed over a fold.
   const byConfidence = ([1, 2, 3] as const).map((level) => ({
-    label: CONFIDENCE_LABEL[level],
+    label: t.sure[level],
     value: pending.reduce((n, j) => n + j.fields.filter((f) => f.confidence === level).length, 0),
     // The only colour on this band. A field below the floor is not a category,
     // it is a defect, and it is the one thing here that is wrong.
@@ -198,31 +256,31 @@ export function ExtractionReview() {
     const rows: string[] = [];
     const rowType = new Map<string, DocType>();
     const cells: HeatCell[] = [];
-    for (const t of DOC_TYPES) {
-      const series = OVERRIDE_RATE[t];
+    for (const k of DOC_TYPES) {
+      const series = OVERRIDE_RATE[k];
       const latest = series[series.length - 1] ?? 0;
       // The current rate is baked into the row label, so the grid reads in
       // greyscale and on a printout — the tone only repeats what the word says.
-      const row = `${DOC_LABEL[t]} · ${pct(latest)}`;
+      const row = `${t.kinds[k]} · ${pct(latest)}`;
       rows.push(row);
-      rowType.set(row, t);
+      rowType.set(row, k);
       OVERRIDE_WEEKS.forEach((week, i) => {
         const rate = series[i] ?? 0;
         cells.push({
           row,
-          col: week,
+          col: String(week),
           intensity: Math.min(1, rate / 0.4),
-          title: `${DOC_LABEL[t]} · ${week} · ${pct(rate)} of fields corrected by hand`,
+          title: t.driftCell(t.kinds[k], week, pct(rate)),
           ...(rate >= DRIFT_THRESHOLD ? { tone: 'var(--status-attention)' } : {}),
         });
       });
     }
-    const worst = DOC_TYPES.map((t) => {
-      const series = OVERRIDE_RATE[t];
-      return { type: t, first: series[0] ?? 0, latest: series[series.length - 1] ?? 0 };
+    const worst = DOC_TYPES.map((k) => {
+      const series = OVERRIDE_RATE[k];
+      return { type: k, first: series[0] ?? 0, latest: series[series.length - 1] ?? 0 };
     }).sort((a, b) => b.latest - a.latest)[0];
     return { rows, rowType, cells, worst };
-  }, []);
+  }, [t]);
 
   function confirmField(jobId: string, key: string) {
     setDrafts((all) => {
@@ -288,13 +346,13 @@ export function ExtractionReview() {
   return (
     <>
       <PageHeader
-        eyebrow="Linck reads"
-        title="Extraction review"
+        eyebrow={t.eyebrow}
+        title={t.title}
         meta={
           <span className="flex flex-wrap items-center gap-4">
             <AsOfStamp asOf="14:42" source="v_extraction_queue" freshness="live" />
-            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              {queue.length} documents waiting · {queuedFields} fields read · {lowConfidence} below the confidence floor
+            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              {t.waiting(queue.length, lowConfidence)}
             </span>
           </span>
         }
@@ -307,14 +365,14 @@ export function ExtractionReview() {
         className="flex items-center gap-2 overflow-x-auto px-6 py-3 sm:flex-wrap sm:overflow-x-visible"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
-        {FILTERS.map((f) => (
-          <span key={f.key} className="shrink-0">
+        {FILTERS.map((k) => (
+          <span key={k} className="shrink-0">
             <Chip
-              active={filter === f.key}
-              onClick={() => setFilter(f.key)}
-              count={f.key === 'all' ? pending.length : pending.filter((j) => j.documentType === f.key).length}
+              active={filter === k}
+              onClick={() => setFilter(k)}
+              count={k === 'all' ? pending.length : pending.filter((j) => j.documentType === k).length}
             >
-              {f.label}
+              {k === 'all' ? t.all : t.kinds[k]}
             </Chip>
           </span>
         ))}
@@ -324,61 +382,53 @@ export function ExtractionReview() {
         <div className="grid gap-x-8 gap-y-4 px-6 pt-4 lg:grid-cols-2">
           <div>
             <p className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              What kind of paper is stacked up — {fieldsPending} fields across {pending.length} documents
+              {t.byKind}
             </p>
             <ProportionBar
               height={22}
-              summary={`${byType[0]?.label ?? 'Nothing'} account for ${
-                byType[0] ? pct((byType[0].value || 0) / (fieldsPending || 1)) : '0%'
-              } of the ${fieldsPending} fields waiting.`}
+              summary={byType[0] ? t.byKindSummary(byType[0].label, pct(byType[0].value / (fieldsPending || 1)), fieldsPending) : t.byKind}
               segments={byType}
             />
-            <ChartCaption>
-              Weighbridge slips are five fields each and diesel bills are six, so a queue that looks short in documents
-              is rarely short in keystrokes.
-            </ChartCaption>
           </div>
 
           <div>
             <p className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              How sure the machine is — press a band to read only those fields
+              {t.bySure}
             </p>
             <BarChart
-              summary={`Of ${fieldsPending} fields waiting, ${byConfidence[0]?.value ?? 0} fell below the confidence floor, ${
-                byConfidence[1]?.value ?? 0
-              } are worth a look and ${byConfidence[2]?.value ?? 0} read cleanly.`}
+              summary={t.bySureSummary(fieldsPending, byConfidence[0]?.value ?? 0, byConfidence[1]?.value ?? 0, byConfidence[2]?.value ?? 0)}
               data={byConfidence}
               labelWidth={124}
               barHeight={20}
               format={(v) => `${Math.round(v)}`}
               onSelect={(d) => {
-                const level = ([1, 2, 3] as const).find((l) => CONFIDENCE_LABEL[l] === d.label) ?? null;
+                const level = ([1, 2, 3] as const).find((l) => t.sure[l] === d.label) ?? null;
                 setConfidenceFocus((cur) => (cur === level ? null : level));
               }}
             />
-            <ChartCaption>
-              Worst band first, the same order the reading pane uses. Below the floor means the model would not have
-              staked anything on it — an odometer half-covered by a thumb, a GSTIN printed over a fold.
-            </ChartCaption>
+            <ChartCaption>{t.bySureHint}</ChartCaption>
           </div>
         </div>
       ) : null}
 
       {job ? (
         <>
+          {/* A duplicate is a warning, not a block: confirming it a second
+              time posts a second payable, so the reviewer checks the vendor's
+              copy and decides. */}
           {job.duplicateOf ? (
             <div
               className="mx-6 mt-4 flex flex-wrap items-center gap-3 px-3 py-2.5"
+              title={duplicateRef(job.duplicateOf) ? undefined : job.duplicateOf}
               style={{
                 background: 'var(--status-attention-tint)',
                 borderRadius: 'var(--r-2)',
                 boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--status-attention) 45%, transparent)',
               }}
             >
-              <StatusStamp status="attention" label="Possible duplicate" />
+              <StatusStamp status="attention" label={t.twice} />
               <p className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
-                Matches {job.duplicateOf}. Confirming this a second time posts a second payable — a duplicate is a warning,
-                not a block, so check the vendor&rsquo;s copy and decide.
+                {t.addedBefore(duplicateRef(job.duplicateOf))}
               </p>
             </div>
           ) : null}
@@ -394,8 +444,8 @@ export function ExtractionReview() {
                 document, read the paper, correct the fields. */}
             <div className="grid gap-5 px-6 md:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:grid-cols-[224px_minmax(0,1fr)_minmax(0,400px)]">
               {/* ── The queue ───────────────────────────────────────────── */}
-              {/* py-1 leaves room for the Brief mark's enlarged hit area, which
-                  would otherwise be clipped by this container's own scroll. */}
+              {/* py-1 leaves room for the Details mark's enlarged hit area,
+                  which would otherwise be clipped by this container's own scroll. */}
               <ol className="-mx-6 flex snap-x gap-2 overflow-x-auto px-6 py-1 md:col-span-2 xl:col-span-1 xl:mx-0 xl:flex-col xl:overflow-x-visible xl:px-0 xl:py-0">
                 {queue.map((j) => {
                   const left = unconfirmedCount(j);
@@ -409,7 +459,7 @@ export function ExtractionReview() {
                           setFocusedKey(null);
                           setEditingKey(null);
                         }}
-                        className="w-full px-3 py-2.5 pr-14 text-left"
+                        className="w-full px-3 py-2.5 pr-16 text-left"
                         style={{
                           background: here ? 'var(--surface-selected)' : 'var(--surface)',
                           borderRadius: 'var(--r-2)',
@@ -417,15 +467,15 @@ export function ExtractionReview() {
                         }}
                       >
                         <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                          {MASTHEAD[j.documentType].kind.toLowerCase()}
+                          {t.kind[j.documentType]}
                         </span>
                         <span className="mt-0.5 block text-[13px] leading-tight" style={{ color: 'var(--text-primary)' }}>
-                          {j.label}
+                          {labelData(j.label)}
                         </span>
                         <span className="mt-2 flex items-center gap-2">
                           <StatusStamp
                             status={left === 0 ? 'ready' : 'pending'}
-                            label={left === 0 ? 'Ready to post' : 'Unread'}
+                            label={left === 0 ? t.checked : t.toCheck}
                             severity={left === 0 ? undefined : left}
                             fillRatio={(j.fields.length - left) / j.fields.length}
                             provisional={left > 0}
@@ -441,14 +491,14 @@ export function ExtractionReview() {
                       <button
                         type="button"
                         onClick={() => setBriefId(j.id)}
-                        aria-label={`Brief on ${j.label}`}
+                        aria-label={t.detailsOf(labelData(j.label))}
                         // The mark stays 20px because it sits on a card corner;
                         // the invisible ::before takes the hit area to 44px on a
                         // pointer that cannot aim.
                         className="absolute right-2 top-2 px-1.5 py-0.5 text-[11px] before:absolute before:-inset-3 before:content-[''] [@media(hover:hover)]:before:hidden"
                         style={{ color: 'var(--brand)', borderRadius: 'var(--r-1)', background: 'var(--surface-raised)' }}
                       >
-                        Brief
+                        {t.details}
                       </button>
                     </li>
                   );
@@ -461,7 +511,10 @@ export function ExtractionReview() {
                   sit on one, or the crop marks stop landing on the value they
                   point at. So the sheet keeps a floor width and scrolls INSIDE
                   ITSELF. A scan that will not narrow must never widen the page
-                  underneath it. */}
+                  underneath it.
+
+                  Everything printed on it is the paper's own print — masthead,
+                  labels, the signature box — and stays as the paper has it. */}
               <div className="min-w-0 overflow-x-auto">
                 <div
                   className="min-w-[272px] overflow-hidden"
@@ -526,10 +579,11 @@ export function ExtractionReview() {
                       Receiver&rsquo;s signature
                       <span className="mt-3 block h-px w-[120px]" style={{ background: 'var(--border-strong)' }} />
                     </span>
+                    {/* Linck's own stamp on the photo: when, who, where. */}
                     <span className="font-id min-w-0 text-right text-[10px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
-                      SCAN 2048×1536 · {formatDateTime(job.capturedAt)}
+                      {formatDateTime(job.capturedAt)}
                       <br />
-                      {job.capturedBy.toUpperCase()} · {(SITES.find((s) => s.id === job.siteId)?.name ?? 'Unknown site').toUpperCase()}
+                      {capturer(job.capturedBy, t.role).toUpperCase()} · {siteName(job.siteId).toUpperCase()}
                     </span>
                   </div>
                 </div>
@@ -538,10 +592,9 @@ export function ExtractionReview() {
               {/* ── The reading ─────────────────────────────────────────── */}
               <div className="min-w-0">
                 <div className="flex items-end justify-between gap-3 pb-2">
+                  {/* Least sure first: that is where the reviewer's eyes are worth most. */}
                   <p className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                    {confidenceFocus === null
-                      ? 'Least certain first — that is where your eyes are worth most'
-                      : `Only the fields Linck ${CONFIDENCE_LABEL[confidenceFocus].toLowerCase()}`}
+                    {confidenceFocus === null ? t.leastSureFirst : t.onlyThese(t.sure[confidenceFocus])}
                   </p>
                   {remaining > 0 ? (
                     <button
@@ -550,26 +603,24 @@ export function ExtractionReview() {
                       // A text button, not a filled one — but it still has to be
                       // 44px to a thumb, so the box grows on a touch pointer and
                       // collapses back to the baseline on a desk.
-                      className="inline-flex h-11 shrink-0 items-center text-[12px] font-medium [@media(hover:hover)]:h-auto"
+                      className="inline-flex h-11 shrink-0 items-center text-[13px] font-medium [@media(hover:hover)]:h-auto"
                       style={{ color: 'var(--brand)' }}
                     >
-                      Confirm all {remaining}
+                      {t.allOk(remaining)}
                     </button>
                   ) : null}
                 </div>
 
                 {confidenceFocus !== null ? (
                   <div className="pb-2">
-                    <Chip active count={visibleFields.length} onClick={() => setConfidenceFocus(null)}>
-                      {CONFIDENCE_LABEL[confidenceFocus]} — show every field
-                    </Chip>
+                    <Chip onClick={() => setConfidenceFocus(null)}>{t.showAll}</Chip>
                   </div>
                 ) : null}
 
                 <ul style={{ background: 'var(--surface)', borderRadius: 'var(--r-2)', boxShadow: 'inset 0 0 0 1px var(--border-subtle)' }}>
                   {visibleFields.length === 0 ? (
                     <li className="px-3 py-4">
-                      <Note>Nothing on this document was read at that confidence. The band above clears the filter.</Note>
+                      <Note>{t.noneHere}</Note>
                     </li>
                   ) : null}
                   {visibleFields.map((f) => {
@@ -591,12 +642,12 @@ export function ExtractionReview() {
                         }}
                       >
                         <div className="flex items-center gap-2">
-                          <span className="min-w-0 text-[11px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
-                            {f.label}
-                            {f.unit ? <span className="ml-1 normal-case">{f.unit}</span> : null}
+                          <span className="min-w-0 text-[12px] uppercase tracking-[0.06em]" style={{ color: 'var(--text-tertiary)' }}>
+                            {t.field[f.key] ?? f.label}
+                            {f.unit && !UNIT_IN_NAME.has(f.key) ? <span className="ml-1 normal-case">{t.unit[f.unit] ?? f.unit}</span> : null}
                           </span>
                           <ConfidenceMeter level={f.confidence} />
-                          {/* Confirm and Edit are the two most-pressed controls
+                          {/* OK and Change are the two most-pressed controls
                               in the product. They keep their text-button
                               lightness on a desk and take the full 44px on a
                               thumb; -my-2 stops that height from stretching the
@@ -606,10 +657,10 @@ export function ExtractionReview() {
                               <button
                                 type="button"
                                 onClick={() => confirmField(job.id, f.key)}
-                                className="inline-flex h-11 items-center px-1.5 text-[12px] font-medium [@media(hover:hover)]:h-auto [@media(hover:hover)]:px-0"
+                                className="inline-flex h-11 min-w-11 items-center justify-center px-1.5 text-[13px] font-medium [@media(hover:hover)]:h-auto [@media(hover:hover)]:min-w-0 [@media(hover:hover)]:px-0"
                                 style={{ color: 'var(--brand)' }}
                               >
-                                Confirm
+                                {t.ok}
                               </button>
                             )}
                             <button
@@ -618,10 +669,10 @@ export function ExtractionReview() {
                                 setEditingKey(f.key);
                                 setEditValue(d.value);
                               }}
-                              className="inline-flex h-11 items-center px-1.5 text-[12px] [@media(hover:hover)]:h-auto [@media(hover:hover)]:px-0"
+                              className="inline-flex h-11 items-center px-1.5 text-[13px] [@media(hover:hover)]:h-auto [@media(hover:hover)]:px-0"
                               style={{ color: 'var(--text-tertiary)' }}
                             >
-                              {d.confirmed ? 'Change' : 'Edit'}
+                              {t.change}
                             </button>
                           </span>
                         </div>
@@ -638,6 +689,7 @@ export function ExtractionReview() {
                                 if (e.key === 'Escape') setEditingKey(null);
                               }}
                               inputMode={idish ? 'text' : 'decimal'}
+                              aria-label={t.field[f.key] ?? f.label}
                               className="num h-11 w-full px-2 text-[15px] tabular-nums [@media(hover:hover)]:h-8"
                               style={{
                                 background: 'var(--surface-raised)',
@@ -662,7 +714,7 @@ export function ExtractionReview() {
 
                         {d.originalValue !== null ? (
                           <p className="mt-1.5 font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                            Linck read {d.originalValue} — corrected by {persona.name}
+                            {t.changedBy(d.originalValue, persona.name)}
                           </p>
                         ) : null}
                       </li>
@@ -674,33 +726,26 @@ export function ExtractionReview() {
           </Section>
 
           {/* ── Where the model has drifted ─────────────────────────────── */}
-          <Section caption="Six weeks of the review log" title="How often a person had to correct the machine">
+          <Section caption={t.driftCaption(OVERRIDE_WEEKS[0], OVERRIDE_WEEKS[OVERRIDE_WEEKS.length - 1]!)} title={t.driftTitle}>
             <div className="px-6">
               <HeatGrid
                 rows={drift.rows}
-                cols={OVERRIDE_WEEKS}
+                cols={OVERRIDE_WEEKS.map(String)}
                 cells={drift.cells}
                 rowLabelWidth={176}
                 cellSize={18}
-                summary={`Override rate by document type over six weeks. ${DOC_LABEL[drift.worst?.type ?? 'diesel_bill']} have risen from ${pct(
-                  drift.worst?.first ?? 0,
-                )} to ${pct(drift.worst?.latest ?? 0)} of fields corrected by hand; every other type has held steady.`}
+                summary={t.driftSummary(t.kinds[drift.worst?.type ?? 'diesel_bill'], pct(drift.worst?.first ?? 0), pct(drift.worst?.latest ?? 0))}
                 onSelect={(cell) => {
-                  const t = drift.rowType.get(cell.row);
-                  if (t) {
-                    setFilter(t);
+                  const k = drift.rowType.get(cell.row);
+                  if (k) {
+                    setFilter(k);
                     setSelectedId(null);
                     setConfidenceFocus(null);
                   }
                 }}
               />
-              <AsOfStamp asOf="W32" source="v_extraction_override_rate · demo series held in this file" freshness="materialised" />
-              <ChartCaption>
-                Diesel bills were fine until the last week of July, when Sakthi Fuels moved to a thermal roll that
-                fades within a day in a cab. Nothing about Linck changed — the paper did, and the litres field is where
-                it shows. Weighbridge slips are dot-matrix on carbon and have not moved. Press a row to pull only that
-                document type into the queue.
-              </ChartCaption>
+              <AsOfStamp asOf={t.week(OVERRIDE_WEEKS[OVERRIDE_WEEKS.length - 1]!)} source="v_extraction_override_rate" freshness="materialised" />
+              <ChartCaption>{t.driftHint}</ChartCaption>
             </div>
           </Section>
 
@@ -715,68 +760,65 @@ export function ExtractionReview() {
           >
             <div className="min-w-0 max-w-[720px] sm:min-w-[280px]">
               <p className="font-serif text-[15px] italic" style={{ color: 'var(--text-primary)' }}>
-                {job.postsSummary}
+                {onSave(job)}
               </p>
-              <p className="mt-1 font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                Linck writes in pencil. Nothing reaches the ledger until a person confirms every field on this document.
+              {/* On a phone the disabled button already says how many are left;
+                  the strip is sticky, so every line it carries is a line of
+                  readings it hides. */}
+              <p className="mt-1 hidden font-serif text-[13px] italic sm:block" style={{ color: 'var(--text-tertiary)' }}>
+                {t.nothingSaved}
               </p>
             </div>
             {/* Stacked below sm, primary at the bottom where the thumb is —
-                "12 fields left to confirm" and "Send back to Ravi" side by side
-                are 340px of button on a 327px measure. */}
+                the two buttons side by side are wider than a phone. */}
             <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
-              <Button onClick={() => closeJob(job.id)}>Send back to {job.capturedBy.split(' ')[0] ?? 'capture'}</Button>
+              <Button onClick={() => closeJob(job.id)}>{t.sendBack(firstName(job.capturedBy))}</Button>
               <Button variant="primary" disabled={remaining > 0} onClick={() => setConfirming(true)}>
-                {remaining > 0 ? `${remaining} fields left to confirm` : 'Confirm and post'}
+                {remaining > 0 ? t.leftToCheck(remaining) : t.save}
               </Button>
             </div>
           </div>
 
-          {/* The last gate. It restates the posting in the same words the footer
+          {/* The last gate. It restates the saving in the same words the footer
               used, because a confirmation that paraphrases is a confirmation
-              nobody reads. */}
+              nobody reads — and it names who the posting will carry. */}
           <ConfirmModal
             open={confirming}
             onClose={() => setConfirming(false)}
             onConfirm={() => closeJob(job.id)}
-            title="Post this document"
-            confirmLabel="Confirm and post"
+            title={t.saveTitle}
+            confirmLabel={t.save}
             consequence={
               <>
-                <span className="block">{job.postsSummary}</span>
+                <span className="block">{onSave(job)}</span>
                 {job.duplicateOf ? (
                   <span className="mt-3 flex flex-wrap items-center gap-2">
-                    <StatusStamp status="attention" label="Possible duplicate" />
-                    <span>Matches {job.duplicateOf}. Posting now creates a second payable.</span>
+                    <StatusStamp status="attention" label={t.twice} />
+                    <span>{t.savesTwice}</span>
                   </span>
                 ) : null}
                 <span className="mt-3 block" style={{ color: 'var(--text-tertiary)' }}>
-                  Linck wrote every figure on this document in pencil. Nothing reaches the ledger until a person
-                  confirms it — that person is {persona.name}, and the posting will carry that name.
+                  {t.inYourName(persona.name)}
                 </span>
               </>
             }
           />
         </>
       ) : settled.length > 0 || filter !== 'all' ? (
+        // Every paper photographed at this site has been through a pair of
+        // human eyes — or none of the chosen kind is left.
         <EmptyState
-          fact={filter === 'all' ? 'Nothing is waiting to be read.' : 'No captures of that kind are waiting.'}
-          because={
-            filter === 'all'
-              ? 'Every document photographed at this site today has been through a pair of human eyes.'
-              : 'Other document types are still in the queue.'
-          }
+          fact={filter === 'all' ? t.allChecked : t.noneOfKind}
           action={
             filter === 'all'
-              ? { label: "Put today's captures back", onClick: () => setSettled([]) }
-              : { label: 'Show everything captured', onClick: () => setFilter('all') }
+              ? { label: t.showAgain, onClick: () => setSettled([]) }
+              : { label: t.showAll, onClick: () => setFilter('all') }
           }
         />
       ) : (
-        <EmptyState
-          fact="No documents have been captured for this site."
-          because="Bills reach this queue when a driver, weighbridge operator or clerk photographs them."
-        />
+        // Papers reach this queue when a driver, a weighbridge operator or a
+        // clerk photographs them.
+        <EmptyState fact={t.noPapers} because={t.photosComeHere} />
       )}
 
       <div className="h-4" />
@@ -789,31 +831,29 @@ export function ExtractionReview() {
         open={brief !== null}
         onClose={() => setBriefId(null)}
         width="detail"
-        title={brief?.label ?? ''}
-        identifier={brief ? `${MASTHEAD[brief.documentType].kind} · ${brief.fields.length} FIELDS` : undefined}
+        title={brief ? labelData(brief.label) : ''}
         status={
           brief
             ? {
                 family: unconfirmedCount(brief) === 0 ? 'ready' : 'pending',
-                label: unconfirmedCount(brief) === 0 ? 'Ready to post' : 'Unread',
+                label: unconfirmedCount(brief) === 0 ? t.checked : t.toCheck,
                 severity: unconfirmedCount(brief) === 0 ? undefined : unconfirmedCount(brief),
                 provisional: unconfirmedCount(brief) > 0,
               }
             : undefined
         }
-        revision={brief ? `CAPTURED ${formatDateTime(brief.capturedAt)}` : undefined}
         footer={
           brief ? (
             <>
-              <Button onClick={() => closeJob(brief.id)}>Send back to {brief.capturedBy.split(' ')[0] ?? 'capture'}</Button>
+              <Button onClick={() => closeJob(brief.id)}>{t.sheet.sendBack}</Button>
               <Button variant="primary" onClick={() => openForReview(brief.id)}>
-                Open for review
+                {t.sheet.checkNow}
               </Button>
             </>
           ) : null
         }
       >
-        {brief ? <Brief job={brief} draftOf={draftOf} /> : null}
+        {brief ? <Brief job={brief} draftOf={draftOf} onSave={onSave(brief)} /> : null}
       </SideSheet>
     </>
   );
@@ -828,16 +868,18 @@ export function ExtractionReview() {
 function Brief({
   job,
   draftOf,
+  onSave,
 }: {
   job: ExtractionJob;
   draftOf: (jobId: string, f: ExtractedField) => FieldDraft;
+  onSave: string;
 }) {
-  const site = SITES.find((s) => s.id === job.siteId)?.name ?? null;
+  const t = useWords(reviewWords);
   const lowest = job.fields.reduce<1 | 2 | 3>((m, f) => (f.confidence < m ? f.confidence : m), 3);
   const confirmed = job.fields.filter((f) => draftOf(job.id, f).confirmed).length;
   const spread = ([1, 2, 3] as const)
     .map((level) => ({
-      label: CONFIDENCE_LABEL[level],
+      label: t.sure[level],
       value: job.fields.filter((f) => f.confidence === level).length,
       tone: level === 1 ? 'var(--status-attention)' : level === 2 ? 'var(--chart-2)' : 'var(--chart-4)',
     }))
@@ -845,43 +887,39 @@ function Brief({
 
   return (
     <>
-      <SheetSection caption="Who captured it">
+      <SheetSection caption={t.sheet.photo}>
         <DetailGrid>
-          <Detail label="Photographed by">{job.capturedBy}</Detail>
-          <Detail label="Photographed at">{formatDateTime(job.capturedAt)}</Detail>
-          <Detail label="Site">{site ?? '–'}</Detail>
-          <Detail label="Document type">{DOC_LABEL[job.documentType]}</Detail>
+          <Detail label={t.sheet.by}>{capturer(job.capturedBy, t.role)}</Detail>
+          <Detail label={t.sheet.at}>{formatDateTime(job.capturedAt)}</Detail>
+          <Detail label={t.sheet.site}>{siteName(job.siteId)}</Detail>
+          <Detail label={t.sheet.paper}>{t.kind[job.documentType]}</Detail>
         </DetailGrid>
       </SheetSection>
 
-      <SheetSection caption="How much reading it needs">
+      <SheetSection caption={t.sheet.sureness}>
         <DetailGrid>
-          <Detail label="Fields read">
-            {job.fields.length} · {confirmed} already confirmed
-          </Detail>
-          <Detail label="Lowest confidence">
+          <Detail label={t.sheet.readings}>{t.sheet.readingsChecked(job.fields.length, confirmed)}</Detail>
+          <Detail label={t.sheet.leastSure}>
             <span className="inline-flex items-center gap-2">
               <ConfidenceMeter level={lowest} />
-              {CONFIDENCE_LABEL[lowest]}
+              {t.sure[lowest]}
             </span>
           </Detail>
         </DetailGrid>
         <div className="pt-1">
           <ProportionBar
             height={20}
-            summary={`${job.fields.length} fields: ${spread
-              .map((s) => `${s.value} ${s.label.toLowerCase()}`)
-              .join(', ')}.`}
+            summary={t.sheet.spread(job.fields.length, spread.map((s) => `${s.value} ${s.label.toLowerCase()}`).join(', '))}
             segments={spread}
           />
         </div>
-        <ChartCaption>
-          One field below the floor is worth four minutes. Four of them means the photograph is the problem, not the
-          model — send it back rather than retyping the bill.
-        </ChartCaption>
+        {/* One reading Linck is not sure of is worth four minutes. Four of
+            them means the photograph is the problem, not the model — send it
+            back rather than retyping the bill. */}
+        <ChartCaption>{t.sheet.sendBackHint}</ChartCaption>
       </SheetSection>
 
-      <SheetSection caption="What Linck read">
+      <SheetSection caption={t.sheet.read}>
         <ul className="text-[13px]">
           {[...job.fields]
             .sort((a, b) => a.confidence - b.confidence)
@@ -894,7 +932,7 @@ function Brief({
                   style={{ borderBottom: '1px solid var(--border-subtle)' }}
                 >
                   <span className="flex min-w-0 items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                    {f.label}
+                    {t.field[f.key] ?? f.label}
                     <ConfidenceMeter level={f.confidence} />
                   </span>
                   <Provisional
@@ -909,7 +947,7 @@ function Brief({
                         <span className="num tabular-nums">
                           {f.unit === '₹' ? '₹' : ''}
                           {d.value}
-                          {f.unit && f.unit !== '₹' ? ` ${f.unit}` : ''}
+                          {f.unit && f.unit !== '₹' ? ` ${t.unit[f.unit] ?? f.unit}` : ''}
                         </span>
                       )}
                     </span>
@@ -920,19 +958,16 @@ function Brief({
         </ul>
       </SheetSection>
 
-      <SheetSection caption="What confirming will post">
-        <Note>{job.postsSummary}</Note>
+      <SheetSection caption={t.sheet.onSave}>
+        <Note>{onSave}</Note>
       </SheetSection>
 
       {job.duplicateOf ? (
-        <SheetSection caption="Before you open it">
+        <SheetSection caption={t.sheet.checkFirst}>
           <div className="flex flex-wrap items-center gap-2 pb-2">
-            <StatusStamp status="attention" label="Possible duplicate" />
+            <StatusStamp status="attention" label={t.twice} />
           </div>
-          <Note>
-            Matches {job.duplicateOf}. Confirming this a second time posts a second payable — a duplicate is a warning,
-            not a block, so check the vendor&rsquo;s copy and decide.
-          </Note>
+          <Note>{t.addedBefore(duplicateRef(job.duplicateOf))}</Note>
         </SheetSection>
       ) : null}
     </>

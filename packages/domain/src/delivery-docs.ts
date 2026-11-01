@@ -29,6 +29,12 @@
  *     differently — a memo's "Quantity Recd: 50.75 MT" is the net weight it
  *     received — and is then marked with the label it was read from.
  *   - Nothing is MATCHED that was not actually compared.
+ *   - It never writes a sentence. Everything a person reads — why a paper
+ *     was not recognised, why a value is UNCLEAR, what a comparison found,
+ *     the problems with the load — is a CODE WITH VALUES (`TypeNote`,
+ *     `ValueNote`, `NetFinding`, `FieldFinding`, `CrossCheckIssue`), and
+ *     the screen words it in the reader's language (docs/WRITING.md).
+ *     Papers are referred to by their id; `paperName` says how to call one.
  *
  * Pure functions, no DOM — the React Native app uses them unchanged.
  */
@@ -42,13 +48,6 @@ export type DeliveryPaperType = Exclude<DeliveryDocType, 'unknown'>;
 
 /** The three papers of one load, in the order the issue's comparison table has them. */
 export const DELIVERY_PAPER_TYPES: readonly DeliveryPaperType[] = ['delivery_challan', 'delivery_memo', 'material_received'];
-
-export const DELIVERY_DOC_LABEL: Record<DeliveryDocType, string> = {
-  delivery_challan: 'Delivery Challan/DC',
-  delivery_memo: 'Delivery Memo',
-  material_received: 'Material Received',
-  unknown: 'Unrecognised paper',
-};
 
 export type DeliveryFieldKey =
   | 'documentNumber'
@@ -64,41 +63,68 @@ export type DeliveryFieldKey =
   | 'loadingLocation'
   | 'unloadingLocation';
 
-/** Every extracted field, named as the issue lists them. */
-export const DELIVERY_FIELD_LABEL: Record<DeliveryFieldKey, string> = {
-  documentNumber: 'Document number',
-  date: 'Date',
-  issuer: 'Issued by (letterhead)',
-  party: 'Supplier/Party',
-  vehicle: 'Vehicle number',
-  material: 'Material',
-  quantity: 'Quantity',
-  grossWeight: 'Gross weight',
-  tareWeight: 'Empty/Tare weight',
-  netWeight: 'Net weight',
-  loadingLocation: 'Loading location',
-  unloadingLocation: 'Unloading location',
-};
-
 export type ComparedField = 'vehicle' | 'date' | 'material' | 'quantity' | 'netWeight' | 'party';
 
 /** The rows of the cross-check table, in the issue's order. */
 export const COMPARED_FIELDS: readonly ComparedField[] = ['vehicle', 'date', 'material', 'quantity', 'netWeight', 'party'];
 
-/** The rows' names, exactly as the issue's table has them. */
-export const COMPARED_FIELD_LABEL: Record<ComparedField, string> = {
-  vehicle: 'Vehicle No',
-  date: 'Date',
-  material: 'Material',
-  quantity: 'Quantity',
-  netWeight: 'Net Weight',
-  party: 'Supplier/Party',
-};
-
 /** Marks a value that was on the paper but could not be read. */
 export const UNCLEAR = 'UNCLEAR';
 
 export type AmountUnit = 'MT' | 'CFT' | 'UNIT';
+
+/** A unit as written, before kg is brought to tonnes. */
+export type WrittenUnit = 'kg' | 'MT' | 'CFT' | 'UNIT';
+
+/** Papers that turn up in the same pile as delivery papers, and are not one. */
+export type OtherPaper = 'tax-invoice' | 'weighbridge-slip' | 'cash-memo' | 'fuel-bill' | 'quotation';
+
+/** Why a paper was left unrecognised. */
+export type TypeNote =
+  /** No text was given: a photo still waiting to be typed in. */
+  | { code: 'no-text' }
+  /** Nothing on it names a delivery challan, a delivery memo or a material-received paper. */
+  | { code: 'no-delivery-words' }
+  /** It reads as another kind of paper, and has no delivery paper's title. */
+  | { code: 'other-paper'; paper: OtherPaper }
+  /** It reads equally as two delivery papers. */
+  | { code: 'tie'; types: [DeliveryPaperType, DeliveryPaperType] }
+  /** Only these words point to the type, without its title: not enough to say. */
+  | { code: 'weak'; type: DeliveryPaperType; evidence: string[] };
+
+/** Why a value is UNCLEAR, or what was assumed in reading it. */
+export type ValueNote =
+  /** The text says it could not be read: "?", "[illegible]". */
+  | { code: 'marked-unreadable' }
+  | { code: 'not-a-registration' }
+  /** Registrations, compacted. */
+  | { code: 'two-registrations'; found: string[] }
+  | { code: 'not-a-date' }
+  /** Reads as a date that is not on the calendar: 31.02.26. */
+  | { code: 'no-such-date' }
+  | { code: 'percentage' }
+  | { code: 'no-number' }
+  | { code: 'many-numbers' }
+  /** A run of digits that is not a number: "50..75". */
+  | { code: 'bad-number'; token: string }
+  /** A word after the figure that is not a unit of weight or volume. */
+  | { code: 'not-a-unit'; word: string }
+  /** No unit written; read in the unit the paper's other weights are written in. */
+  | { code: 'unit-from-paper'; unit: WrittenUnit }
+  /** No unit written, and `figure` tonnes is not a truckload: read as kg. */
+  | { code: 'read-as-kg'; figure: number }
+  /** No unit written: read as tonnes. */
+  | { code: 'read-as-tonnes' }
+  /** Not a plausible truckload: the unit or the decimal point may be misread. */
+  | { code: 'not-a-load'; tonnes: number }
+  | { code: 'written-in-kg' }
+  | { code: 'empty' }
+  /** A size and nothing else: "20 MM". */
+  | { code: 'size-only' }
+  /** Not a material the trade's names are known for; compared as written. */
+  | { code: 'material-unknown' }
+  /** The line under a row of headings could not be lined up with them. */
+  | { code: 'columns-misaligned' };
 
 export interface ExtractedValue {
   /** Exactly as it stands on the paper. Only the label and the separators around it are left off. */
@@ -111,8 +137,8 @@ export interface ExtractedValue {
   /** Weights in tonnes; volumes in their own unit. */
   amount?: number;
   unit?: AmountUnit;
-  /** Why a value is UNCLEAR, or what was assumed in reading it, in one line. */
-  note?: string;
+  /** Why a value is UNCLEAR, or what was assumed in reading it. */
+  note?: ValueNote;
   /** The label it was read under, as printed. */
   label?: string;
   /** Set when a paper's own figure stands in for a field it names differently. */
@@ -127,16 +153,42 @@ export interface ExtractedDocument {
   type: DeliveryDocType;
   /** 0 when the type is unknown; else 1 (weak) to 3 (its own title, nothing competing). */
   typeConfidence: 0 | 1 | 2 | 3;
-  /** The phrases that decided the type — shown so a human can disagree. */
+  /**
+   * The phrases that decided the type — shown so a human can disagree. They
+   * are the trade's printed words ("DC no", "quantity received"), so a screen
+   * quotes them rather than translating them.
+   */
   typeEvidence: string[];
   /** Why a paper was left unrecognised. */
-  typeNote: string | null;
+  typeNote: TypeNote | null;
   /** No text was given: a photo still waiting to be read or typed in. */
   unread: boolean;
   fields: Partial<Record<DeliveryFieldKey, ExtractedValue>>;
   /** Net = gross − tare, worked out on this paper's own numbers. */
   netCheck: NetWeightCheck;
 }
+
+/** Whether a weight the net check needs is on the paper. */
+export type WeightPresence = 'read' | 'unreadable' | 'absent';
+
+/** What a paper's own net = gross − tare came to. Weights in kg. */
+export type NetFinding =
+  /** No weights at all — normal for a memo. */
+  | { code: 'no-weights' }
+  /** Only the net is written: there is no gross or tare to check it against. */
+  | { code: 'net-only' }
+  /** Gross − tare cannot be worked out: one of them, at least, is not `read`. */
+  | { code: 'no-gross-or-tare'; gross: WeightPresence; tare: WeightPresence }
+  /** Gross − tare is worked out, but there is no readable net to check it against. */
+  | { code: 'no-net'; calculatedKg: number; net: Exclude<WeightPresence, 'read'> }
+  | { code: 'adds-up'; grossKg: number; tareKg: number; netKg: number }
+  /** `differenceKg` is the written net minus gross − tare: above 0 when the paper says more. */
+  | { code: 'does-not-add-up'; grossKg: number; tareKg: number; calculatedKg: number; statedKg: number; differenceKg: number };
+
+/** Weights on one paper that cannot all be true. */
+export type WeightConflict =
+  | { code: 'tare-not-below-gross'; tareKg: number; grossKg: number }
+  | { code: 'net-above-gross'; netKg: number; grossKg: number };
 
 export interface NetWeightCheck {
   /**
@@ -154,13 +206,87 @@ export interface NetWeightCheck {
   differenceKg: number | null;
   /**
    * The numbers that ARE on the paper cannot all be true — a net heavier than
-   * the gross, a tare heavier than the gross.
+   * the gross, a tare heavier than the gross. True exactly when `conflicts`
+   * is not empty.
    */
   implausible: boolean;
-  explanation: string;
+  conflicts: WeightConflict[];
+  finding: NetFinding;
 }
 
 export type FieldStatus = 'MATCH' | 'MISMATCH' | 'MISSING' | 'UNCLEAR';
+
+/** One paper's value in a comparison. */
+export interface PaperValue {
+  docId: string;
+  value: ExtractedValue;
+}
+
+/** Why two papers agree although their values are not the same. */
+export type AgreementNote =
+  | { code: 'kg-apart'; kg: number }
+  | { code: 'days-apart'; days: number }
+  /** A volume and trade units that come to the same, at 100 CFT a unit. */
+  | { code: 'same-volume'; cft: number }
+  /** One paper gives only the size; the other names the material as well. */
+  | { code: 'size-only'; size: string };
+
+export interface PairAgreement {
+  docIds: [string, string];
+  note: AgreementNote;
+}
+
+/** How far apart papers may be and still agree: two weighbridges, or a load that crosses midnight. */
+export type Allowance = { code: 'kg'; kg: number } | { code: 'days'; days: number };
+
+/** A paper's party who issued another paper in the load: that link of the chain holds. */
+export interface PartyLink {
+  docId: string;
+  /** As written on the paper. */
+  party: string;
+  /** The paper whose letterhead names the same party. */
+  issuerDocId: string;
+  /** The distinctive words the two names share; empty when the whole name matches. */
+  sharedWords: string[];
+}
+
+/** A paper's party who issued none of the other papers: that link is broken. */
+export interface PartyBreak {
+  docId: string;
+  /** As written on the paper. */
+  party: string;
+  /** The other papers' letterheads, as written. */
+  issuers: { docId: string; issuer: string }[];
+}
+
+/** What comparing one field across the papers found. */
+export type FieldFinding =
+  /** MISMATCH: the readable values, which do not all agree. */
+  | { code: 'differs'; values: PaperValue[] }
+  /** UNCLEAR: a weight and a volume, which only an agreed density could turn into one another. */
+  | { code: 'weight-and-volume'; values: PaperValue[] }
+  /** UNCLEAR: these papers carry it, unreadably. `note` is why, on the first of them. */
+  | { code: 'unreadable'; docIds: string[]; note: ValueNote | null }
+  /** MISSING: no paper carries it. */
+  | { code: 'on-no-paper' }
+  /** MISSING: one paper carries it, so there is nothing to check it against. */
+  | { code: 'on-one-paper'; docId: string }
+  /** MISSING: the material agrees, but its size is written on one paper and not the other. */
+  | { code: 'size-on-one-paper'; size: string; values: PaperValue[] }
+  /** MISSING: the papers that carry it agree; the `missing` ones do not carry it. */
+  | { code: 'not-on-every-paper'; agreeing: string[]; missing: string[] }
+  /** MATCH, but not to the letter: why each pair still agrees, and the allowance used, if any. */
+  | { code: 'close-enough'; pairs: PairAgreement[]; allowance: Allowance | null }
+  /** Supplier/Party MISMATCH: a party issued none of the other papers. `links` are the links that hold. */
+  | { code: 'party-not-issuer'; breaks: PartyBreak[]; links: PartyLink[] }
+  /** Supplier/Party UNCLEAR. */
+  | { code: 'party-unreadable'; docIds: string[]; links: PartyLink[] }
+  /** Supplier/Party MISSING: no paper names a party whose letterhead is on another paper. */
+  | { code: 'party-unlinked' }
+  /** Supplier/Party MISSING: the links hold, but the `missing` papers name no party. */
+  | { code: 'party-missing'; links: PartyLink[]; missing: string[] }
+  /** Supplier/Party MATCH: every party named issued another paper. */
+  | { code: 'party-linked'; links: PartyLink[] };
 
 export interface FieldComparison {
   field: ComparedField;
@@ -169,13 +295,30 @@ export interface FieldComparison {
   status: FieldStatus;
   /** Papers that were read and do not carry this field. */
   missingOn: string[];
-  /** What was found, in a sentence. Null only for a plain match. */
-  explanation: string | null;
+  /** What was found. Null only for a plain match. */
+  finding: FieldFinding | null;
   /** On a MISMATCH, how many papers are out of line with the largest group that agrees; else 0. */
   disagreements: number;
 }
 
 export type OverallResult = 'MATCHED' | 'PARTIALLY MATCHED' | 'MISMATCHED';
+
+/** One problem with the load. */
+export type CrossCheckIssue =
+  /** A compared field that is not a plain match; its comparison holds the values. */
+  | { code: 'field'; field: ComparedField; status: FieldStatus; finding: FieldFinding }
+  /** A paper whose own net = gross − tare fails, cannot be worked out, or holds weights that cannot all be true. */
+  | { code: 'net'; docId: string; status: NetWeightCheck['status']; finding: NetFinding; conflicts: WeightConflict[] }
+  /** No paper shows a gross and a tare weight, so no net was checked. */
+  | { code: 'no-weights-anywhere' }
+  /** A paper with no text: nothing on it was read or checked. */
+  | { code: 'no-text'; docId: string }
+  | { code: 'unknown-paper'; docId: string; note: TypeNote | null }
+  /** More than one paper reads as one type; a load has one of each. */
+  | { code: 'same-type-twice'; type: DeliveryPaperType; docIds: string[] }
+  /** Paper types the load has that were not among these, so that part of it went unchecked. */
+  | { code: 'papers-missing'; types: DeliveryPaperType[] }
+  | { code: 'too-few-papers' };
 
 export interface CrossCheckResult {
   documents: ExtractedDocument[];
@@ -185,8 +328,8 @@ export interface CrossCheckResult {
   mismatchCount: number;
   /** Paper types a load has that were not among the papers given. */
   missingTypes: DeliveryPaperType[];
-  /** One sentence per problem, worst first. Empty only when MATCHED. */
-  explanations: string[];
+  /** One per problem, worst first. Empty only when MATCHED. */
+  issues: CrossCheckIssue[];
 }
 
 export interface CrossCheckOptions {
@@ -247,12 +390,12 @@ const TYPE_SIGNALS: Record<DeliveryPaperType, Signal[]> = {
  * title, a word like GSTIN or "Gross Wt" does not make a tax invoice or a
  * weighbridge slip into a DC.
  */
-const OTHER_PAPERS: { pattern: RegExp; label: string }[] = [
-  { pattern: /\btax\s+invoice\b/i, label: 'tax invoice' },
-  { pattern: /\bweigh(?:ment|ing)\s+(?:slip|ticket|receipt)\b|\bweigh\s*bridge\s+(?:slip|ticket|receipt)\b/i, label: 'weighbridge slip' },
-  { pattern: /\bcash\s+(?:memo|bill|receipt)\b/i, label: 'cash memo' },
-  { pattern: /\b(?:diesel|petrol|hsd)\b/i, label: 'fuel bill' },
-  { pattern: /\bquotation\b|\bpro[\s-]?forma\b/i, label: 'quotation' },
+const OTHER_PAPERS: { pattern: RegExp; paper: OtherPaper }[] = [
+  { pattern: /\btax\s+invoice\b/i, paper: 'tax-invoice' },
+  { pattern: /\bweigh(?:ment|ing)\s+(?:slip|ticket|receipt)\b|\bweigh\s*bridge\s+(?:slip|ticket|receipt)\b/i, paper: 'weighbridge-slip' },
+  { pattern: /\bcash\s+(?:memo|bill|receipt)\b/i, paper: 'cash-memo' },
+  { pattern: /\b(?:diesel|petrol|hsd)\b/i, paper: 'fuel-bill' },
+  { pattern: /\bquotation\b|\bpro[\s-]?forma\b/i, paper: 'quotation' },
 ];
 
 export interface Classification {
@@ -261,7 +404,7 @@ export interface Classification {
   confidence: 0 | 1 | 2 | 3;
   evidence: string[];
   /** Why the paper was left unrecognised. Null when it was recognised. */
-  note: string | null;
+  note: TypeNote | null;
 }
 
 export function classifyDeliveryDocument(text: string): Classification {
@@ -276,20 +419,17 @@ export function classifyDeliveryDocument(text: string): Classification {
   }).sort((a, b) => b.score - a.score);
   const best = scored[0]!;
   const second = scored[1]!;
-  const unknown = (note: string, evidence = best.evidence): Classification => ({ type: 'unknown', confidence: 0, evidence, note });
+  const unknown = (note: TypeNote, evidence = best.evidence): Classification => ({ type: 'unknown', confidence: 0, evidence, note });
 
-  if (best.score === 0) return unknown('Nothing on it names a delivery challan, delivery memo or material-received paper.', []);
+  if (best.score === 0) return unknown({ code: 'no-delivery-words' }, []);
   const other = OTHER_PAPERS.find((o) => o.pattern.test(text));
-  if (!best.titled && other) return unknown(`It reads as a ${other.label}, not a delivery paper.`);
+  if (!best.titled && other) return unknown({ code: 'other-paper', paper: other.paper });
   if (second.score === best.score) {
-    return unknown(
-      `It reads equally as a ${DELIVERY_DOC_LABEL[best.type]} and a ${DELIVERY_DOC_LABEL[second.type]}.`,
-      [...best.evidence, ...second.evidence],
-    );
+    return unknown({ code: 'tie', types: [best.type, second.type] }, [...best.evidence, ...second.evidence]);
   }
   // Without the title, it takes two independent signs that add up.
   if (!best.titled && (best.evidence.length < 2 || best.score < 4)) {
-    return unknown(`Only "${best.evidence.join('", "')}" points to a ${DELIVERY_DOC_LABEL[best.type]} — not enough to say.`);
+    return unknown({ code: 'weak', type: best.type, evidence: best.evidence });
   }
   const margin = best.score - second.score;
   const confidence = best.titled && !second.titled && margin >= 4 ? 3 : best.titled || margin >= 4 ? 2 : 1;
@@ -482,9 +622,6 @@ function tidy(value: string): string {
 
 /* ------------------------------------------------------- reading a paper */
 
-/** A unit as written, before kg is brought to tonnes. */
-type WrittenUnit = 'kg' | 'MT' | 'CFT' | 'UNIT';
-
 function unitOf(text: string): WrittenUnit | null {
   const u = text.toLowerCase().replace(/[\s.]/g, '').replace(/^in/, '');
   if (/^(?:kgs?|kilograms?)$/.test(u)) return 'kg';
@@ -503,7 +640,7 @@ interface Candidate {
   /** A unit printed beside the label: "Net Wt (Kg)". */
   labelUnit: WrittenUnit | null;
   /** Why the value could not be taken cleanly, when it could not. */
-  problem: string | null;
+  problem: ValueNote | null;
 }
 
 interface PaperText {
@@ -604,7 +741,7 @@ function readPaper(text: string): PaperText {
           label: s.hit.text.trim(),
           raw: cells ? cells[k]! : next!,
           labelUnit: s.labelUnit,
-          problem: cells ? null : 'The line under these headings could not be lined up with them',
+          problem: cells ? null : { code: 'columns-misaligned' },
         });
       });
       i += 1;
@@ -626,9 +763,11 @@ function readPaper(text: string): PaperText {
 
 /* --------------------------------------------------------- normalization */
 
-function unclear(raw: string, note: string): ExtractedValue {
+function unclear(raw: string, note: ValueNote): ExtractedValue {
   return { raw, normalized: UNCLEAR, note };
 }
+
+const MARKED: ValueNote = { code: 'marked-unreadable' };
 
 const STATE_CODES = new Set(
   'AN AP AR AS BR CG CH DD DL DN GA GJ HP HR JH JK KA KL LA LD MH ML MN MP MZ NL OD OR PB PY RJ SK TN TR TS UA UK UP WB'.split(' '),
@@ -649,10 +788,10 @@ function registrations(raw: string): string[] {
  * "TN 22 EH 9857", "TN22EH9857" and "tn-22-eh-9857" all normalize the same.
  */
 export function normalizeVehicle(raw: string): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   const found = registrations(raw);
-  if (found.length === 0) return unclear(raw, 'Does not read as a registration number');
-  if (found.length > 1) return unclear(raw, `Two registrations written: ${found.join(', ')}`);
+  if (found.length === 0) return unclear(raw, { code: 'not-a-registration' });
+  if (found.length > 1) return unclear(raw, { code: 'two-registrations', found });
   return { raw, normalized: found[0]! };
 }
 
@@ -668,7 +807,7 @@ function monthOf(word: string): number | null {
 
 /** Day-first, as every Indian form is written. Two-digit years are 20xx; any other length is unreadable. */
 export function normalizeDate(raw: string): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   const text = raw.replace(/(\d)(?:st|nd|rd|th)\b/gi, '$1');
   let ymd: [number, number, number] | null = null;
   const iso = /(?<!\d)(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/.exec(text);
@@ -679,12 +818,12 @@ export function normalizeDate(raw: string): ExtractedValue {
   else if (dmy) ymd = [Number(dmy[3]), Number(dmy[2]), Number(dmy[1])];
   else if (named && monthOf(named[2]!)) ymd = [Number(named[3]), monthOf(named[2]!)!, Number(named[1])];
   else if (monthFirst && monthOf(monthFirst[1]!)) ymd = [Number(monthFirst[3]), monthOf(monthFirst[1]!)!, Number(monthFirst[2])];
-  if (!ymd) return unclear(raw, 'Not a readable date');
+  if (!ymd) return unclear(raw, { code: 'not-a-date' });
   let [y, mo, d] = ymd;
   if (y < 100) y += 2000;
   const probe = new Date(Date.UTC(y, mo - 1, d));
   if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) {
-    return unclear(raw, 'Not a real calendar date');
+    return unclear(raw, { code: 'no-such-date' });
   }
   return { raw, normalized: `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}` };
 }
@@ -704,7 +843,6 @@ const UNIT_AFTER = /^\s*\(?\s*(m\.?\s*t\.?s?|tonnes?|tons?|t|kgs?|kilograms?|cft
 const PLAUSIBLE_LOAD_T = { min: 0.1, max: 150 };
 
 const trim = (n: number) => String(Math.round(n * 1000) / 1000);
-const UNIT_NAME: Record<WrittenUnit, string> = { kg: 'kg', MT: 'tonnes', CFT: 'CFT', UNIT: 'units' };
 
 export interface AmountContext {
   /** A unit printed beside the label: "Net Wt (Kg)". */
@@ -723,39 +861,40 @@ export interface AmountContext {
  * into a weight needs a density, which is a judgement for the reviewer.
  */
 export function normalizeAmount(raw: string, context: AmountContext = {}): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   // A bracketed unit counts; any other bracketed aside does not.
   let bracketUnit = null as WrittenUnit | null;
   const text = raw.replace(/\(([^)]*)\)/g, (_m, inner: string) => {
     bracketUnit ??= unitOf(inner);
     return ' ';
   });
-  if (/%/.test(text)) return unclear(raw, 'A percentage, not an amount');
+  if (/%/.test(text)) return unclear(raw, { code: 'percentage' });
   const tokens = text.match(/\d[\d,.]*/g) ?? [];
-  if (tokens.length === 0) return unclear(raw, 'No number found');
-  if (tokens.length > 1) return unclear(raw, 'More than one number where one amount belongs');
+  if (tokens.length === 0) return unclear(raw, { code: 'no-number' });
+  if (tokens.length > 1) return unclear(raw, { code: 'many-numbers' });
   const token = tokens[0]!;
   const figure = parseFigure(token);
-  if (figure === null) return unclear(raw, `"${token}" is not a readable number`);
+  if (figure === null) return unclear(raw, { code: 'bad-number', token });
   const after = text.slice(text.indexOf(token) + token.length);
   const unitMatch = UNIT_AFTER.exec(after);
   if (!unitMatch && /^\s*[a-z]/i.test(after)) {
-    return unclear(raw, `"${after.trim().split(/\s+/)[0]}" is not a unit of weight or volume`);
+    return unclear(raw, { code: 'not-a-unit', word: after.trim().split(/\s+/)[0]! });
   }
 
   let unit: WrittenUnit | null = (unitMatch ? unitOf(unitMatch[1]!) : null) ?? bracketUnit ?? context.labelUnit ?? null;
-  let note: string | undefined;
+  let note: ValueNote | undefined;
   if (!unit && context.paperUnit) {
     unit = context.paperUnit;
-    note = `No unit written; read in ${UNIT_NAME[unit]}, as the paper's other weights are`;
+    note = { code: 'unit-from-paper', unit };
   }
   if (!unit) {
+    // A bare figure of 1000 or more is not a truckload in tonnes, so it is kg.
     if (figure >= 1000) {
       unit = 'kg';
-      note = `No unit written; read as kg — ${figure} tonnes is not a truckload`;
+      note = { code: 'read-as-kg', figure };
     } else {
       unit = 'MT';
-      note = 'No unit written; read as tonnes';
+      note = { code: 'read-as-tonnes' };
     }
   }
 
@@ -764,9 +903,9 @@ export function normalizeAmount(raw: string, context: AmountContext = {}): Extra
   }
   const tonnes = unit === 'kg' ? figure / 1000 : figure;
   if (tonnes < PLAUSIBLE_LOAD_T.min || tonnes > PLAUSIBLE_LOAD_T.max) {
-    return unclear(raw, `${trim(tonnes)} t is not a plausible truckload — the unit or the decimal point may be misread`);
+    return unclear(raw, { code: 'not-a-load', tonnes: Math.round(tonnes * 1000) / 1000 });
   }
-  if (unit === 'kg' && !note) note = 'Written in kg';
+  if (unit === 'kg' && !note) note = { code: 'written-in-kg' };
   const amount = Math.round(tonnes * 1000) / 1000;
   return { raw, normalized: `${trim(amount)} MT`, amount, unit: 'MT', ...(note ? { note } : {}) };
 }
@@ -777,8 +916,13 @@ export function normalizeAmount(raw: string, context: AmountContext = {}): Extra
  * The size in mm is the part everyone agrees on; the name is where they
  * differ — "12 MM Jelly", "12mm blue metal" and "VSI 12 MM" are one product.
  * A size alone does not make aggregate: a 12 mm steel bar is not 12 mm jelly.
+ *
+ * The keys are codes: a normalized material starts with one, and the screen
+ * words it ("AGGREGATE" is jelly to the yard). `materialParts` takes one apart.
  */
-const MATERIAL_CLASSES: { key: string; pattern: RegExp }[] = [
+export type MaterialKind = 'M-SAND' | 'P-SAND' | 'RIVER SAND' | 'DUST' | 'GSB' | 'WMM' | 'BOULDER' | 'AGGREGATE';
+
+const MATERIAL_CLASSES: { key: MaterialKind; pattern: RegExp }[] = [
   { key: 'M-SAND', pattern: /\bm[\s.-]?sand\b|manufactured\s+sand|\bvsi\s+sand\b/i },
   { key: 'P-SAND', pattern: /\bp[\s.-]?sand\b|plaster(?:ing)?\s+sand/i },
   { key: 'RIVER SAND', pattern: /\briver\s+sand\b/i },
@@ -792,10 +936,10 @@ const MATERIAL_CLASSES: { key: string; pattern: RegExp }[] = [
 const SIZE = /(\d+(?:\.\d+)?)\s*mm\b/i;
 
 export function normalizeMaterial(raw: string): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   const sizeMatch = SIZE.exec(raw);
   const size = sizeMatch ? `${Number(sizeMatch[1])}MM` : null;
-  let cls = MATERIAL_CLASSES.find((c) => c.pattern.test(raw))?.key ?? null;
+  let cls: MaterialKind | null = MATERIAL_CLASSES.find((c) => c.pattern.test(raw))?.key ?? null;
   // "VSI 12 MM" names the crusher it came off, then the size.
   if (!cls && size && /\bvsi\b/i.test(raw)) cls = 'AGGREGATE';
   if (cls) return { raw, normalized: [cls, size].filter(Boolean).join(' ') };
@@ -805,15 +949,25 @@ export function normalizeMaterial(raw: string): ExtractedValue {
     .replace(/[^A-Z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!words && !size) return unclear(raw, 'Empty');
-  if (!words) return { raw, normalized: size!, note: 'Only a size is written' };
-  return { raw, normalized: [words, size].filter(Boolean).join(' '), note: 'Material not recognised; compared as written' };
+  if (!words && !size) return unclear(raw, { code: 'empty' });
+  if (!words) return { raw, normalized: size!, note: { code: 'size-only' } };
+  return { raw, normalized: [words, size].filter(Boolean).join(' '), note: { code: 'material-unknown' } };
+}
+
+/**
+ * A normalized material in its parts: the kind the trade's names reduce to
+ * (null when it was compared as written), the words before the size — the
+ * kind's own key, or the paper's words — and the size, "12MM".
+ */
+export function materialParts(normalized: string): { kind: MaterialKind | null; name: string; size: string | null } {
+  const [name, size] = splitMaterial(normalized);
+  return { kind: MATERIAL_CLASSES.find((c) => c.key === name)?.key ?? null, name, size };
 }
 
 const PARTY_NOISE = /\b(?:m\/s|messrs|pvt|private|ltd|limited|llp|co|company|and|the|india|i)\b/gi;
 
 export function normalizeParty(raw: string): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   const text = raw
     .replace(/\([^)]*\)/g, ' ')
     .replace(PARTY_NOISE, ' ')
@@ -821,18 +975,18 @@ export function normalizeParty(raw: string): ExtractedValue {
     .replace(/[^A-Z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return text ? { raw, normalized: text } : unclear(raw, 'Empty');
+  return text ? { raw, normalized: text } : unclear(raw, { code: 'empty' });
 }
 
 function normalizeText(raw: string): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   return { raw, normalized: raw.toUpperCase().replace(/\s+/g, ' ').trim() };
 }
 
 function normalizeDocNumber(raw: string): ExtractedValue {
-  if (UNREADABLE.test(raw)) return unclear(raw, 'Marked unreadable');
+  if (UNREADABLE.test(raw)) return unclear(raw, MARKED);
   const token = /[A-Z0-9][A-Z0-9/-]*/i.exec(raw)?.[0];
-  return token ? { raw, normalized: token.toUpperCase() } : unclear(raw, 'No number found');
+  return token ? { raw, normalized: token.toUpperCase() } : unclear(raw, { code: 'no-number' });
 }
 
 /* ------------------------------------------------------------- extraction */
@@ -878,13 +1032,24 @@ const NO_WEIGHTS: NetWeightCheck = {
   stated: null,
   differenceKg: null,
   implausible: false,
-  explanation: 'No weights on this paper.',
+  conflicts: [],
+  finding: { code: 'no-weights' },
 };
 
 export function extractDeliveryDocument(id: string, text: string, options: { name?: string } = {}): ExtractedDocument {
   const name = options.name ?? id;
   if (text.trim() === '') {
-    return { id, name, type: 'unknown', typeConfidence: 0, typeEvidence: [], typeNote: 'No text yet.', unread: true, fields: {}, netCheck: NO_WEIGHTS };
+    return {
+      id,
+      name,
+      type: 'unknown',
+      typeConfidence: 0,
+      typeEvidence: [],
+      typeNote: { code: 'no-text' },
+      unread: true,
+      fields: {},
+      netCheck: NO_WEIGHTS,
+    };
   }
   const kind = classifyDeliveryDocument(text);
   const paper = readPaper(text);
@@ -931,39 +1096,34 @@ function kgOf(v: ExtractedValue | undefined): number | null {
   return Math.round(v.amount * 1000);
 }
 
-const tonnesText = (kg: number) => `${trim(kg / 1000)} MT`;
+/** Whether a weight is on the paper: readable, written but unreadable, or not written at all. */
+function presence(v: ExtractedValue | undefined, kg: number | null): WeightPresence {
+  return kg !== null ? 'read' : v ? 'unreadable' : 'absent';
+}
 
 function netCheck(fields: Partial<Record<DeliveryFieldKey, ExtractedValue>>): NetWeightCheck {
   const { grossWeight: g, tareWeight: t, netWeight: n } = fields;
   const stated = kgOf(n);
   if (!g && !t) {
-    return n
-      ? {
-          ...NO_WEIGHTS,
-          stated: stated === null ? null : stated / 1000,
-          explanation: 'Only the net weight is written; there is no gross or tare to check it against.',
-        }
-      : NO_WEIGHTS;
+    return n ? { ...NO_WEIGHTS, stated: stated === null ? null : stated / 1000, finding: { code: 'net-only' } } : NO_WEIGHTS;
   }
   const gross = kgOf(g);
   const tare = kgOf(t);
-  const impossible = [
-    gross !== null && tare !== null && tare >= gross ? `the tare (${tonnesText(tare)}) is not less than the gross (${tonnesText(gross)})` : null,
-    gross !== null && stated !== null && stated > gross ? `the net (${tonnesText(stated)}) is more than the gross (${tonnesText(gross)})` : null,
-  ].filter((p): p is string => p !== null);
-  const implausible = impossible.length > 0;
-  const cannotBe = implausible ? ` Besides, ${impossible.join(' and ')}, which cannot both be right.` : '';
+  // Weights that cannot all be true are reported whatever else is found.
+  const conflicts: WeightConflict[] = [];
+  if (gross !== null && tare !== null && tare >= gross) conflicts.push({ code: 'tare-not-below-gross', tareKg: tare, grossKg: gross });
+  if (gross !== null && stated !== null && stated > gross) conflicts.push({ code: 'net-above-gross', netKg: stated, grossKg: gross });
+  const implausible = conflicts.length > 0;
 
   if (gross === null || tare === null) {
-    const why = (label: string, v: ExtractedValue | undefined) => (v ? `the ${label} cannot be read` : `no ${label} is written`);
-    const missing = [gross === null ? why('gross', g) : null, tare === null ? why('tare', t) : null].filter(Boolean).join(' and ');
     return {
       status: 'NOT_POSSIBLE',
       calculated: null,
       stated: stated === null ? null : stated / 1000,
       differenceKg: null,
       implausible,
-      explanation: `Net = gross − tare cannot be worked out: ${missing}.${cannotBe}`,
+      conflicts,
+      finding: { code: 'no-gross-or-tare', gross: presence(g, gross), tare: presence(t, tare) },
     };
   }
   const calculated = gross - tare;
@@ -974,20 +1134,29 @@ function netCheck(fields: Partial<Record<DeliveryFieldKey, ExtractedValue>>): Ne
       stated: null,
       differenceKg: null,
       implausible,
-      explanation: `Gross − tare = ${tonnesText(calculated)}, but ${n ? 'the net weight written cannot be read' : 'no net weight is written'} to check it against.${cannotBe}`,
+      conflicts,
+      finding: { code: 'no-net', calculatedKg: calculated, net: n ? 'unreadable' : 'absent' },
     };
   }
   const difference = stated - calculated;
-  const sum = `Gross ${tonnesText(gross)} − tare ${tonnesText(tare)} = ${tonnesText(calculated)}`;
   return difference === 0
-    ? { status: 'OK', calculated: calculated / 1000, stated: stated / 1000, differenceKg: 0, implausible, explanation: `${sum}, as written.${cannotBe}` }
+    ? {
+        status: 'OK',
+        calculated: calculated / 1000,
+        stated: stated / 1000,
+        differenceKg: 0,
+        implausible,
+        conflicts,
+        finding: { code: 'adds-up', grossKg: gross, tareKg: tare, netKg: stated },
+      }
     : {
         status: 'MISMATCH',
         calculated: calculated / 1000,
         stated: stated / 1000,
         differenceKg: difference,
         implausible,
-        explanation: `${sum}, but the paper says ${tonnesText(stated)} — ${Math.abs(difference)} kg ${difference > 0 ? 'more' : 'less'}.${cannotBe}`,
+        conflicts,
+        finding: { code: 'does-not-add-up', grossKg: gross, tareKg: tare, calculatedKg: calculated, statedKg: stated, differenceKg: difference },
       };
 }
 
@@ -1027,7 +1196,10 @@ function comparedValue(d: ExtractedDocument, field: ComparedField): ExtractedVal
 
 interface Verdict {
   verdict: 'same' | 'within' | 'differ' | 'partial' | 'incomparable';
-  note?: string;
+  /** Why a 'same' or 'within' pair agrees although the values are not the same. */
+  note?: AgreementNote;
+  /** On 'partial': the size one paper writes and the other leaves out. */
+  size?: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -1037,27 +1209,29 @@ function judge(field: ComparedField, a: ExtractedValue, b: ExtractedValue, toler
     if (a.unit === 'MT' && b.unit === 'MT') {
       const apart = Math.abs(Math.round(a.amount! * 1000) - Math.round(b.amount! * 1000));
       if (apart === 0) return { verdict: 'same' };
-      return apart <= toleranceKg ? { verdict: 'within', note: `${apart} kg apart` } : { verdict: 'differ' };
+      return apart <= toleranceKg ? { verdict: 'within', note: { code: 'kg-apart', kg: apart } } : { verdict: 'differ' };
     }
     const cft = (v: ExtractedValue) => (v.unit === 'CFT' ? v.amount! : v.unit === 'UNIT' ? unitsToCft(v.amount!) : null);
     const [ca, cb] = [cft(a), cft(b)];
     if (ca !== null && cb !== null) {
       if (Math.abs(ca - cb) >= 0.5) return { verdict: 'differ' };
-      return a.unit === b.unit ? { verdict: 'same' } : { verdict: 'same', note: `${trim(ca)} CFT either way, at 100 CFT a unit` };
+      // Trade units and CFT that come to the same, at 100 CFT a unit, are the same.
+      return a.unit === b.unit ? { verdict: 'same' } : { verdict: 'same', note: { code: 'same-volume', cft: Number(trim(ca)) } };
     }
     return { verdict: 'incomparable' };
   }
   if (field === 'date') {
     const days = Math.round(Math.abs(Date.parse(a.normalized) - Date.parse(b.normalized)) / DAY_MS);
     if (days === 0) return { verdict: 'same' };
-    return days <= dateWindow ? { verdict: 'within', note: `${days === 1 ? 'a day' : `${days} days`} apart` } : { verdict: 'differ' };
+    return days <= dateWindow ? { verdict: 'within', note: { code: 'days-apart', days } } : { verdict: 'differ' };
   }
   if (field === 'material') {
     const [an, as] = splitMaterial(a.normalized);
     const [bn, bs] = splitMaterial(b.normalized);
     if ((as && bs && as !== bs) || (an && bn && an !== bn)) return { verdict: 'differ' };
-    if (as !== bs) return { verdict: 'partial', note: `the size (${as ?? bs}) is written on one paper and not the other` };
-    return an !== bn ? { verdict: 'same', note: `one paper gives only the size, ${as}` } : { verdict: 'same' };
+    // One size is null here: two different sizes were a difference above.
+    if (as !== bs) return { verdict: 'partial', size: (as ?? bs)! };
+    return an !== bn ? { verdict: 'same', note: { code: 'size-only', size: as ?? '' } } : { verdict: 'same' };
   }
   return a.normalized === b.normalized ? { verdict: 'same' } : { verdict: 'differ' };
 }
@@ -1067,36 +1241,22 @@ function splitMaterial(normalized: string): [string, string | null] {
   return [m?.[1]?.trim() ?? normalized, m?.[2] ?? null];
 }
 
-function describe(v: ExtractedValue): string {
-  const from = v.derivedFrom ? `, from "${v.label ?? DELIVERY_FIELD_LABEL[v.derivedFrom]}"` : '';
-  return v.raw === v.normalized && !from ? `"${v.raw}"` : `"${v.raw}" (${v.normalized}${from})`;
-}
-
-const list = (items: string[]) => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
-
-type Named = (d: ExtractedDocument) => string;
-
 interface Reading {
   doc: ExtractedDocument;
   value: ExtractedValue;
 }
 
-function compareField(
-  field: Exclude<ComparedField, 'party'>,
-  documents: ExtractedDocument[],
-  nameOf: Named,
-  toleranceKg: number,
-  dateWindow: number,
-): FieldComparison {
-  const label = COMPARED_FIELD_LABEL[field];
+const ids = (docs: readonly ExtractedDocument[]) => docs.map((d) => d.id);
+const paperValues = (rs: readonly Reading[]): PaperValue[] => rs.map((r) => ({ docId: r.doc.id, value: r.value }));
+
+function compareField(field: Exclude<ComparedField, 'party'>, documents: ExtractedDocument[], toleranceKg: number, dateWindow: number): FieldComparison {
   const values = documents.map((d) => ({ docId: d.id, docType: d.type, value: d.unread ? null : comparedValue(d, field) }));
   const rows = documents.map((d, i) => ({ doc: d, value: values[i]!.value })).filter((r) => !r.doc.unread);
   const present = rows.filter((r): r is Reading => r.value !== null);
   const readable = present.filter((r) => r.value.normalized !== UNCLEAR);
   const unreadable = present.filter((r) => r.value.normalized === UNCLEAR);
   const missing = rows.filter((r) => r.value === null).map((r) => r.doc);
-  const missingOn = missing.map((d) => d.id);
-  const says = (rs: Reading[]) => rs.map((r) => `${nameOf(r.doc)} says ${describe(r.value)}`).join('; ');
+  const missingOn = ids(missing);
 
   const verdicts: (Verdict & { a: Reading; b: Reading })[] = [];
   for (let i = 0; i < readable.length; i++) {
@@ -1104,49 +1264,42 @@ function compareField(
       verdicts.push({ ...judge(field, readable[i]!.value, readable[j]!.value, toleranceKg, dateWindow), a: readable[i]!, b: readable[j]! });
     }
   }
-  const result = (status: FieldStatus, explanation: string | null, disagreements = 0): FieldComparison => ({
+  const result = (status: FieldStatus, finding: FieldFinding | null, disagreements = 0): FieldComparison => ({
     field,
     values,
     status,
     missingOn,
-    explanation,
+    finding,
     disagreements,
   });
 
   if (verdicts.some((v) => v.verdict === 'differ')) {
     const agreeing = (r: Reading) => verdicts.filter((v) => (v.a === r || v.b === r) && v.verdict !== 'differ').length + 1;
-    return result('MISMATCH', `${label} differs: ${says(readable)}.`, readable.length - Math.max(...readable.map(agreeing)));
+    return result('MISMATCH', { code: 'differs', values: paperValues(readable) }, readable.length - Math.max(...readable.map(agreeing)));
   }
   if (verdicts.some((v) => v.verdict === 'incomparable')) {
-    return result(
-      'UNCLEAR',
-      `${label} cannot be compared: ${says(readable)} — a weight and a volume, which only an agreed density could turn into one another.`,
-    );
+    // A weight and a volume: only an agreed density could turn one into the
+    // other, and that is a judgement for the reviewer, not for this module.
+    return result('UNCLEAR', { code: 'weight-and-volume', values: paperValues(readable) });
   }
   if (unreadable.length > 0) {
-    const why = unreadable[0]!.value.note;
-    return result('UNCLEAR', `${label} cannot be read on ${list(unreadable.map((r) => nameOf(r.doc)))}${why ? ` (${why.charAt(0).toLowerCase()}${why.slice(1)})` : ''}.`);
+    return result('UNCLEAR', { code: 'unreadable', docIds: ids(unreadable.map((r) => r.doc)), note: unreadable[0]!.value.note ?? null });
   }
   if (readable.length < 2) {
-    return result(
-      'MISSING',
-      readable.length === 0 ? `${label} is not on any paper.` : `${label} is only on ${nameOf(readable[0]!.doc)}, so there is nothing to check it against.`,
-    );
+    return result('MISSING', readable.length === 0 ? { code: 'on-no-paper' } : { code: 'on-one-paper', docId: readable[0]!.doc.id });
   }
   const partial = verdicts.find((v) => v.verdict === 'partial');
-  if (partial) return result('MISSING', `${label} agrees, but ${partial.note}: ${says(readable)}.`);
+  if (partial) return result('MISSING', { code: 'size-on-one-paper', size: partial.size!, values: paperValues(readable) });
   if (missing.length > 0) {
-    return result('MISSING', `${label} agrees on ${list(readable.map((r) => nameOf(r.doc)))}, but is not on ${list(missing.map(nameOf))}.`);
+    return result('MISSING', { code: 'not-on-every-paper', agreeing: ids(readable.map((r) => r.doc)), missing: missingOn });
   }
-  const notes = verdicts.filter((v) => v.note).map((v) => `${nameOf(v.a.doc)} and ${nameOf(v.b.doc)}: ${v.note}`);
-  if (notes.length === 0) return result('MATCH', null);
-  const allowance =
-    field === 'date'
-      ? ` — within the ${dateWindow}-day window for a load that crosses midnight`
-      : verdicts.some((v) => v.verdict === 'within')
-        ? ` — within the ${toleranceKg} kg two weighbridges may differ by`
-        : '';
-  return result('MATCH', `${label} agrees (${notes.join('; ')})${allowance}.`);
+  const pairs = verdicts.flatMap((v): PairAgreement[] => (v.note ? [{ docIds: [v.a.doc.id, v.b.doc.id], note: v.note }] : []));
+  if (pairs.length === 0) return result('MATCH', null);
+  // Dates a day apart are within the window for a load that crosses
+  // midnight; weights a few kg apart are within what two weighbridges differ by.
+  const allowance: Allowance | null =
+    field === 'date' ? { code: 'days', days: dateWindow } : verdicts.some((v) => v.verdict === 'within') ? { code: 'kg', kg: toleranceKg } : null;
+  return result('MATCH', { code: 'close-enough', pairs, allowance });
 }
 
 /** Words every trading name uses; two names sharing only these are not one party. */
@@ -1188,15 +1341,14 @@ function sameParty(a: ExtractedValue, b: ExtractedValue): { on: string[] } | nul
  * letterhead another paper in the load carries. Comparing the three
  * "Party:" boxes with each other would compare three different roles.
  */
-function compareParties(documents: ExtractedDocument[], nameOf: Named): FieldComparison {
-  const label = COMPARED_FIELD_LABEL.party;
+function compareParties(documents: ExtractedDocument[]): FieldComparison {
   const values = documents.map((d) => ({ docId: d.id, docType: d.type, value: d.unread ? null : (d.fields.party ?? null) }));
   const read = documents.filter((d) => !d.unread);
   const missing = read.filter((d) => !d.fields.party);
-  const missingOn = missing.map((d) => d.id);
+  const missingOn = ids(missing);
   const unreadable = read.filter((d) => d.fields.party?.normalized === UNCLEAR);
-  const agreed: string[] = [];
-  const failed: string[] = [];
+  const links: PartyLink[] = [];
+  const breaks: PartyBreak[] = [];
 
   for (const d of read) {
     const party = d.fields.party;
@@ -1212,31 +1364,46 @@ function compareParties(documents: ExtractedDocument[], nameOf: Named): FieldCom
       }
     }
     if (match) {
-      agreed.push(`${nameOf(d)} names "${party.raw}", who issued the ${nameOf(match.o)}${match.on.length ? ` (the names share ${match.on.join(', ')})` : ''}`);
+      links.push({ docId: d.id, party: party.raw, issuerDocId: match.o.id, sharedWords: match.on });
     } else {
-      failed.push(`${nameOf(d)} names "${party.raw}", but the other papers were issued by ${list(issuers.map((o) => `"${o.fields.issuer!.raw}" (${nameOf(o)})`))}`);
+      breaks.push({ docId: d.id, party: party.raw, issuers: issuers.map((o) => ({ docId: o.id, issuer: o.fields.issuer!.raw })) });
     }
   }
-  const result = (status: FieldStatus, explanation: string): FieldComparison => ({
+  const result = (status: FieldStatus, finding: FieldFinding): FieldComparison => ({
     field: 'party',
     values,
     status,
     missingOn,
-    explanation,
-    disagreements: status === 'MISMATCH' ? failed.length : 0,
+    finding,
+    disagreements: status === 'MISMATCH' ? breaks.length : 0,
   });
-  const context = agreed.length > 0 ? ` Otherwise, ${agreed.join('; ')}.` : '';
 
-  if (failed.length > 0) return result('MISMATCH', `${label}: ${failed.join('; ')}.${context}`);
-  if (unreadable.length > 0) return result('UNCLEAR', `${label} cannot be read on ${list(unreadable.map(nameOf))}.${context}`);
-  if (agreed.length === 0) return result('MISSING', `${label} could not be checked: no paper names a party whose letterhead is on another paper.`);
-  if (missing.length > 0) return result('MISSING', `${label}: ${agreed.join('; ')}; but ${list(missing.map(nameOf))} names no party.`);
-  return result('MATCH', `${label}: ${agreed.join('; ')}.`);
+  if (breaks.length > 0) return result('MISMATCH', { code: 'party-not-issuer', breaks, links });
+  if (unreadable.length > 0) return result('UNCLEAR', { code: 'party-unreadable', docIds: ids(unreadable), links });
+  if (links.length === 0) return result('MISSING', { code: 'party-unlinked' });
+  if (missing.length > 0) return result('MISSING', { code: 'party-missing', links, missing: missingOn });
+  return result('MATCH', { code: 'party-linked', links });
 }
 
 /** Whether a quantity row only repeats the net-weight row — one figure per paper, the same in both. */
 function mirrors(quantity: FieldComparison, net: FieldComparison): boolean {
   return quantity.values.every((q, i) => (q.value?.normalized ?? null) === (net.values[i]!.value?.normalized ?? null));
+}
+
+/**
+ * How to call a paper: by its type; by its type and its name where more than
+ * one paper reads as that type; by its name alone where the type is unknown
+ * or the paper was not read.
+ */
+export type PaperName =
+  | { code: 'type'; type: DeliveryPaperType }
+  | { code: 'type-and-name'; type: DeliveryPaperType; name: string }
+  | { code: 'name'; name: string };
+
+export function paperName(doc: ExtractedDocument, documents: readonly ExtractedDocument[]): PaperName {
+  if (doc.type === 'unknown') return { code: 'name', name: doc.name };
+  const sameType = documents.filter((d) => !d.unread && d.type === doc.type).length;
+  return sameType > 1 ? { code: 'type-and-name', type: doc.type, name: doc.name } : { code: 'type', type: doc.type };
 }
 
 export function crossCheckDeliveryDocuments(inputs: { id: string; text: string; name?: string }[], options: CrossCheckOptions = {}): CrossCheckResult {
@@ -1245,53 +1412,56 @@ export function crossCheckDeliveryDocuments(inputs: { id: string; text: string; 
   const documents = inputs.map((d) => extractDeliveryDocument(d.id, d.text, d.name === undefined ? {} : { name: d.name }));
   const read = documents.filter((d) => !d.unread);
   const ofType = (t: DeliveryDocType) => read.filter((d) => d.type === t);
-  // A paper is called by its type; by its name as well where the type does not pick it out.
-  const nameOf: Named = (d) =>
-    d.type === 'unknown' ? `"${d.name}"` : ofType(d.type).length > 1 ? `${DELIVERY_DOC_LABEL[d.type]} "${d.name}"` : DELIVERY_DOC_LABEL[d.type];
 
   const comparisons = COMPARED_FIELDS.map((field) =>
-    field === 'party' ? compareParties(documents, nameOf) : compareField(field, documents, nameOf, toleranceKg, dateWindow),
+    field === 'party' ? compareParties(documents) : compareField(field, documents, toleranceKg, dateWindow),
   );
   const row = (f: ComparedField) => comparisons.find((c) => c.field === f)!;
+  // Every comparison that is not a plain match carries a finding.
+  const fieldIssue = (c: FieldComparison): CrossCheckIssue => ({ code: 'field', field: c.field, status: c.status, finding: c.finding! });
+  const netIssue = (d: ExtractedDocument): CrossCheckIssue => ({
+    code: 'net',
+    docId: d.id,
+    status: d.netCheck.status,
+    finding: d.netCheck.finding,
+    conflicts: d.netCheck.conflicts,
+  });
 
-  const explanations: string[] = [];
+  // Worst first: what says these may not be one load, then what could not be settled.
+  const issues: CrossCheckIssue[] = [];
   let mismatchCount = 0;
   const coreMismatch = comparisons.filter((c) => c.status === 'MISMATCH' && CORE_FIELDS.includes(c.field));
   for (const c of coreMismatch) {
     // A short delivery shows in both the quantity and the net-weight rows; say it once.
     if (c.field === 'quantity' && row('netWeight').status === 'MISMATCH' && mirrors(c, row('netWeight'))) continue;
-    explanations.push(c.explanation!);
+    issues.push(fieldIssue(c));
     mismatchCount += 1;
   }
   const arithmetic = read.filter((d) => d.netCheck.status === 'MISMATCH');
-  for (const d of arithmetic) explanations.push(`${nameOf(d)}: ${d.netCheck.explanation}`);
+  for (const d of arithmetic) issues.push(netIssue(d));
   mismatchCount += arithmetic.length;
   if (row('party').status === 'MISMATCH') {
-    explanations.push(row('party').explanation!);
+    issues.push(fieldIssue(row('party')));
     mismatchCount += 1;
   }
-  for (const d of read.filter((x) => x.netCheck.implausible && x.netCheck.status !== 'MISMATCH')) explanations.push(`${nameOf(d)}: ${d.netCheck.explanation}`);
-  for (const c of comparisons.filter((x) => x.status === 'UNCLEAR')) explanations.push(c.explanation!);
-  for (const c of comparisons.filter((x) => x.status === 'MISSING')) explanations.push(c.explanation!);
-  for (const d of read.filter((x) => x.netCheck.status === 'NOT_POSSIBLE' && !x.netCheck.implausible)) explanations.push(`${nameOf(d)}: ${d.netCheck.explanation}`);
-  if (read.length > 0 && read.every((d) => d.netCheck.status === 'NOT_APPLICABLE')) {
-    explanations.push('Net = gross − tare was not checked: no paper shows a gross and a tare weight.');
-  }
-  for (const d of documents.filter((x) => x.unread)) explanations.push(`"${d.name}" has no text yet, so nothing on it was read or checked.`);
-  for (const d of ofType('unknown')) explanations.push(`"${d.name}": could not tell which paper this is. ${d.typeNote ?? ''}`.trim());
+  for (const d of read.filter((x) => x.netCheck.implausible && x.netCheck.status !== 'MISMATCH')) issues.push(netIssue(d));
+  for (const c of comparisons.filter((x) => x.status === 'UNCLEAR')) issues.push(fieldIssue(c));
+  for (const c of comparisons.filter((x) => x.status === 'MISSING')) issues.push(fieldIssue(c));
+  for (const d of read.filter((x) => x.netCheck.status === 'NOT_POSSIBLE' && !x.netCheck.implausible)) issues.push(netIssue(d));
+  if (read.length > 0 && read.every((d) => d.netCheck.status === 'NOT_APPLICABLE')) issues.push({ code: 'no-weights-anywhere' });
+  for (const d of documents.filter((x) => x.unread)) issues.push({ code: 'no-text', docId: d.id });
+  for (const d of ofType('unknown')) issues.push({ code: 'unknown-paper', docId: d.id, note: d.typeNote });
   for (const t of DELIVERY_PAPER_TYPES) {
     const same = ofType(t);
-    if (same.length > 1) explanations.push(`${same.length} papers read as ${DELIVERY_DOC_LABEL[t]} (${list(same.map((d) => `"${d.name}"`))}) — a load has one.`);
+    if (same.length > 1) issues.push({ code: 'same-type-twice', type: t, docIds: ids(same) });
   }
   const missingTypes = DELIVERY_PAPER_TYPES.filter((t) => ofType(t).length === 0);
-  if (read.length > 0 && missingTypes.length > 0) {
-    explanations.push(`No ${list(missingTypes.map((t) => DELIVERY_DOC_LABEL[t]))} paper among these, so that part of the load went unchecked.`);
-  }
-  if (documents.length < 2) explanations.push('At least two papers are needed to cross-check a load.');
+  if (read.length > 0 && missingTypes.length > 0) issues.push({ code: 'papers-missing', types: missingTypes });
+  if (documents.length < 2) issues.push({ code: 'too-few-papers' });
 
   const compared = comparisons.some((c) => CORE_FIELDS.includes(c.field) && c.status === 'MATCH');
   const overall: OverallResult =
-    coreMismatch.length > 0 || arithmetic.length > 0 ? 'MISMATCHED' : explanations.length === 0 && compared ? 'MATCHED' : 'PARTIALLY MATCHED';
+    coreMismatch.length > 0 || arithmetic.length > 0 ? 'MISMATCHED' : issues.length === 0 && compared ? 'MATCHED' : 'PARTIALLY MATCHED';
 
-  return { documents, comparisons, overall, mismatchCount, missingTypes, explanations };
+  return { documents, comparisons, overall, mismatchCount, missingTypes, issues };
 }

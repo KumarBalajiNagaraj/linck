@@ -9,12 +9,14 @@ import {
   type PaymentMode,
   type PaymentRecord,
 } from '@linck/domain';
-import { NOW, type ExpenseBill } from '@linck/mock';
+import type { ExpenseBill } from '@linck/mock';
 import { Button, Modal, Note, Rail, SheetSection, StatusStamp } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
-import { actorFor, useExpenses, type ActProblem } from './expenseStore.js';
+import { now, useBillBatch, useBillMove, useBills } from './bills.js';
+import type { BillProblem } from './expenseApi.js';
+import { actorFor } from './expenseStore.js';
 import { expenseWords } from './words.js';
 
 /**
@@ -51,7 +53,7 @@ const PRIMARY: BillAction[] = ['validate', 'approve', 'pass', 'pay', 'restore'];
 const rupees = (paise: number) => formatINR(paise / 100);
 
 /** Words for one problem, in the reader's language. */
-function useProblemWords(): (p: ActProblem) => string {
+export function useProblemWords(): (p: BillProblem) => string {
   const t = useWords(expenseWords);
   const status = useWords(statusWords).expense;
   return (p) => t.problem(p, (s) => status[s as ExpenseBill['status']] ?? s);
@@ -91,24 +93,28 @@ function PaymentFields({ value, onChange }: { value: PaymentRecord; onChange: (p
         <span className={LABEL_CLASS} style={{ color: 'var(--text-secondary)' }}>
           {c.paidOn}
         </span>
-        <input type="date" max={businessDate(NOW)} value={value.paidOn} onChange={(e) => onChange({ ...value, paidOn: e.target.value })} className={FIELD_CLASS} style={FIELD_STYLE} />
+        <input type="date" max={businessDate(now())} value={value.paidOn} onChange={(e) => onChange({ ...value, paidOn: e.target.value })} className={FIELD_CLASS} style={FIELD_STYLE} />
       </label>
     </div>
   );
 }
 
-const blankPayment = (): PaymentRecord => ({ utr: '', paidOn: businessDate(NOW), mode: 'NEFT' });
+const blankPayment = (): PaymentRecord => ({ utr: '', paidOn: businessDate(now()), mode: 'NEFT' });
 
-/** The moves this person may make on one bill. */
+/**
+ * The moves this person may make on one bill. What is offered is what the
+ * workflow allows them here; live, the API decides again, and a refusal is
+ * shown below in the same words as the browser's own.
+ */
 export function ChainActions({ bill }: { bill: ExpenseBill }) {
   const { persona } = useApp();
-  const act = useExpenses((s) => s.act);
+  const move = useBillMove();
   const actor = actorFor(persona);
   const options = availableActions(bill, actor);
   const [pending, setPending] = useState<BillAction | null>(null);
   const [note, setNote] = useState('');
   const [payment, setPayment] = useState<PaymentRecord>(blankPayment);
-  const [problem, setProblem] = useState<ActProblem | null>(null);
+  const [problem, setProblem] = useState<BillProblem | null>(null);
   const t = useWords(expenseWords);
   const say = useProblemWords();
 
@@ -125,12 +131,13 @@ export function ChainActions({ bill }: { bill: ExpenseBill }) {
   const chosen = options.find((o) => o.action === pending) ?? null;
   const submit = () => {
     if (!chosen) return;
-    const why = act(bill.id, chosen.action, actor, { note, ...(chosen.action === 'pay' ? { payment } : {}) });
-    setProblem(why);
-    if (!why) {
-      setPending(null);
-      setNote('');
-    }
+    void move.run({ bill, action: chosen.action, input: { note, ...(chosen.action === 'pay' ? { payment } : {}) } }).then((why) => {
+      setProblem(why);
+      if (!why) {
+        setPending(null);
+        setNote('');
+      }
+    });
   };
   const amount = formatINR(bill.amount);
 
@@ -141,10 +148,11 @@ export function ChainActions({ bill }: { bill: ExpenseBill }) {
           <Button
             key={o.action}
             variant={PRIMARY.includes(o.action) ? 'primary' : o.action === 'reject' || o.action === 'delete' ? 'destructive' : 'secondary'}
+            disabled={move.busy}
             onClick={() => {
               setProblem(null);
               if (!o.needsNote && o.action !== 'pay') {
-                setProblem(act(bill.id, o.action, actor));
+                void move.run({ bill, action: o.action }).then(setProblem);
                 return;
               }
               setPending(o.action);
@@ -172,12 +180,17 @@ export function ChainActions({ bill }: { bill: ExpenseBill }) {
             </label>
           ) : null}
           <div className="flex gap-2">
-            <Button variant={chosen.action === 'reject' || chosen.action === 'delete' ? 'destructive' : 'primary'} onClick={submit}>
+            <Button variant={chosen.action === 'reject' || chosen.action === 'delete' ? 'destructive' : 'primary'} onClick={submit} disabled={move.busy}>
               {t.action[chosen.action]}
             </Button>
             <Button onClick={() => setPending(null)}>{t.chain.cancel}</Button>
           </div>
         </div>
+      ) : null}
+      {move.busy ? (
+        <p className="mt-2 text-[14px]" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>
+          {t.live.saving}
+        </p>
       ) : null}
       {problem ? (
         <p className="relative mt-2 pl-3 text-[14px]" style={{ color: 'var(--status-critical)' }}>
@@ -225,11 +238,11 @@ export function BillHistory({ bill }: { bill: ExpenseBill }) {
  */
 export function BatchBar({ bills, status }: { bills: ExpenseBill[]; status: ExpenseBill['status'] | null }) {
   const { persona } = useApp();
-  const actMany = useExpenses((s) => s.actMany);
-  const allBills = useExpenses((s) => s.bills);
+  const batch = useBillBatch();
+  const allBills = useBills().bills;
   const [open, setOpen] = useState(false);
   const [payment, setPayment] = useState<PaymentRecord>(blankPayment);
-  const [problem, setProblem] = useState<ActProblem | null>(null);
+  const [problem, setProblem] = useState<BillProblem | null>(null);
   const [done, setDone] = useState<{ count: number; paise: number } | null>(null);
   const t = useWords(expenseWords);
   const c = t.chain;
@@ -251,10 +264,16 @@ export function BatchBar({ bills, status }: { bills: ExpenseBill[]; status: Expe
         return;
       }
     }
-    const n = actMany(plan, actor, action === 'pay' ? { payment } : {});
-    setDone({ count: n, paise: plan.totalPaise });
-    setProblem(null);
-    setOpen(false);
+    void batch.run({ plan, input: action === 'pay' ? { payment } : {} }).then((out) => {
+      // Refused (live): the box stays open with the reason, as for a bad UTR.
+      if ('problem' in out) {
+        setProblem(out.problem);
+        return;
+      }
+      setDone({ count: out.done, paise: out.paise });
+      setProblem(null);
+      setOpen(false);
+    });
   };
 
   return (
@@ -282,8 +301,8 @@ export function BatchBar({ bills, status }: { bills: ExpenseBill[]; status: Expe
         footer={
           <>
             <Button onClick={() => setOpen(false)}>{c.cancel}</Button>
-            <Button variant="primary" onClick={confirm}>
-              {c.doAll(t.action[action], plan.eligible.length, rupees(plan.totalPaise))}
+            <Button variant="primary" onClick={confirm} disabled={batch.busy}>
+              {batch.busy ? t.live.saving : c.doAll(t.action[action], plan.eligible.length, rupees(plan.totalPaise))}
             </Button>
           </>
         }

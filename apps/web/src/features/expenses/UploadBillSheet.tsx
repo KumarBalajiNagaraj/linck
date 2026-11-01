@@ -9,20 +9,16 @@ import {
   type BillFieldKey,
   type BillNotice,
 } from '@linck/domain';
-import {
-  NOW,
-  SITES,
-  VEHICLES,
-  type BillCaptureRecord,
-  type CapturedBillField,
-  type ExpenseBill,
-  type Vehicle,
-} from '@linck/mock';
+import { VEHICLES, type BillCaptureRecord, type CapturedBillField, type ExpenseBill, type Vehicle } from '@linck/mock';
 import { Button, ConfidenceMeter, Note, Rail, SheetSection, SideSheet } from '@linck/ui';
+import { LIVE } from '../../auth/api.js';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
-import { newBillId, useExpenses } from './expenseStore.js';
+import { useProblemWords } from './ApprovalChain.js';
+import { now, spacedRegistration, useAddBill, useSiteName, useSites, vehicleRef } from './bills.js';
+import type { BillProblem } from './expenseApi.js';
+import { newBillId } from './expenseStore.js';
 import { readBillImage } from './ocr.js';
 import { expenseWords } from './words.js';
 
@@ -47,6 +43,12 @@ import { expenseWords } from './words.js';
  * at, where the new row appears. The vehicle it is against may belong to
  * another of their sites: a repair bill keyed at the workshop is against a
  * crusher's tipper.
+ *
+ * LIVE (VITE_API_URL set), saving sends the scan to the API and then the
+ * bill, with what was read off it; the API decides who raised it and works
+ * out the corrections. There is no fleet list on the API yet, so the vehicle
+ * is typed — or read off the bill — rather than picked from the demo's
+ * sample fleet, and kept as its registration.
  */
 
 /**
@@ -85,23 +87,24 @@ interface Draft {
   description: string;
   amount: string;
   litres: string;
+  /** The demo: a vehicle picked from its sample fleet. */
   vehicleId: string;
+  /** Live: the vehicle number, as typed or read off the bill. */
+  vehicleText: string;
 }
 
 const blank = (desk: ExpenseBill['desk']): Draft => ({
   file: null,
   kind: KINDS_BY_DESK[desk][0]!,
   billNumber: '',
-  billDate: businessDate(NOW),
+  billDate: businessDate(now()),
   vendor: '',
   description: '',
   amount: '',
   litres: '',
   vehicleId: '',
+  vehicleText: '',
 });
-
-const ALL_SITE_IDS = SITES.map((s) => s.id);
-const siteName = (id: string) => SITES.find((s) => s.id === id)?.name ?? id;
 
 type ReadingState = { state: 'idle' | 'reading' | 'done' | 'failed' | 'pdf'; progress: number };
 
@@ -115,10 +118,15 @@ export function UploadBillSheet({
   desk: ExpenseBill['desk'];
 }) {
   const { persona, siteScope } = useApp();
-  const add = useExpenses((s) => s.add);
+  const add = useAddBill();
+  const sites = useSites();
+  const siteName = useSiteName();
+  const say = useProblemWords();
   const t = useWords(expenseWords);
   const u = t.upload;
   const kindWords = useWords(statusWords).expenseKind;
+  /** Live: the API would not take the bill. Shown in the footer until the next change. */
+  const [refused, setRefused] = useState<BillProblem | null>(null);
   const [draft, setDraft] = useState<Draft>(() => blank(desk));
   const [preview, setPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState<'wrong-file' | 'too-big' | null>(null);
@@ -156,27 +164,39 @@ export function UploadBillSheet({
       setCapture(null);
       setReading({ state: 'idle', progress: 0 });
       setPasted('');
+      setRefused(null);
       readToken.current += 1;
     }
   }, [open, desk]);
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => {
     touched.current.add(key);
+    setRefused(null);
     setDraft((d) => ({ ...d, [key]: value }));
   };
 
   // Vehicles at every site this person may upload for, the one in scope first.
-  const uploadSites = sitesFor(persona.grants, UPLOAD_PERMISSION[desk], ALL_SITE_IDS);
+  // Live there is no fleet list to offer: the vehicle is typed.
+  const uploadSites = sitesFor(
+    persona.grants,
+    UPLOAD_PERMISSION[desk],
+    sites.map((site) => site.id),
+  );
   const siteOrder = [...uploadSites].sort((a, b) => Number(b === siteScope) - Number(a === siteScope));
-  const vehicleGroups = siteOrder
-    .map((siteId) => ({ siteId, vehicles: VEHICLES.filter((v) => v.siteId === siteId) }))
-    .filter((g) => g.vehicles.length > 0);
+  const vehicleGroups = LIVE
+    ? []
+    : siteOrder.map((siteId) => ({ siteId, vehicles: VEHICLES.filter((v) => v.siteId === siteId) })).filter((g) => g.vehicles.length > 0);
   const offered = vehicleGroups.flatMap((g) => g.vehicles);
   const vehicle: Vehicle | null = offered.find((v) => v.id === draft.vehicleId) ?? null;
+  /** Live: the typed vehicle as the bill keeps it, TN38AL1050. */
+  const typedVehicle = LIVE ? vehicleRef(draft.vehicleText) : null;
+  /** The registration the form holds now, compact, for the capture record. */
+  const vehicleReg = LIVE ? (typedVehicle ?? '') : (vehicle?.registrationNumber ?? '');
   const bookedTo = siteScope ?? vehicle?.siteId ?? (uploadSites.includes(persona.defaultSiteId ?? '') ? persona.defaultSiteId : uploadSites[0]) ?? null;
 
   const pickFile = (file: File | undefined) => {
     if (!file) return;
+    setRefused(null);
     const refuse = (message: 'wrong-file' | 'too-big') => {
       // The earlier scan and its reading go too: figures keyed from bill B
       // must never be submitted against bill A's photo.
@@ -254,6 +274,8 @@ export function UploadBillSheet({
         amount: f.amount && free('amount') ? f.amount.value : d.amount,
         litres: f.litres && free('litres') ? f.litres.value : d.litres,
         vehicleId: match && free('vehicleId') ? match.id : d.vehicleId,
+        // Live: the registration read off the bill, as people write it.
+        vehicleText: LIVE && f.vehicle && free('vehicleText') ? spacedRegistration(f.vehicle.value) : d.vehicleText,
       };
     });
   };
@@ -265,7 +287,7 @@ export function UploadBillSheet({
     // A reading the form cannot pick — a registration not among the vehicles
     // offered, a diesel slip on the stores desk — is not a correction the
     // person made.
-    if (key === 'vehicle' && !current && !offered.some((v) => v.registrationNumber === field.value)) {
+    if (key === 'vehicle' && !LIVE && !current && !offered.some((v) => v.registrationNumber === field.value)) {
       return { value: field.value, confidence: field.confidence, source: field.source, corrected: false, unmatched: 'vehicle' };
     }
     if (key === 'kind' && !KINDS_BY_DESK[desk].includes(field.value as ExpenseBill['kind'])) {
@@ -280,7 +302,7 @@ export function UploadBillSheet({
 
   const amount = parseTypedAmount(draft.amount);
   const litres = parseTypedAmount(draft.litres, 3);
-  const today = businessDate(NOW);
+  const today = businessDate(now());
   const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(draft.billDate) && !Number.isNaN(Date.parse(`${draft.billDate}T00:00:00+05:30`));
   const needsVehicle = desk === 'fleet' && draft.kind !== 'toll' && draft.kind !== 'other';
   const amountError = draft.amount.trim() !== '' && (amount === null || amount <= 0) ? t.detail.errors.amount : null;
@@ -293,7 +315,7 @@ export function UploadBillSheet({
     draft.vendor.trim() ? null : u.needs.vendor,
     amount !== null && amount > 0 ? null : u.needs.amount,
     draft.kind === 'diesel' && !(litres !== null && litres > 0) ? u.needs.litres : null,
-    needsVehicle && !vehicle ? u.needs.vehicle : null,
+    needsVehicle && !(LIVE ? typedVehicle : vehicle) ? u.needs.vehicle : null,
     bookedTo ? null : u.needs.site,
   ].filter((p): p is string => p !== null);
 
@@ -302,7 +324,7 @@ export function UploadBillSheet({
     const record: BillCaptureRecord | null = capture
       ? {
           engine: capture.engine,
-          capturedAt: NOW.toISOString(),
+          capturedAt: now().toISOString(),
           warnings: capture.result.warnings,
           // Only the fields this bill has: a stores bill is against no
           // vehicle, and only diesel is counted in litres. A reading of a
@@ -313,7 +335,7 @@ export function UploadBillSheet({
               ['billNumber', 'Bill number', draft.billNumber.trim()],
               ['billDate', 'Bill date', draft.billDate],
               ['vendor', 'Vendor', draft.vendor.trim()],
-              ...(desk === 'fleet' ? [['vehicle', 'Vehicle', vehicle?.registrationNumber ?? '']] : []),
+              ...(desk === 'fleet' ? [['vehicle', 'Vehicle', vehicleReg]] : []),
               ...(draft.kind === 'diesel' ? [['litres', 'Litres', litres !== null ? String(litres) : '']] : []),
               ['amount', 'Amount', amount.toFixed(2)],
             ] as [BillFieldKey, string, string][]
@@ -332,7 +354,8 @@ export function UploadBillSheet({
         }
       : null;
     const anyOverride = record?.fields.some((f) => f.overridden) ?? false;
-    add({
+    const file = draft.file;
+    const bill: ExpenseBill = {
       id: newBillId(),
       desk,
       billNumber: draft.billNumber.trim(),
@@ -340,7 +363,7 @@ export function UploadBillSheet({
       billDate: new Date(`${draft.billDate}T00:00:00+05:30`).toISOString(),
       // The vehicle select is on the fleet form only; a reading must not
       // put a stores bill against a vehicle nobody saw.
-      vehicleId: desk === 'fleet' ? (vehicle?.id ?? null) : null,
+      vehicleId: desk === 'fleet' ? (LIVE ? typedVehicle : (vehicle?.id ?? null)) : null,
       driverId: desk === 'fleet' && draft.kind === 'diesel' ? (vehicle?.driverId ?? null) : null,
       vendor: draft.vendor.trim(),
       // Left blank when nothing was typed: the screens show the type in the reader's language.
@@ -350,21 +373,29 @@ export function UploadBillSheet({
       status: 'submitted',
       submittedBy: persona.name,
       submittedById: `user:${persona.key}`,
-      submittedAt: NOW.toISOString(),
+      submittedAt: now().toISOString(),
       siteId: bookedTo,
       // Keyed with no capture is a human value; captured and accepted as read
       // is confirmed; any correction marks the whole bill overridden.
       provenance: record ? (anyOverride ? 'overridden' : 'confirmed') : 'human',
       capture: record,
       attachment: {
-        fileName: draft.file.name,
-        mimeType: draft.file.type,
-        sizeKb: Math.round(draft.file.size / 1024),
+        fileName: file.name,
+        mimeType: file.type,
+        sizeKb: Math.round(file.size / 1024),
         url: preview,
       },
+    };
+    void add.run({ bill, file }).then((no) => {
+      if (no) {
+        setRefused(no);
+        return;
+      }
+      // The demo's register shows the saved bill's scan from this preview;
+      // live, the API serves it, and the preview is let go with the sheet.
+      if (!LIVE) held.current.saved = true;
+      onClose();
     });
-    held.current.saved = true;
-    onClose();
   };
 
   const isPdf = draft.file?.type === 'application/pdf';
@@ -377,11 +408,15 @@ export function UploadBillSheet({
       title={u.title(desk)}
       footer={
         <>
-          <Button variant="primary" onClick={save} disabled={problems.length > 0}>
-            {u.submit}
+          <Button variant="primary" onClick={save} disabled={problems.length > 0 || add.busy}>
+            {add.busy ? t.live.saving : u.submit}
           </Button>
-          <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-            {problems.length > 0 ? u.stillNeeded(problems) : u.bookedTo(siteName(bookedTo!))}
+          <span
+            className="text-[13px]"
+            role={refused ? 'alert' : undefined}
+            style={{ color: refused ? 'var(--status-critical)' : 'var(--text-secondary)' }}
+          >
+            {refused ? say(refused) : problems.length > 0 ? u.stillNeeded(problems) : u.bookedTo(siteName(bookedTo!))}
           </span>
         </>
       }
@@ -487,8 +522,24 @@ export function UploadBillSheet({
             <Field label={t.detail.fields.whatFor!}>
               <input value={draft.description} onChange={(e) => set('description', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE} />
             </Field>
-            {desk === 'fleet' ? (
-              <Field label={needsVehicle ? t.detail.fields.vehicle! : u.vehicleOptional} captured={capturedFor('vehicle', vehicle?.registrationNumber ?? '')}>
+            {desk === 'fleet' && LIVE ? (
+              <Field
+                label={needsVehicle ? t.detail.fields.vehicle! : u.vehicleOptional}
+                captured={capturedFor('vehicle', vehicleReg)}
+                echo={typedVehicle ? spacedRegistration(typedVehicle) : null}
+              >
+                <input
+                  value={draft.vehicleText}
+                  onChange={(e) => set('vehicleText', e.target.value)}
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={`${FIELD_CLASS} font-id`}
+                  style={FIELD_STYLE}
+                />
+              </Field>
+            ) : desk === 'fleet' ? (
+              <Field label={needsVehicle ? t.detail.fields.vehicle! : u.vehicleOptional} captured={capturedFor('vehicle', vehicleReg)}>
                 <select value={vehicle?.id ?? ''} onChange={(e) => set('vehicleId', e.target.value)} className={FIELD_CLASS} style={FIELD_STYLE}>
                   <option value="">—</option>
                   {vehicleGroups.map((g) => (

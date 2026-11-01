@@ -1,13 +1,6 @@
 import { useMemo, useState } from 'react';
 import { availableActions, businessDate, can, formatDate, parseTypedAmount } from '@linck/domain';
-import {
-  DRIVERS,
-  EXPENSE_STATUS_FAMILY,
-  expensesForSite,
-  NOW,
-  VEHICLES,
-  type ExpenseBill,
-} from '@linck/mock';
+import { EXPENSE_STATUS_FAMILY, expensesForSite, type ExpenseBill } from '@linck/mock';
 import type { StatusFamily } from '@linck/tokens';
 import {
   AsOfStamp,
@@ -37,8 +30,10 @@ import { useWords, wordsNow } from '../../i18n/words.js';
 import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
-import { BatchBar, BillHistory, ChainActions, STEP_ACTION } from './ApprovalChain.js';
-import { actorFor, useExpenses } from './expenseStore.js';
+import { BatchBar, BillHistory, ChainActions, STEP_ACTION, useProblemWords } from './ApprovalChain.js';
+import { driverLabel, now, useBills, useCorrectBill, vehicleLabel, type BillList } from './bills.js';
+import type { BillProblem } from './expenseApi.js';
+import { actorFor } from './expenseStore.js';
 import { UploadBillSheet } from './UploadBillSheet.js';
 import { expenseWords } from './words.js';
 
@@ -65,7 +60,8 @@ const UPLOAD_KEY: Record<ExpenseBill['desk'], string> = {
 export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) {
   const inr = useInrCompact();
   const { persona, siteScope, density } = useApp();
-  const bills = useExpenses((s) => s.bills);
+  const list = useBills();
+  const { bills } = list;
   const [view, setView] = useViewParam(VIEWS, 'all');
   const [uploading, setUploading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -109,7 +105,7 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
         }
         meta={
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <AsOfStamp asOf="14:42" source="expense_bills" freshness="live" />
+            <AsOfStamp asOf={list.asOf} source="expense_bills" freshness="live" />
             <span className="text-[14px]" style={{ color: awaiting.length > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
               {t.register.waitingForYou(awaiting.length, inr(awaitingValue))}
             </span>
@@ -142,7 +138,9 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
           isDormant={(e) => e.status === 'rejected' || e.status === 'deleted'}
           rail={(e) => ({ status: family(e), provenance: e.provenance })}
           empty={
-            all.length === 0 ? (
+            list.state !== 'ready' ? (
+              <BillsNotHere list={list} />
+            ) : all.length === 0 ? (
               <EmptyState fact={t.register.noBills} />
             ) : (
               <EmptyState fact={t.register.noneInList} action={{ label: t.register.showAll, onClick: () => setView('all') }} />
@@ -170,6 +168,20 @@ export function ExpenseRegister({ desk }: { desk: ExpenseBill['desk'] | null }) 
   );
 }
 
+/** Live only: the bills are on their way, or could not be read. */
+export function BillsNotHere({ list }: { list: BillList }) {
+  const t = useWords(expenseWords);
+  const say = useProblemWords();
+  if (list.state === 'loading') return <EmptyState fact={t.live.loading} />;
+  return (
+    <EmptyState
+      fact={t.live.failed}
+      {...(list.problem ? { because: say(list.problem) } : {})}
+      action={{ label: t.live.retry, onClick: list.retry }}
+    />
+  );
+}
+
 type EditableKey = 'billNumber' | 'billDate' | 'vendor' | 'litres' | 'amount';
 
 /**
@@ -179,13 +191,16 @@ type EditableKey = 'billNumber' | 'billDate' | 'vendor' | 'litres' | 'amount';
  */
 function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boolean }) {
   const { persona } = useApp();
-  const update = useExpenses((s) => s.update);
+  const correct = useCorrectBill();
   const t = useWords(expenseWords);
   const d = t.detail;
   const status = useWords(statusWords);
+  const say = useProblemWords();
   const [editing, setEditing] = useState(false);
   const [unviewable, setUnviewable] = useState(false);
   const [problem, setProblem] = useState<keyof typeof d.errors | null>(null);
+  /** Live: the API would not take the correction — the bill was signed meanwhile, say. */
+  const [refused, setRefused] = useState<BillProblem | null>(null);
   const [draft, setDraft] = useState<Record<EditableKey, string>>(() => ({
     billNumber: bill.billNumber,
     // The IST calendar date the bill carries, not the UTC date of IST midnight.
@@ -200,7 +215,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
     // and a figure that cannot be read is refused, not rounded to a guess.
     const amount = parseTypedAmount(draft.amount);
     const litres = draft.litres.trim() === '' ? null : parseTypedAmount(draft.litres, 3);
-    const today = businessDate(NOW);
+    const today = businessDate(now());
     const why: keyof typeof d.errors | null =
       amount === null || amount <= 0
         ? 'amount'
@@ -237,7 +252,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           }),
         }
       : null;
-    update(bill.id, {
+    const patch: Partial<ExpenseBill> = {
       billNumber: next.billNumber.trim(),
       billDate: new Date(`${next.billDate}T00:00:00+05:30`).toISOString(),
       vendor: next.vendor.trim(),
@@ -245,8 +260,12 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
       amount: next.amount,
       capture,
       provenance: capture ? (capture.fields.some((f) => f.overridden) ? 'overridden' : 'confirmed') : bill.provenance,
+    };
+    setRefused(null);
+    void correct.run({ bill, patch }).then((no) => {
+      setRefused(no);
+      if (!no) setEditing(false);
     });
-    setEditing(false);
   };
 
   return (
@@ -333,7 +352,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
                 </span>
                 <input
                   type={type}
-                  {...(type === 'date' ? { max: businessDate(NOW) } : {})}
+                  {...(type === 'date' ? { max: businessDate(now()) } : {})}
                   value={draft[key]}
                   onChange={(e) => setDraft((was) => ({ ...was, [key]: e.target.value }))}
                   className="h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[38px] [@media(hover:hover)]:text-[14px]"
@@ -347,15 +366,21 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
               <Rail status="critical" />
               {d.errors[problem]}
             </p>
+          ) : refused ? (
+            <p className="relative mt-2 pl-3 text-[14px]" style={{ color: 'var(--status-critical)' }}>
+              <Rail status="critical" />
+              {say(refused)}
+            </p>
           ) : null}
           <div className="mt-3 flex gap-2">
-            <Button variant="primary" onClick={saveCorrection}>
-              {d.save}
+            <Button variant="primary" onClick={saveCorrection} disabled={correct.busy}>
+              {correct.busy ? t.live.saving : d.save}
             </Button>
             <Button
               onClick={() => {
                 setEditing(false);
                 setProblem(null);
+                setRefused(null);
               }}
             >
               {d.cancel}
@@ -375,7 +400,7 @@ function BillDetail({ bill, mayCorrect }: { bill: ExpenseBill; mayCorrect: boole
           <Detail label={d.fields.billDate!}>{formatDate(bill.billDate)}</Detail>
           <Detail label={d.fields.vendor!}>{bill.vendor}</Detail>
           <Detail label={d.fields.whatFor!}>{bill.description || status.expenseKind[bill.kind]}</Detail>
-          {bill.desk === 'fleet' ? <Detail label={d.fields.vehicle!}>{VEHICLES.find((v) => v.id === bill.vehicleId)?.displayReg ?? '–'}</Detail> : null}
+          {bill.desk === 'fleet' ? <Detail label={d.fields.vehicle!}>{vehicleLabel(bill.vehicleId) ?? '–'}</Detail> : null}
           {bill.litres !== null ? (
             <Detail label={d.fields.litres!}>
               <QuantityCell value={bill.litres} decimals={1} uom="L" />
@@ -449,7 +474,7 @@ function columnsFor(desk: ExpenseBill['desk'] | null, family: (e: ExpenseBill) =
       group: c.groupFor,
       fleetOnly: true,
       render: (e) => {
-        const reg = VEHICLES.find((v) => v.id === e.vehicleId)?.displayReg;
+        const reg = vehicleLabel(e.vehicleId);
         return reg ? <IdCell>{reg}</IdCell> : null;
       },
     },
@@ -458,7 +483,7 @@ function columnsFor(desk: ExpenseBill['desk'] | null, family: (e: ExpenseBill) =
       header: c.driver,
       group: c.groupFor,
       fleetOnly: true,
-      render: (e) => DRIVERS.find((d) => d.id === e.driverId)?.name ?? null,
+      render: (e) => driverLabel(e.driverId),
     },
     {
       key: 'litres',

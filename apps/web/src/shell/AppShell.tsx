@@ -16,7 +16,7 @@ import { Mark } from './Mark.js';
 import { MODULES, navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
 import { shellWords } from './words.js';
-import { useExpenses } from '../features/expenses/expenseStore.js';
+import { useBills } from '../features/expenses/bills.js';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { persona, siteScope, enabledModules, density, theme, signedIn, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
@@ -600,7 +600,8 @@ function BottomTabs({
 }
 
 function useBadges(siteScope: string | null): Record<string, { count: number; tone: 'critical' | 'neutral' }> {
-  const bills = useExpenses((s) => s.bills);
+  // The bill counts read the bills the expense screens read: live, the API's.
+  const { bills } = useBills();
   return useMemo(() => {
     const docs = documentExposure(siteScope);
     const fleet = fleetCounts(siteScope);

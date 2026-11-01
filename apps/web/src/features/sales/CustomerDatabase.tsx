@@ -20,8 +20,10 @@ import {
   Stacked,
   type Column,
 } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { customerWords, salesWords, type CustomerText, type SalesText } from './words.js';
 
 /**
  * The customer database.
@@ -35,8 +37,7 @@ import { useViewParam } from '../../shell/useViewParam.js';
  * customers who have a load, an invoice or an order there — the same trips,
  * invoices and orders the dispatch board, ledger and order list show at that
  * scope — so a customer counted on the command board is always findable here.
- * "Served from" is the customer's usual plant, a fact about them, not a
- * filter.
+ * "Our site" is the customer's usual plant, a fact about them, not a filter.
  */
 
 type View = 'all' | 'overdue' | 'open_orders';
@@ -53,6 +54,9 @@ interface CustomerRow {
 export function CustomerDatabase() {
   const { siteScope, density } = useApp();
   const [view, setView] = useViewParam(VIEWS, 'all');
+  const t = useWords(customerWords);
+  const s = useWords(salesWords);
+  const columns = useMemo(() => customerColumns(t, s), [t, s]);
 
   const rows = useMemo<CustomerRow[]>(() => {
     const invoices = invoicesForSite(siteScope);
@@ -79,19 +83,20 @@ export function CustomerDatabase() {
   return (
     <>
       <PageHeader
-        eyebrow="Sales"
-        title="Customers"
-        meta={<AsOfStamp asOf="14:42" source="sales.customers" freshness="live" />}
+        eyebrow={s.eyebrow}
+        title={t.title}
+        // From sales.customers.
+        meta={<AsOfStamp asOf="14:42" source={s.src.customers} freshness="live" />}
       />
       <div className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={view === 'all'} onClick={() => setView('all')} count={rows.length}>
-          All customers
+          {s.all}
         </Chip>
         <Chip active={view === 'overdue'} onClick={() => setView('overdue')} count={rows.filter((r) => r.overdueCount > 0).length}>
-          With overdue invoices
+          {t.overdueInvoices}
         </Chip>
         <Chip active={view === 'open_orders'} onClick={() => setView('open_orders')} count={rows.filter((r) => r.openOrders > 0).length}>
-          With open orders
+          {t.openOrders}
         </Chip>
       </div>
       <Section>
@@ -103,14 +108,14 @@ export function CustomerDatabase() {
           rail={(r) => (r.overdueCount > 0 ? { status: 'critical' } : undefined)}
           empty={
             // Genuinely empty and filtered-empty are different problems and
-            // never share copy (see EmptyState).
+            // never share copy (see EmptyState). Empty at a site means nobody
+            // has a load, an invoice or an order there yet.
             rows.length === 0 ? (
-              <EmptyState fact="No customers at this site." because="Nobody has a load, an invoice or an order here yet." />
+              <EmptyState fact={t.noneAtSite} />
             ) : (
               <EmptyState
-                fact="No customers match this view."
-                because={view === 'overdue' ? 'Nobody at this site is overdue.' : 'Nobody at this site has an order open.'}
-                action={{ label: 'Show all customers', onClick: () => setView('all') }}
+                fact={view === 'overdue' ? t.noneOverdue : t.noneWithOrders}
+                action={{ label: s.showAll, onClick: () => setView('all') }}
               />
             )
           }
@@ -121,68 +126,70 @@ export function CustomerDatabase() {
   );
 }
 
-const columns: Column<CustomerRow>[] = [
-  {
-    key: 'name',
-    header: 'Customer',
-    sticky: true,
-    width: 260,
-    group: 'Identity',
-    render: (r) => <Stacked primary={r.customer.name} secondary={r.customer.site} />,
-  },
-  {
-    key: 'gstin',
-    header: 'GSTIN',
-    type: 'id',
-    width: 170,
-    group: 'Identity',
-    render: (r) => <IdCell>{r.customer.gstin ?? 'B2C — no GSTIN'}</IdCell>,
-  },
-  {
-    key: 'contact',
-    header: 'Contact',
-    group: 'Identity',
-    render: (r) => <Stacked primary={r.customer.contactName} secondary={r.customer.phone} />,
-  },
-  { key: 'site', header: 'Served from', group: 'Identity', render: (r) => r.siteName },
-  {
-    key: 'terms',
-    header: 'Terms',
-    unit: 'days',
-    type: 'num',
-    width: 90,
-    group: 'Credit',
-    render: (r) => (r.customer.paymentTermsDays === 0 ? 'Cash' : r.customer.paymentTermsDays),
-  },
-  {
-    key: 'limit',
-    header: 'Credit limit',
-    unit: '₹',
-    type: 'money',
-    width: 130,
-    group: 'Credit',
-    render: (r) => <MoneyCell value={r.customer.creditLimit} decimals={0} />,
-  },
-  {
-    key: 'outstanding',
-    header: 'Outstanding',
-    unit: '₹',
-    type: 'money',
-    width: 130,
-    group: 'Credit',
-    render: (r) => <MoneyCell value={r.outstanding} decimals={0} />,
-  },
-  {
-    key: 'overdue',
-    header: 'Overdue invoices',
-    type: 'num',
-    width: 130,
-    group: 'Credit',
-    render: (r) => (
-      <span className="num tabular-nums" style={{ color: r.overdueCount > 0 ? 'var(--status-critical)' : undefined }}>
-        {r.overdueCount}
-      </span>
-    ),
-  },
-  { key: 'orders', header: 'Open orders', type: 'num', width: 110, group: 'Orders', render: (r) => r.openOrders },
-];
+function customerColumns(t: CustomerText, s: SalesText): Column<CustomerRow>[] {
+  return [
+    {
+      key: 'name',
+      header: s.customer,
+      sticky: true,
+      width: 260,
+      group: t.groups.details,
+      render: (r) => <Stacked primary={r.customer.name} secondary={r.customer.site} />,
+    },
+    {
+      key: 'gstin',
+      header: t.gstNo,
+      type: 'id',
+      width: 170,
+      group: t.groups.details,
+      // A walk-in counter customer is billed B2C and has no GSTIN.
+      render: (r) => (r.customer.gstin ? <IdCell>{r.customer.gstin}</IdCell> : t.noGst),
+    },
+    {
+      key: 'contact',
+      header: t.contact,
+      group: t.groups.details,
+      render: (r) => <Stacked primary={r.customer.contactName} secondary={r.customer.phone} />,
+    },
+    { key: 'site', header: t.ourSite, group: t.groups.details, render: (r) => r.siteName },
+    {
+      key: 'terms',
+      header: t.creditDays,
+      type: 'num',
+      width: 110,
+      group: t.groups.money,
+      render: (r) => (r.customer.paymentTermsDays === 0 ? t.cash : r.customer.paymentTermsDays),
+    },
+    {
+      key: 'limit',
+      header: t.creditLimit,
+      unit: '₹',
+      type: 'money',
+      width: 130,
+      group: t.groups.money,
+      render: (r) => <MoneyCell value={r.customer.creditLimit} decimals={0} />,
+    },
+    {
+      key: 'outstanding',
+      header: t.moneyDue,
+      unit: '₹',
+      type: 'money',
+      width: 130,
+      group: t.groups.money,
+      render: (r) => <MoneyCell value={r.outstanding} decimals={0} />,
+    },
+    {
+      key: 'overdue',
+      header: t.overdueInvoices,
+      type: 'num',
+      width: 130,
+      group: t.groups.money,
+      render: (r) => (
+        <span className="num tabular-nums" style={{ color: r.overdueCount > 0 ? 'var(--status-critical)' : undefined }}>
+          {r.overdueCount}
+        </span>
+      ),
+    },
+    { key: 'orders', header: t.openOrders, type: 'num', width: 110, group: t.groups.orders, render: (r) => r.openOrders },
+  ];
+}

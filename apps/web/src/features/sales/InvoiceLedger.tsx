@@ -3,7 +3,6 @@ import { formatDate, formatINR, formatINRCompact } from '@linck/domain';
 import {
   CUSTOMERS_LIST,
   INVOICE_STATUS_FAMILY,
-  INVOICE_STATUS_LABEL,
   LAST_14,
   PRODUCTS,
   RECEIPTS,
@@ -43,13 +42,17 @@ import {
   useIsPhone,
   type Column,
 } from '@linck/ui';
+import { statusWords } from '../../i18n/statusWords.js';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { shortName } from './shortName.js';
+import { invoiceWords, salesWords, type InvoiceText, type SalesText } from './words.js';
 
 const LEDGER_VIEWS = ['all', 'overdue', 'reported', 'part_paid', 'closed'] as const;
 
 /**
- * The receivables ledger.
+ * The receivables ledger ("Invoices" on screen).
  *
  * The owner's hard rule is the spine of this screen: AN INVOICE DOES NOT CLOSE
  * UNTIL THE PAYMENT RECEIVED IS CONFIRMED AND CROSS-VERIFIED. The rule is not a
@@ -59,16 +62,20 @@ const LEDGER_VIEWS = ['all', 'overdue', 'reported', 'part_paid', 'closed'] as co
  * Reported money is never folded into the verified column and is counted as
  * collected nowhere. It keeps its own column wearing the dashed rule, which is
  * why a bad month makes this screen visibly go stripey from across the room.
+ *
+ * On screen "verified" is "checked" and "reported" is "not checked"
+ * (docs/WRITING.md): one person noted the money, a second has not yet matched
+ * it against the bank.
  */
 
 /** The lifecycle, in order. Rank is what the trail and the hatch are computed from. */
 const TRAIL = [
-  { key: 'draft', label: 'Draft', family: 'dormant' },
-  { key: 'issued', label: 'Issued', family: 'active' },
-  { key: 'part_paid', label: 'Part-paid', family: 'attention' },
-  { key: 'payment_reported', label: 'Reported', family: 'attention' },
-  { key: 'payment_verified', label: 'Verified', family: 'ready' },
-  { key: 'closed', label: 'Closed', family: 'dormant' },
+  { key: 'draft', family: 'dormant' },
+  { key: 'issued', family: 'active' },
+  { key: 'part_paid', family: 'attention' },
+  { key: 'payment_reported', family: 'attention' },
+  { key: 'payment_verified', family: 'ready' },
+  { key: 'closed', family: 'dormant' },
 ] as const;
 
 /** Overdue is not a lifecycle step — it is an issued invoice that ran out of days. */
@@ -78,6 +85,9 @@ const RANK: Record<Invoice['status'], number> = {
 /** The step at which money is asserted; nothing past it is true until step 4. */
 const REPORTED_RANK = 3;
 const VERIFIED_RANK = 4;
+
+/** GST on aggregates and sand, as billed. */
+const GST_PCT = 5;
 
 interface LedgerRow {
   invoice: Invoice;
@@ -123,16 +133,10 @@ const isClosed = (r: LedgerRow) => r.status === 'closed';
 /** Live receivable: neither a draft nobody has sent nor a closed file. */
 const isLive = (r: LedgerRow) => r.status !== 'closed' && r.status !== 'draft';
 
-/**
- * Customer names run long. The bar chart needs the head of the name, not all of
- * it — and on a phone the label gutter is half the width, so the head is
- * shorter still. The full name stays in the chart summary and in the ledger's
- * "Billed to" column, so nothing is actually lost by trimming the axis.
- */
-function shortName(name: string, max = 24): string {
-  const head = name.split(' — ')[0] ?? name;
-  return head.length > max ? `${head.slice(0, max - 1)}…` : head;
-}
+/** `2026-07-26` → `26-07`: day and month as digits, the same in both languages. */
+const dayMonth = (iso: string) => `${iso.slice(8, 10)}-${iso.slice(5, 7)}`;
+
+type StatusText = (typeof statusWords)['en'];
 
 export function InvoiceLedger() {
   const { density, siteScope } = useApp();
@@ -152,6 +156,10 @@ export function InvoiceLedger() {
   const [closedHere, setClosedHere] = useState<string[]>([]);
   const [reminded, setReminded] = useState<string[]>([]);
   const [closing, setClosing] = useState(false);
+  const t = useWords(invoiceWords);
+  const s = useWords(salesWords);
+  const status = useWords(statusWords);
+  const columns = useMemo(() => ledgerColumns(t, s, status), [t, s, status]);
 
   /**
    * Site scope goes through `invoicesForSite` — the same selector the sales
@@ -183,6 +191,9 @@ export function InvoiceLedger() {
    * reported money has not arrived. Flip to the reported basis and every claimed
    * rupee is deducted — the difference between the two bars is exactly how much
    * of this ageing profile is resting on somebody's word.
+   *
+   * Darker is older; nothing here is red, because an ageing bucket is a fact
+   * about time and the alert colour is owed to the invoices actually in trouble.
    */
   const ageingBuckets = useMemo(() => {
     const owed = (r: LedgerRow) =>
@@ -190,12 +201,12 @@ export function InvoiceLedger() {
     const bucket = (pred: (r: LedgerRow) => boolean) =>
       openInvoices.filter(pred).reduce((s, r) => s + owed(r), 0);
     return [
-      { label: 'Not yet due', value: bucket((r) => r.daysOverdue === 0) },
-      { label: '1–30 days', value: bucket((r) => r.daysOverdue > 0 && r.daysOverdue <= 30) },
-      { label: '31–60 days', value: bucket((r) => r.daysOverdue > 30 && r.daysOverdue <= 60) },
-      { label: 'Over 60 days', value: bucket((r) => r.daysOverdue > 60) },
+      { label: t.buckets.notDue, value: bucket((r) => r.daysOverdue === 0) },
+      { label: t.buckets.d30, value: bucket((r) => r.daysOverdue > 0 && r.daysOverdue <= 30) },
+      { label: t.buckets.d60, value: bucket((r) => r.daysOverdue > 30 && r.daysOverdue <= 60) },
+      { label: t.buckets.over60, value: bucket((r) => r.daysOverdue > 60) },
     ];
-  }, [openInvoices, ageingBasis]);
+  }, [openInvoices, ageingBasis, t]);
 
   const ageingTotal = ageingBuckets.reduce((s, b) => s + b.value, 0);
   const beyondSixty = ageingBuckets[3]?.value ?? 0;
@@ -204,9 +215,10 @@ export function InvoiceLedger() {
    * COLLECTIONS against BILLING. A collections line on its own only says
    * whether the counter had a busy day. Drawn against the average day's
    * billing, it says whether receivables grew or shrank — which is the
-   * question the ledger exists to answer.
+   * question the ledger exists to answer. The ringed days are the ones that
+   * barely collected half of what went out.
    */
-  const collectionSeries = LAST_14.map((d) => ({ label: d.label, value: d.collectedVerified }));
+  const collectionSeries = LAST_14.map((d) => ({ label: dayMonth(d.date), value: d.collectedVerified }));
   const avgCollected = collectionSeries.reduce((s, p) => s + p.value, 0) / collectionSeries.length;
   const avgBilled = LAST_14.reduce((s, d) => s + d.revenue, 0) / LAST_14.length;
   const shortDays = collectionSeries.filter((p) => p.value < avgBilled).length;
@@ -237,7 +249,8 @@ export function InvoiceLedger() {
   const customerBars = byCustomer.map((c) => ({
     // The dashed tick is the overdue slice of the same bar, so the gap between
     // tick and bar end is money still inside its terms. Colour is spent only
-    // where MOST of what a customer owes has already run out of days.
+    // where MOST of what a customer owes has already run out of days. On a
+    // phone the label gutter is half the width, so the name is shorter still.
     label: shortName(c.name, phone ? 13 : 24),
     value: c.balance,
     ...(c.overdueAmount > 0 ? { marker: c.overdueAmount } : {}),
@@ -249,156 +262,143 @@ export function InvoiceLedger() {
   // the hatch dissolving. That is the whole confirmation moment.
   const selected = rows.find((r) => r.invoice.id === selectedId);
   const canClose = selected !== undefined && RANK[selected.status] >= VERIFIED_RANK && selected.status !== 'closed' && selected.balance <= 0;
-
-  // Written once because it is rendered in two different places depending on
-  // the width — in the section header on a desk, above the bar on a phone.
-  const basisToggle = (
-    <>
-      <Chip active={ageingBasis === 'verified'} onClick={() => setAgeingBasis('verified')}>
-        Verified basis
-      </Chip>
-      <Chip active={ageingBasis === 'reported'} onClick={() => setAgeingBasis('reported')}>
-        If every claim were true
-      </Chip>
-    </>
-  );
+  const selectedStatus = selected
+    ? {
+        family: INVOICE_STATUS_FAMILY[selected.status],
+        label: status.invoice[selected.status],
+        ...(selected.daysOverdue > 0 ? { severity: t.lateDays(selected.daysOverdue) } : {}),
+        ...(selected.reportedUnverified > 0 ? { provisional: true } : {}),
+      }
+    : undefined;
 
   return (
     <>
       <PageHeader
-        eyebrow="Sales"
-        title="Invoice ledger"
-        meta={<AsOfStamp asOf="14:42" source="v_ar_ledger" freshness="materialised" />}
+        eyebrow={s.eyebrow}
+        title={t.title}
+        // From v_ar_ledger.
+        meta={<AsOfStamp asOf="14:42" source={s.src.invoices} freshness="materialised" />}
         actions={
-          // The header's action slot does not shrink, so on a narrow screen the
-          // two controls would push the title off the page. Capping the measure
-          // makes them stack under each other instead; from `sm` up they sit on
-          // one line exactly as before.
-          <div className="flex max-w-[172px] flex-wrap items-center justify-end gap-2 sm:max-w-none">
-            <Chip active>FY 2026-27</Chip>
-            <Button variant="secondary">Export for the CA</Button>
+          // Below `sm` the page header is a column, so these sit under the
+          // title and wrap only when they do not fit — a fixed cap here used
+          // to break the Tamil button label onto two lines.
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Chip active>{t.year('2026-27')}</Chip>
+            <Button variant="secondary">{t.download}</Button>
           </div>
         }
       />
 
       {/*
-        One tile per row on a phone.
-
-        Two tiles across 375px leaves 131px of measure inside the tile padding,
-        which wraps "Counted to the verification date, never to the reporting
-        date" to four lines and overflows the `v_receipt_verification` source
-        stamp outright — a mono string wider than its own column. Stacked, the
-        hairline that separates tiles turns from a vertical rule into a
-        horizontal one, and the last tile drops its rule so it does not double
-        up with the row's own bottom border.
+        One tile per row on a phone: two tiles across 375px leaves 131px of
+        measure inside the tile padding. Stacked, the hairline that separates
+        tiles turns from a vertical rule into a horizontal one, and the last
+        tile drops its rule so it does not double up with the row's own
+        bottom border.
       */}
       <TileRow className="grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 [&>*]:border-b [&>*]:border-[var(--border-subtle)] [&>*:last-child]:border-b-0 sm:[&>*]:border-b-0 sm:[&>*]:border-r">
+        {/* Outstanding on the verified basis: only checked money counts as paid (v_ar_ledger). */}
         <KpiTile
-          eyebrow="Outstanding, verified basis"
+          eyebrow={t.moneyDue}
           hero
           value={formatINRCompact(outstanding)}
-          delta={{ text: `${openInvoices.length} invoices open` }}
+          delta={{ text: t.openN(openInvoices.length) }}
           asOf="14:42"
-          source="v_ar_ledger"
+          source={s.src.invoices}
           freshness="materialised"
           title={formatINR(outstanding)}
         />
+        {/* v_ar_ageing. */}
         <KpiTile
-          eyebrow="Overdue"
+          eyebrow={status.invoice.overdue}
           value={formatINRCompact(overdue.reduce((s, r) => s + r.balance, 0))}
-          delta={{ text: `${overdue.length} invoices past their due date`, tone: overdue.length > 0 ? 'critical' : 'neutral' }}
+          delta={{ text: t.pastDueN(overdue.length), tone: overdue.length > 0 ? 'critical' : 'neutral' }}
           asOf="14:42"
-          source="v_ar_ageing"
+          source={s.src.invoices}
           freshness="materialised"
         />
-        {/* The rule, as a number. This money is counted as collected nowhere. */}
+        {/* The rule, as a number. This money is counted as collected nowhere —
+            it waits for a second pair of eyes (v_receipt_verification). */}
         <KpiTile
-          eyebrow="Reported, not yet verified"
+          eyebrow={status.invoice.payment_reported}
           value={formatINRCompact(unverified.reduce((s, r) => s + r.reportedUnverified, 0))}
-          delta={{ text: `${unverified.length} awaiting a second pair of eyes`, tone: unverified.length > 0 ? 'attention' : 'neutral' }}
+          delta={{ text: t.toCheckN(unverified.length), tone: unverified.length > 0 ? 'attention' : 'neutral' }}
           asOf="14:42"
-          source="v_receipt_verification"
+          source={s.src.payments}
         />
+        {/* Counted to the verification date, never to the reporting date
+            (v_ar_collection_days_90d). */}
         <KpiTile
-          eyebrow="Average days to collect"
-          value="41.2 days"
-          delta={{ text: 'Counted to the verification date, never to the reporting date' }}
+          eyebrow={t.daysToPay}
+          value={t.daysN('41.2')}
+          delta={{ text: t.avgTillChecked }}
           asOf="06:00"
-          source="v_ar_collection_days_90d"
+          source={s.src.payments}
           freshness="materialised"
         />
       </TileRow>
 
       <div className="grid grid-cols-1 gap-x-8 px-6 pt-6 xl:grid-cols-2">
-        <Section
-          caption="Where the money is sitting"
-          title="Receivables by age"
-          // "If every claim were true" is a long chip, and the section header
-          // puts its actions on the same line as the title. On a phone that
-          // squeezed "Receivables by age" down to a 88px column four lines
-          // deep, so below `md` the basis toggle drops out of the header and
-          // becomes its own full-width row above the bar it governs — the same
-          // two chips, doing the same job, with room to be read.
-          actions={phone ? null : basisToggle}
-        >
-          {phone ? <div className="mb-2 flex flex-wrap gap-2">{basisToggle}</div> : null}
+        <Section title={t.dueByDays}>
+          {/* The basis chips are its own row above the bar they govern, at
+              every width. In the section header they shared a line with the
+              title, which squeezed both — and Tamil words are longer still. */}
+          <div className="mb-2 flex flex-wrap gap-2">
+            <Chip active={ageingBasis === 'verified'} onClick={() => setAgeingBasis('verified')}>
+              {t.checkedOnly}
+            </Chip>
+            <Chip active={ageingBasis === 'reported'} onClick={() => setAgeingBasis('reported')}>
+              {t.withUnchecked}
+            </Chip>
+          </div>
           <AgeingBar
-            summary={`${formatINRCompact(ageingTotal)} outstanding on the ${
-              ageingBasis === 'verified' ? 'verified' : 'reported'
-            } basis, of which ${formatINRCompact(beyondSixty)} has run past sixty days.`}
+            summary={t.ageingSummary(formatINRCompact(ageingTotal), formatINRCompact(beyondSixty))}
             buckets={ageingBuckets}
             format={(v) => formatINRCompact(v)}
           />
-          <ChartCaption>
-            Darker is older; nothing here is red, because an ageing bucket is a fact about time and the alert
-            colour is owed to the invoices actually in trouble. Flip the basis and the bar shrinks by{' '}
-            {formatINRCompact(unverified.reduce((s, r) => s + r.reportedUnverified, 0))} — that is the part of
-            this profile no second person has confirmed.
-          </ChartCaption>
         </Section>
 
-        <Section caption="Fourteen days" title="Collections that cleared verification">
+        <Section caption={t.last14} title={t.moneyReceived}>
           <TrendChart
             data={collectionSeries}
-            summary={`Verified collections averaging ${formatINRCompact(
-              avgCollected,
-            )} a day against ${formatINRCompact(avgBilled)} billed; ${shortDays} of fourteen days fell short of the billing run-rate.`}
-            seriesLabel="Collected"
-            benchmark={{ value: avgBilled, label: `${formatINRCompact(avgBilled)} billed/day` }}
+            summary={t.trendSummary(formatINRCompact(avgCollected), formatINRCompact(avgBilled), shortDays)}
+            seriesLabel={t.received}
+            benchmark={{ value: avgBilled, label: t.billedPerDay(formatINRCompact(avgBilled)) }}
             flagBelow={avgBilled * 0.55}
             height={170}
             format={(v) => formatINRCompact(v)}
           />
-          <ChartCaption>
-            The dashed rule is what an average day bills. Days under it are days receivables grew, whatever the
-            sales board says — and the ringed days are the ones that barely collected half of what went out.
-          </ChartCaption>
+          {/* The dashed rule is what an average day bills. Days under it are
+              days receivables grew, whatever the sales board says. */}
+          <ChartCaption>{t.underLine}</ChartCaption>
         </Section>
       </div>
 
       <Section
-        caption="Concentration of risk"
-        title="Outstanding by customer"
+        title={t.dueByCustomer}
         actions={
           customerId !== null ? (
             <Button variant="secondary" onClick={() => setCustomerId(null)}>
-              Clear customer filter
+              {s.showAll}
             </Button>
           ) : null
         }
       >
         <div className="px-6">
           {byCustomer.length === 0 ? (
-            <EmptyState fact="Nothing is outstanding in this scope." because="Every live invoice here is verified in full." />
+            // Every live invoice in this scope is checked in full.
+            <EmptyState fact={t.noMoneyDue} />
           ) : (
             <>
               <BarChart
                 summary={
                   topCustomer
-                    ? `${topCustomer.name} owes ${formatINRCompact(topCustomer.balance)}, ${Math.round(
-                        (topCustomer.balance / (outstanding || 1)) * 100,
-                      )}% of everything outstanding, across ${byCustomer.length} paying customers.`
-                    : 'No outstanding balances.'
+                    ? t.topSummary(
+                        topCustomer.name,
+                        formatINRCompact(topCustomer.balance),
+                        Math.round((topCustomer.balance / (outstanding || 1)) * 100),
+                      )
+                    : t.noMoneyDue
                 }
                 data={customerBars}
                 format={(v) => formatINRCompact(v)}
@@ -418,11 +418,9 @@ export function InvoiceLedger() {
                   setCustomerId(match && match.id !== customerId ? match.id : null);
                 }}
               />
-              <ChartCaption>
-                The dashed tick on each bar is the part already past its due date, so the gap to the bar end is
-                money still inside terms. Pick a bar to pin the ledger below to that customer — one name carrying
-                a third of the book is a credit-limit conversation, not a collections one.
-              </ChartCaption>
+              {/* One name carrying a third of the book is a credit-limit
+                  conversation, not a collections one. */}
+              <ChartCaption>{t.markHint}</ChartCaption>
             </>
           )}
         </div>
@@ -430,23 +428,23 @@ export function InvoiceLedger() {
 
       <div id="list" className="flex flex-wrap items-center gap-2 px-6 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <Chip active={filter === 'all'} onClick={() => setFilter('all')} count={rows.length}>
-          All invoices
+          {s.all}
         </Chip>
         <Chip active={filter === 'overdue'} onClick={() => setFilter('overdue')} count={rows.filter(isOverdue).length}>
-          Overdue
+          {status.invoice.overdue}
         </Chip>
         <Chip active={filter === 'reported'} onClick={() => setFilter('reported')} count={unverified.length}>
-          Reported, not verified
+          {status.invoice.payment_reported}
         </Chip>
         <Chip active={filter === 'part_paid'} onClick={() => setFilter('part_paid')} count={rows.filter(isPartPaid).length}>
-          Part-paid
+          {status.invoice.part_paid}
         </Chip>
         <Chip active={filter === 'closed'} onClick={() => setFilter('closed')} count={rows.filter(isClosed).length}>
-          Closed
+          {status.invoice.closed}
         </Chip>
         {customerId !== null ? (
           <Chip active onClick={() => setCustomerId(null)}>
-            {shortName(byCustomer.find((c) => c.id === customerId)?.name ?? CUSTOMERS_LIST.find((c) => c.id === customerId)?.name ?? 'Customer')} ×
+            {shortName(byCustomer.find((c) => c.id === customerId)?.name ?? CUSTOMERS_LIST.find((c) => c.id === customerId)?.name ?? s.customer)} ×
           </Chip>
         ) : null}
         {/* Right-aligned beside the chips on a wide screen; once the chips wrap
@@ -456,7 +454,7 @@ export function InvoiceLedger() {
           className="w-full font-serif text-[13px] italic sm:ml-auto sm:w-auto"
           style={{ color: 'var(--text-tertiary)' }}
         >
-          Select an invoice to open its trail.
+          {t.openForDetails}
         </span>
       </div>
 
@@ -472,10 +470,10 @@ export function InvoiceLedger() {
           // A 62%-paid invoice shows a 62% rail. Verified money only, never reported.
           rail={(r) => ({ status: INVOICE_STATUS_FAMILY[r.status], fillRatio: r.fillRatio })}
           empty={
+            // Nothing in scope matches the filter — the ledger itself is not empty.
             <EmptyState
-              fact="No invoices in this view."
-              because="Nothing in scope matches the filter — the ledger itself is not empty."
-              action={{ label: 'Show all invoices', onClick: () => { setFilter('all'); setCustomerId(null); } }}
+              fact={t.noInvoicesHere}
+              action={{ label: s.showAll, onClick: () => { setFilter('all'); setCustomerId(null); } }}
             />
           }
         />
@@ -489,31 +487,26 @@ export function InvoiceLedger() {
         width="form"
         title={selected?.invoice.customerName ?? ''}
         identifier={selected?.invoice.number}
-        {...(selected
-          ? {
-              status: {
-                family: INVOICE_STATUS_FAMILY[selected.status],
-                label: INVOICE_STATUS_LABEL[selected.status],
-                ...(selected.daysOverdue > 0 ? { severity: `+${selected.daysOverdue}d` } : {}),
-                ...(selected.reportedUnverified > 0 ? { provisional: true } : {}),
-              },
-            }
-          : {})}
-        revision={selected ? `RAISED ${formatDate(selected.invoice.date)}` : undefined}
+        // On a phone the stamp moves into the sheet body: a status that does
+        // not shrink — and Tamil ones run long — left the customer's name a
+        // sliver of the header.
+        {...(selectedStatus && !phone ? { status: selectedStatus } : {})}
+        revision={selected ? t.dated(formatDate(selected.invoice.date)) : undefined}
         footer={
           selected ? (
             <>
+              {/* A second person matches the reported money against the bank. */}
               {selected.reportedUnverified > 0 ? (
                 <Button
                   variant="primary"
                   onClick={() => setCrossChecked((ids) => [...ids, selected.invoice.id])}
                 >
-                  Cross-verify {formatINR(selected.reportedUnverified, { decimals: 0 })}
+                  {t.check(formatINR(selected.reportedUnverified, { decimals: 0 }))}
                 </Button>
               ) : null}
               {canClose ? (
                 <Button variant="primary" onClick={() => setClosing(true)}>
-                  Close this invoice
+                  {t.closeInvoice}
                 </Button>
               ) : null}
               <Button
@@ -521,39 +514,45 @@ export function InvoiceLedger() {
                 disabled={reminded.includes(selected.invoice.id)}
                 onClick={() => setReminded((ids) => (ids.includes(selected.invoice.id) ? ids : [...ids, selected.invoice.id]))}
               >
-                {reminded.includes(selected.invoice.id) ? 'Reminder sent' : 'Send a reminder'}
+                {reminded.includes(selected.invoice.id) ? t.reminderSent : t.sendReminder}
               </Button>
-              {/*
-                The footer is a single fixed-height row. "Cross-verify ₹1,25,000"
-                and "Send a reminder" already consume all 335px of it on a phone,
-                so the provenance stamp moves into the sheet body rather than
-                being pushed off the edge — see the tail of InvoiceDetail.
-              */}
-              <span className="ml-auto hidden sm:block">
-                <AsOfStamp asOf="14:42" source="v_ar_invoice_detail" freshness="materialised" />
-              </span>
             </>
           ) : undefined
         }
       >
-        {selected ? <InvoiceDetail row={selected} density={density} reminded={reminded.includes(selected.invoice.id)} /> : null}
+        {selected ? (
+          <>
+            {phone && selectedStatus ? (
+              <div className="mb-4">
+                <StatusStamp
+                  status={selectedStatus.family}
+                  label={selectedStatus.label}
+                  {...(selectedStatus.severity !== undefined ? { severity: selectedStatus.severity } : {})}
+                  {...(selectedStatus.provisional ? { provisional: true } : {})}
+                />
+              </div>
+            ) : null}
+            <InvoiceDetail row={selected} density={density} reminded={reminded.includes(selected.invoice.id)} />
+          </>
+        ) : null}
       </SideSheet>
 
       {/* Closing is the assertion the owner's whole rule protects, so it is the
-          one action on this screen that stops and asks. */}
+          one action on this screen that stops and asks. Closing says the full
+          total was received and cross-verified against the bank statement; it
+          leaves the ledger and the ageing and stops the chasing. Reopening it
+          is an audit entry, not a click. */}
       {selected ? (
         <ConfirmModal
           open={closing}
           onClose={() => setClosing(false)}
           onConfirm={() => setClosedHere((ids) => [...ids, selected.invoice.id])}
-          title="Close this invoice"
-          confirmLabel="Close it"
+          title={t.closeTitle}
+          confirmLabel={t.closeYes}
           consequence={
             <>
-              Closing {selected.invoice.number} asserts that the full {formatINR(selected.total, { decimals: 0 })}{' '}
-              was received and cross-verified against the bank statement. It leaves the receivables ledger, stops
-              appearing in the ageing, and stops chasing {selected.invoice.customerName}. Reopening it is an audit
-              entry, not a click.
+              <p>{t.closeWhat(selected.invoice.number, formatINR(selected.total, { decimals: 0 }))}</p>
+              <p className="mt-2">{t.closeNote}</p>
             </>
           }
         />
@@ -573,6 +572,10 @@ function InvoiceDetail({
   density: 'compact' | 'default' | 'comfortable' | 'touch';
   reminded: boolean;
 }) {
+  const t = useWords(invoiceWords);
+  const s = useWords(salesWords);
+  const status = useWords(statusWords);
+  const tripCols = useMemo(() => tripColumns(s), [s]);
   const { invoice } = row;
   const rank = RANK[row.status];
   const isVerified = rank >= VERIFIED_RANK;
@@ -580,10 +583,11 @@ function InvoiceDetail({
   const trips = TRIPS.filter((t) => invoice.tripIds.includes(t.id));
   const customer = CUSTOMERS_LIST.find((c) => c.id === invoice.customerId);
   const outstanding = Math.max(0, row.balance - row.reportedUnverified);
+  const amt = (n: number) => formatINR(n, { decimals: 0 });
 
   return (
     <>
-      <SheetSection caption="Status trail">
+      <SheetSection caption={t.steps}>
         <div
           className="px-4 py-3"
           style={{
@@ -594,15 +598,15 @@ function InvoiceDetail({
         >
           {/*
             THE STATUS TRAIL. Every step from "reported" onward stays dashed until
-            a second person has cross-verified the money.
+            a second person has cross-verified the money. The steps are the same
+            status words the list uses.
 
-            Six stamps and five connectors measure about 620px, so the trail has
-            never fitted a phone and would not fit one at any type size — the
-            words themselves are the width. Below `sm` it turns through ninety
-            degrees: the same six steps, the same connector, read top to bottom.
-            Nothing is dropped or abbreviated, and the connector keeps carrying
-            its meaning, because solid-versus-dashed is a border STYLE and works
-            just as well down the left edge as along the top.
+            Six stamps and five connectors are wider than a phone at any type
+            size — the words themselves are the width. Below `sm` it turns
+            through ninety degrees: the same six steps, the same connector, read
+            top to bottom. The connector keeps its meaning, because
+            solid-versus-dashed is a border STYLE and works just as well down
+            the left edge as along the top.
           */}
           <div className="flex flex-col items-start sm:flex-row sm:items-center sm:overflow-x-auto sm:pb-1">
             {TRAIL.map((step, i) => {
@@ -614,7 +618,7 @@ function InvoiceDetail({
                   <StatusStamp
                     // A step nobody has reached is PENDING — achromatic, dotted, no colour budget spent.
                     status={i <= rank && (step.key !== 'part_paid' || row.verified > 0) ? step.family : 'pending'}
-                    label={step.label}
+                    label={status.invoice[step.key]}
                     provisional={i >= REPORTED_RANK && !isVerified}
                     {...(step.key === 'payment_verified' && isVerified ? { fillRatio: row.fillRatio } : {})}
                   />
@@ -637,61 +641,62 @@ function InvoiceDetail({
           </div>
 
           <p className="mt-3 max-w-[64ch] text-[14px]" style={{ color: 'var(--text-primary)' }}>
-            {blockingLine(row, receipt?.recordedBy ?? null, receipt?.date ?? null)}
+            {blockingLine(row, receipt?.recordedBy ?? null, receipt?.date ?? null, t)}
           </p>
           {receipt && row.reportedUnverified > 0 ? (
-            <p className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-              Received as {receipt.method.toUpperCase()}
-              {receipt.reference ? <> · <IdCell>{receipt.reference}</IdCell></> : ' · no bank reference, taken as cash'}
+            <p className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              {t.paidBy(t.methods[receipt.method])}
+              {/* No bank reference means it was taken as cash. */}
+              {receipt.reference ? <> · <IdCell>{receipt.reference}</IdCell></> : ` · ${t.noBankRef}`}
             </p>
           ) : null}
         </div>
+        {/* Nothing about the money changes — only that you asked for it. */}
         {reminded ? (
           <div className="mt-2">
-            <Note>
-              A reminder went to {invoice.customerName} at 14:42 today. Nothing about the money has changed — only
-              that you asked for it.
-            </Note>
+            <Note>{t.reminderNote(invoice.customerName, '14:42')}</Note>
           </div>
         ) : null}
       </SheetSection>
 
-      <SheetSection caption="Collection">
+      <SheetSection caption={t.groups.received}>
         <ProportionBar
-          summary={`${formatINR(row.verified, { decimals: 0 })} verified of ${formatINR(row.total, {
-            decimals: 0,
-          })}${row.reportedUnverified > 0 ? `, with ${formatINR(row.reportedUnverified, { decimals: 0 })} reported but unconfirmed` : ''}.`}
+          summary={t.collectionSummary(
+            amt(row.verified),
+            amt(row.total),
+            row.reportedUnverified > 0 ? amt(row.reportedUnverified) : null,
+          )}
           height={22}
+          // The middle band is money in nobody's hands: claimed by one person,
+          // confirmed by none. It sits outside the checked segment on purpose
+          // and never joins it without a second signature.
           segments={[
-            { label: 'Verified', value: row.verified, tone: 'var(--status-ready)' },
+            { label: t.checked, value: row.verified, tone: 'var(--status-ready)' },
             ...(row.reportedUnverified > 0
-              ? [{ label: 'Reported only', value: row.reportedUnverified, tone: 'var(--status-attention)' }]
+              ? [{ label: t.notChecked, value: row.reportedUnverified, tone: 'var(--status-attention)' }]
               : []),
-            { label: 'Outstanding', value: outstanding, tone: 'var(--surface-sunken)' },
+            { label: t.due, value: outstanding, tone: 'var(--surface-sunken)' },
           ]}
         />
-        <ChartCaption>
-          The middle band is money in nobody's hands: claimed by one person, confirmed by none. It sits outside
-          the verified segment on purpose and never joins it without a second signature.
-        </ChartCaption>
       </SheetSection>
 
-      <SheetSection caption="What was billed">
+      <SheetSection caption={t.invoiceAmount}>
         <DetailGrid>
-          <Detail label="Taxable value">
+          <Detail label={t.beforeGst}>
             <MoneyCell value={invoice.taxableValue} accounting={false} />
           </Detail>
-          <Detail label="GST at 5%">
+          <Detail label={t.gstAt(GST_PCT)}>
             <MoneyCell value={invoice.gstAmount} accounting={false} />
           </Detail>
-          <Detail label="Invoice total">
+          <Detail label={s.total}>
             <MoneyCell value={invoice.total} accounting={false} />
           </Detail>
-          <Detail label="Verified against the bank">
+          {/* Verified against the bank. */}
+          <Detail label={t.receivedChecked}>
             <MoneyCell value={row.verified} accounting={false} />
           </Detail>
           {/* Never summed into the line above it. That is the whole rule. */}
-          <Detail label="Reported, not verified">
+          <Detail label={t.receivedNotChecked}>
             {row.reportedUnverified > 0 ? (
               <Provisional>
                 <MoneyCell value={row.reportedUnverified} accounting={false} />
@@ -700,143 +705,143 @@ function InvoiceDetail({
               <MoneyCell value={0} accounting={false} />
             )}
           </Detail>
-          <Detail label="Balance due">
+          <Detail label={t.due}>
             <MoneyCell value={row.balance} accounting={false} />
           </Detail>
         </DetailGrid>
         <div className="mt-2">
-          <Note>
-            Billed to {customer?.site ?? invoice.customerName} · raised {formatDate(invoice.date)} · due{' '}
-            {formatDate(invoice.dueDate)}
-          </Note>
+          <Note>{t.datesLine(customer?.site ?? invoice.customerName, formatDate(invoice.date), formatDate(invoice.dueDate))}</Note>
         </div>
       </SheetSection>
 
-      <SheetSection caption="Statutory references">
+      {/* Most intra-TN tipper loads sit under the ₹1,00,000 consignment
+          threshold and below the e-invoicing turnover trigger, so a blank here
+          is the normal path, not a gap — it says "Not needed", calmly. */}
+      <SheetSection caption={t.papers}>
         <DetailGrid>
-          <Detail label="IRN">{invoice.irn ? <IdCell>{invoice.irn}</IdCell> : <NotRequired />}</Detail>
-          <Detail label="E-way bills">
-            {invoice.ewbNumbers.length > 0 ? <IdCell>{invoice.ewbNumbers.join(', ')}</IdCell> : <NotRequired />}
+          {/* IRN: the e-invoice reference number. */}
+          <Detail label={t.eInvoiceNo}>{invoice.irn ? <IdCell>{invoice.irn}</IdCell> : <NotNeeded label={t.notNeeded} />}</Detail>
+          <Detail label={t.ewbs}>
+            {invoice.ewbNumbers.length > 0 ? <IdCell>{invoice.ewbNumbers.join(', ')}</IdCell> : <NotNeeded label={t.notNeeded} />}
           </Detail>
-          <Detail label="Loads billed">
+          <Detail label={t.loads}>
             <QuantityCell value={trips.length} decimals={0} />
           </Detail>
         </DetailGrid>
-        <div className="mt-2">
-          <Note>
-            Most intra-TN tipper loads sit under the ₹1,00,000 consignment threshold and below the e-invoicing
-            turnover trigger, so a blank here is the normal path, not a gap.
-          </Note>
-        </div>
       </SheetSection>
 
-      <SheetSection caption={`The loads this invoice bills (${trips.length})`}>
+      <SheetSection caption={t.loadsN(trips.length)}>
         <DataTable
           density={density}
-          columns={tripColumns}
+          columns={tripCols}
           rows={trips}
           rowKey={(t) => t.id}
-          empty={
-            <EmptyState
-              fact="No trips are linked to this invoice."
-              because="It was raised against an advance or a counter sale, so there is no dispatch to reconcile against."
-            />
-          }
+          // Raised against an advance or a counter sale: no dispatch to match.
+          empty={<EmptyState fact={t.noLoads} />}
         />
       </SheetSection>
-
-      {/* The sheet's own footer carries this from `sm` up, where there is room
-          beside the buttons. On a phone there is not, and a provenance stamp is
-          not something to drop — so it lands here instead, at the foot of the
-          thing it vouches for. */}
-      <div className="mt-5 sm:hidden">
-        <AsOfStamp asOf="14:42" source="v_ar_invoice_detail" freshness="materialised" />
-      </div>
     </>
   );
 }
 
 /** The one sentence stating exactly what is stopping this invoice from closing. */
-function blockingLine(row: LedgerRow, reportedBy: string | null, reportedOn: string | null): string {
+function blockingLine(row: LedgerRow, reportedBy: string | null, reportedOn: string | null, t: InvoiceText): string {
   const amt = (n: number) => formatINR(n, { decimals: 0 });
-  if (row.status === 'closed') return `Closed. ${amt(row.total)} verified in full against the bank statement.`;
-  if (row.status === 'draft') return 'Still a draft. Nothing has gone to the customer, so nothing is collectable yet.';
+  const b = t.blocking;
+  if (row.status === 'closed') return b.closed(amt(row.total));
+  if (row.status === 'draft') return b.draft;
+  // Reported by one person, not yet verified by a second; the invoice stays open until it is.
   if (row.reportedUnverified > 0)
-    return `${amt(row.reportedUnverified)} reported by ${reportedBy ?? 'the counter'} on ${formatDate(reportedOn ?? row.invoice.date)} has not been verified by a second person. The invoice stays open until it is.`;
-  if (row.balance <= 0) return 'Nothing is blocking closure. Every rupee is verified — this invoice can be closed.';
-  const late = row.daysOverdue > 0 ? `, ${row.daysOverdue} days past due` : '';
-  if (row.verified > 0) return `${amt(row.verified)} of ${amt(row.total)} is verified. ${amt(row.balance)} is still outstanding${late}.`;
-  return `No payment has been reported against this invoice. ${amt(row.balance)} is outstanding${late}.`;
+    return b.reported(reportedBy ?? b.someone, amt(row.reportedUnverified), formatDate(reportedOn ?? row.invoice.date));
+  if (row.balance <= 0) return b.allChecked;
+  if (row.verified > 0) return b.partly(amt(row.verified), amt(row.total), amt(row.balance), row.daysOverdue);
+  return b.nothing(amt(row.balance), row.daysOverdue);
 }
 
 /** Below the threshold there is nothing to show. That is a fact, not an alarm. */
-function NotRequired() {
-  return <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-secondary)' }}>not required at this value</span>;
+function NotNeeded({ label }: { label: string }) {
+  return (
+    <span className="font-serif text-[13px] italic" style={{ color: 'var(--text-secondary)' }}>
+      {label}
+    </span>
+  );
 }
 
 /* ----------------------------------------------------------------- columns */
 
-const columns: Column<LedgerRow>[] = [
-  { key: 'number', header: 'Number', type: 'id', sticky: true, width: 168, group: 'Document', render: (r) => r.invoice.number },
-  { key: 'date', header: 'Raised', width: 106, group: 'Document', render: (r) => formatDate(r.invoice.date) },
-  {
-    key: 'customer',
-    header: 'Billed to',
-    group: 'Customer',
-    render: (r) => <Stacked primary={r.invoice.customerName} secondary={CUSTOMERS_LIST.find((c) => c.id === r.invoice.customerId)?.site} />,
-  },
-  { key: 'taxable', header: 'Taxable', unit: '₹', type: 'money', group: 'Value', render: (r) => <MoneyCell value={r.invoice.taxableValue} /> },
-  { key: 'gst', header: 'GST', unit: '₹', type: 'money', group: 'Value', render: (r) => <MoneyCell value={r.invoice.gstAmount} /> },
-  { key: 'total', header: 'Total', unit: '₹', type: 'money', group: 'Value', render: (r) => <MoneyCell value={r.total} /> },
-  { key: 'verified', header: 'Verified', unit: '₹', type: 'money', group: 'Received', render: (r) => <MoneyCell value={r.verified} /> },
-  {
-    key: 'reported',
-    header: 'Reported only',
-    unit: '₹',
-    type: 'money',
-    group: 'Received',
-    // Its own column, hatched, and never added into Verified. Asserted, not true.
-    render: (r) => (r.reportedUnverified > 0 ? <Provisional><MoneyCell value={r.reportedUnverified} /></Provisional> : null),
-  },
-  { key: 'balance', header: 'Balance', unit: '₹', type: 'money', group: 'Received', render: (r) => <MoneyCell value={r.balance} /> },
-  {
-    key: 'status',
-    header: 'Status',
-    type: 'status',
-    width: 176,
-    group: 'Standing',
-    render: (r) => (
-      <StatusStamp
-        status={INVOICE_STATUS_FAMILY[r.status]}
-        label={INVOICE_STATUS_LABEL[r.status]}
-        fillRatio={r.fillRatio}
-        provisional={r.reportedUnverified > 0}
-        {...(r.daysOverdue > 0 ? { severity: `+${r.daysOverdue}d` } : {})}
-      />
-    ),
-  },
-];
+function ledgerColumns(t: InvoiceText, s: SalesText, status: StatusText): Column<LedgerRow>[] {
+  return [
+    {
+      key: 'number',
+      header: t.invoiceNo,
+      type: 'id',
+      sticky: true,
+      width: 168,
+      group: t.groups.invoice,
+      render: (r) => r.invoice.number,
+    },
+    { key: 'date', header: s.date, width: 110, group: t.groups.invoice, render: (r) => formatDate(r.invoice.date) },
+    {
+      key: 'customer',
+      header: s.customer,
+      render: (r) => <Stacked primary={r.invoice.customerName} secondary={CUSTOMERS_LIST.find((c) => c.id === r.invoice.customerId)?.site} />,
+    },
+    // Taxable value: the amount before GST.
+    { key: 'taxable', header: t.beforeGst, unit: '₹', type: 'money', group: t.groups.amount, render: (r) => <MoneyCell value={r.invoice.taxableValue} /> },
+    { key: 'gst', header: t.gst, unit: '₹', type: 'money', group: t.groups.amount, render: (r) => <MoneyCell value={r.invoice.gstAmount} /> },
+    { key: 'total', header: s.total, unit: '₹', type: 'money', group: t.groups.amount, render: (r) => <MoneyCell value={r.total} /> },
+    { key: 'verified', header: t.checked, unit: '₹', type: 'money', group: t.groups.received, render: (r) => <MoneyCell value={r.verified} /> },
+    {
+      key: 'reported',
+      header: t.notChecked,
+      unit: '₹',
+      type: 'money',
+      group: t.groups.received,
+      // Its own column, hatched, and never added into Checked. Asserted, not true.
+      render: (r) => (r.reportedUnverified > 0 ? <Provisional><MoneyCell value={r.reportedUnverified} /></Provisional> : null),
+    },
+    { key: 'balance', header: t.due, unit: '₹', type: 'money', group: t.groups.received, render: (r) => <MoneyCell value={r.balance} /> },
+    {
+      key: 'status',
+      header: s.status,
+      type: 'status',
+      width: 190,
+      render: (r) => (
+        <StatusStamp
+          status={INVOICE_STATUS_FAMILY[r.status]}
+          label={status.invoice[r.status]}
+          fillRatio={r.fillRatio}
+          provisional={r.reportedUnverified > 0}
+          {...(r.daysOverdue > 0 ? { severity: t.lateDays(r.daysOverdue) } : {})}
+        />
+      ),
+    },
+  ];
+}
 
-/** Where a billed quantity came from decides whether the customer can argue with it. */
-const BASIS_LABEL: Record<Trip['qtyBasis'], string> = {
-  loader_buckets: 'Loader buckets',
-  plant_weighbridge: 'Plant weighbridge',
-  customer_weighbridge: 'Customer weighbridge',
-  agreed_units: 'Agreed units',
-};
+/** Material names are the product's own names and are not translated. */
+const materialOf = (trip: Trip) => PRODUCTS.find((p) => p.code === trip.productCode)?.label ?? trip.productCode;
 
-const tripColumns: Column<Trip>[] = [
-  { key: 'trip', header: 'Trip', type: 'id', sticky: true, width: 150, render: (t) => t.tripNumber },
-  { key: 'vehicle', header: 'Vehicle', type: 'id', width: 140, render: (t) => VEHICLES.find((v) => v.id === t.vehicleId)?.displayReg ?? null },
-  { key: 'product', header: 'Material', render: (t) => PRODUCTS.find((p) => p.code === t.productCode)?.label ?? t.productCode },
-  { key: 'units', header: 'Sold', unit: 'units', type: 'num', width: 100, render: (t) => <QuantityCell value={t.soldUnits} decimals={1} /> },
-  { key: 'revenue', header: 'Line value', unit: '₹', type: 'money', width: 128, render: (t) => <MoneyCell value={t.revenue} /> },
-  {
-    key: 'basis',
-    header: 'Quantity basis',
-    width: 176,
-    // Buckets and agreed units are an assertion; a weighbridge ticket is not.
-    render: (t) =>
-      t.qtyBasis === 'agreed_units' || t.qtyBasis === 'loader_buckets' ? <Provisional>{BASIS_LABEL[t.qtyBasis]}</Provisional> : BASIS_LABEL[t.qtyBasis],
-  },
-];
+function tripColumns(s: SalesText): Column<Trip>[] {
+  return [
+    { key: 'trip', header: s.trip, type: 'id', sticky: true, width: 150, render: (trip) => trip.tripNumber },
+    { key: 'vehicle', header: s.vehicle, type: 'id', width: 140, render: (trip) => VEHICLES.find((v) => v.id === trip.vehicleId)?.displayReg ?? null },
+    { key: 'product', header: s.material, render: (trip) => materialOf(trip) },
+    { key: 'units', header: s.sold, unit: s.units, type: 'num', width: 110, render: (trip) => <QuantityCell value={trip.soldUnits} decimals={1} /> },
+    { key: 'revenue', header: s.amount, unit: '₹', type: 'money', width: 128, render: (trip) => <MoneyCell value={trip.revenue} /> },
+    {
+      key: 'basis',
+      header: s.countedBy,
+      width: 190,
+      // Where a billed quantity came from decides whether the customer can
+      // argue with it. Buckets and agreed units are an assertion; a
+      // weighbridge ticket is not.
+      render: (trip) =>
+        trip.qtyBasis === 'agreed_units' || trip.qtyBasis === 'loader_buckets' ? (
+          <Provisional>{s.basis[trip.qtyBasis]}</Provisional>
+        ) : (
+          s.basis[trip.qtyBasis]
+        ),
+    },
+  ];
+}

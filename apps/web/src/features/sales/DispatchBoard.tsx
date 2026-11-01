@@ -3,7 +3,6 @@ import {
   can,
   DEFAULT_VARIANCE_TOLERANCE_PCT,
   formatINR,
-  formatINRCompact,
   formatQty,
   formatTime,
   isVarianceExceptional,
@@ -52,6 +51,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { shortName } from './shortName.js';
@@ -170,6 +170,7 @@ export function DispatchBoard() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const t = useWords(loadWords);
   const s = useWords(salesWords);
+  const inr = useInrCompact();
   const status = useWords(statusWords);
   const columns = useMemo(() => tripColumns(accepted, t, s, status), [accepted, t, s, status]);
 
@@ -318,27 +319,24 @@ export function DispatchBoard() {
           hero
           value={formatQty(outUnits, 1)}
           delta={{ text: t.soldNotWeight }}
-          asOf="14:42"
-          source={s.src.loads}
+          asOfInHeader
         />
         {/* Contribution after material, diesel, batta and toll (v_trip_margin). */}
         <KpiTile
           eyebrow={t.salesToday}
-          value={formatINRCompact(revenue)}
-          delta={{ text: margin < 0 ? t.loss(formatINRCompact(-margin)) : t.profit(formatINRCompact(margin)) }}
-          asOf="14:42"
-          source={s.src.loads}
+          value={inr(revenue)}
+          delta={{ text: margin < 0 ? t.loss(inr(-margin)) : t.profit(inr(margin)) }}
+          asOfInHeader
         />
         {/* Zero revenue, full cost. The tile exists so the number is unavoidable (v_trip_returns). */}
         <KpiTile
           eyebrow={t.returnedLoads}
           value={`${returned.length}`}
           delta={{
-            text: t.spentNothingEarned(formatINRCompact(returnedCost)),
+            text: t.spentNothingEarned(inr(returnedCost)),
             tone: returned.length > 0 ? 'critical' : 'neutral',
           }}
-          asOf="14:42"
-          source={s.src.loads}
+          asOfInHeader
         />
         {/* Normal, not exceptional — and until now, never counted anywhere.
             Units settled below the rate card (v_rate_override_daily). */}
@@ -349,9 +347,7 @@ export function DispatchBoard() {
             text: t.belowRate(formatQty(overriddenUnits, 1)),
             tone: overridden.length > 0 ? 'attention' : 'neutral',
           }}
-          asOf="14:42"
-          source={s.src.loads}
-          freshness="materialised"
+          asOfInHeader
         />
       </TileRow>
 
@@ -421,12 +417,12 @@ export function DispatchBoard() {
                               lossMakers.length,
                               byCustomer.length,
                               lossMakers[0]?.name ?? '',
-                              formatINRCompact(lossMakers[0]?.contribution ?? 0),
+                              inr(lossMakers[0]?.contribution ?? 0),
                             )
-                          : t.profitSummary(bestCustomer?.name ?? '', formatINRCompact(bestCustomer?.contribution ?? 0))
+                          : t.profitSummary(bestCustomer?.name ?? '', inr(bestCustomer?.contribution ?? 0))
                       }
                       labelWidth={186}
-                      format={(v) => formatINRCompact(v)}
+                      format={inr}
                       data={customerBars}
                       onSelect={(d) => {
                         // Matched by position, not by label — two names can share
@@ -680,7 +676,7 @@ export function DispatchBoard() {
           sel
             ? t.cancelWhat(
                 sel.tripNumber,
-                formatINRCompact(cashCost(sel)),
+                inr(cashCost(sel)),
                 formatQty(sel.soldUnits, 1),
                 sel.status === 'in_transit' || sel.status === 'delivered',
               )
@@ -736,13 +732,12 @@ function LaneCard({
  * load) it says so in words rather than leaving a ₹0 to be argued about.
  */
 function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<string> }) {
-  // The detail grid is two columns wide everywhere, which is right for the
-  // money block — eight short figures read as a column of numbers. It is wrong
-  // for the fields whose value is a phrase: at 375px each column is about
-  // 155px. Those fields take the full measure on a phone instead.
-  const phone = useIsPhone();
+  // The detail grid is one column on a phone and two from `sm` up, where the
+  // money block reads as a column of short figures and a phrase still has
+  // room in a half — so no field here needs to span both.
   const t = useWords(loadWords);
   const s = useWords(salesWords);
+  const inr = useInrCompact();
   const status = useWords(statusWords);
   const revenue = revenueOf(trip);
   const contribution = marginOf(trip);
@@ -770,12 +765,12 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
     <>
       <SheetSection caption={t.load}>
         <DetailGrid>
-          <Detail label={t.deliverTo} wide={phone}>
+          <Detail label={t.deliverTo}>
             {trip.customerSite}
           </Detail>
           <Detail label={t.loadedAt}>{siteOf(trip) ?? t.notNoted}</Detail>
           <Detail label={s.material}>{productOf(trip)}</Detail>
-          <Detail label={t.vehicleDriver} wide={phone}>
+          <Detail label={t.vehicleDriver}>
             <IdCell>{vehicleOf(trip)?.displayReg ?? t.noVehicle}</IdCell>
             {` · ${driver ? driver.name : t.noDriver}`}
           </Detail>
@@ -783,14 +778,14 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
             <QuantityCell value={trip.soldUnits} decimals={1} uom={s.units} />
           </Detail>
           {/* How the quantity was counted decides how much argument it will take. */}
-          <Detail label={s.countedBy} wide={phone}>
+          <Detail label={s.countedBy}>
             {s.basis[trip.qtyBasis]}
           </Detail>
           <Detail label={t.weight}>
             {trip.weighedTonnes === null ? (
               t.notWeighed
             ) : (
-              <Provisional confirmed={wbAccepted}>
+              <Provisional confirmed={wbAccepted} by="person">
                 <QuantityCell value={trip.weighedTonnes} decimals={1} uom={s.tonnes} />
               </Provisional>
             )}
@@ -820,7 +815,7 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
         <DetailGrid>
           <Detail label={t.ratePerUnit}>
             {trip.rateOverridden ? (
-              <Provisional confirmed={rateAccepted} overridden>
+              <Provisional confirmed={rateAccepted} overridden by="person">
                 <MoneyCell value={trip.ratePerUnit} accounting={false} decimals={0} />
               </Provisional>
             ) : (
@@ -861,12 +856,12 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
           summary={
             revenue > 0
               ? t.moneySummary(
-                  formatINRCompact(revenue),
+                  inr(revenue),
                   Math.round((material / Math.max(revenue, 1)) * 100),
                   Math.round((cash / Math.max(revenue, 1)) * 100),
-                  formatINRCompact(contribution),
+                  inr(contribution),
                 )
-              : t.nothingEarned(formatINRCompact(cash))
+              : t.nothingEarned(inr(cash))
           }
           segments={segments}
         />
@@ -878,7 +873,7 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
             spent. The material never left stock; the loss is the running. */}
         {trip.status === 'returned' ? (
           <div className="mt-3">
-            <Note>{t.returnedNote(formatINRCompact(cash))}</Note>
+            <Note>{t.returnedNote(inr(cash))}</Note>
           </div>
         ) : null}
 
@@ -886,7 +881,7 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
             back to stock, and no invoice will ever carry this trip. */}
         {trip.status === 'cancelled' ? (
           <div className="mt-3">
-            <Note>{t.cancelledNote(formatINRCompact(cash))}</Note>
+            <Note>{t.cancelledNote(inr(cash))}</Note>
           </div>
         ) : null}
 
@@ -910,7 +905,7 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
 
       <SheetSection caption={t.papers}>
         <DetailGrid>
-          <Detail label={t.ewb} wide={phone}>
+          <Detail label={t.ewb}>
             {/* Under the ₹1,00,000 consignment threshold no e-way bill is needed. */}
             {!trip.ewbRequired ? (
               status.ewb.not_required
@@ -920,7 +915,7 @@ function TripCostSheet({ trip, accepted }: { trip: Trip; accepted: ReadonlySet<s
               <StatusStamp status="pending" label={status.ewb.to_generate} provisional />
             )}
           </Detail>
-          <Detail label={t.invoice} wide={phone}>
+          <Detail label={t.invoice}>
             {trip.invoiceId ? <IdCell>{trip.invoiceId}</IdCell> : t.noInvoiceYet}
           </Detail>
         </DetailGrid>
@@ -1016,7 +1011,7 @@ function tripColumns(accepted: ReadonlySet<string>, t: LoadText, s: SalesText, s
       group: t.groups.weight,
       render: (trip) =>
         trip.weighedTonnes === null ? null : (
-          <Provisional confirmed={accepted.has(`${trip.id}:wb`)}>
+          <Provisional confirmed={accepted.has(`${trip.id}:wb`)} by="person">
             <QuantityCell value={trip.weighedTonnes} decimals={1} />
           </Provisional>
         ),
@@ -1050,7 +1045,7 @@ function tripColumns(accepted: ReadonlySet<string>, t: LoadText, s: SalesText, s
       group: t.groups.money,
       render: (trip) =>
         trip.rateOverridden ? (
-          <Provisional confirmed={accepted.has(`${trip.id}:rate`)} overridden>
+          <Provisional confirmed={accepted.has(`${trip.id}:rate`)} overridden by="person">
             <MoneyCell value={trip.ratePerUnit} decimals={0} />
           </Provisional>
         ) : (

@@ -20,7 +20,6 @@ import {
   SideSheet,
   Stacked,
   StatusStamp,
-  useIsPhone,
   type Column,
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
@@ -47,7 +46,6 @@ type StatusText = (typeof statusWords)['en'];
 
 export function PurchaseOrderDatabase() {
   const { persona, siteScope, density } = useApp();
-  const phone = useIsPhone();
   const [view, setView] = useViewParam(VIEWS, 'all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Decisions taken in this session, not yet written back. */
@@ -117,9 +115,9 @@ export function PurchaseOrderDatabase() {
         width="form"
         title={selected?.number ?? ''}
         identifier={selected ? `${selected.customerName} · ${selected.customerPoRef}` : undefined}
-        // On a phone the stamp moves into the sheet body: a status that does
-        // not shrink — and Tamil ones run long — squeezed the order number.
-        {...(selected && !phone ? { status: { family: PO_STATUS_FAMILY[selected.status], label: status.order[selected.status] } } : {})}
+        // On a phone the sheet header sets the stamp on its own row under the
+        // order number, so the number keeps the full width.
+        {...(selected ? { status: { family: PO_STATUS_FAMILY[selected.status], label: status.order[selected.status] } } : {})}
         footer={
           selected?.status === 'pending_approval' ? (
             mayApprove ? (
@@ -141,11 +139,6 @@ export function PurchaseOrderDatabase() {
       >
         {selected ? (
           <>
-            {phone ? (
-              <div className="mb-4">
-                <StatusStamp status={PO_STATUS_FAMILY[selected.status]} label={status.order[selected.status]} />
-              </div>
-            ) : null}
             <SheetSection caption={t.order}>
               <DetailGrid>
                 <Detail label={s.customer}>{selected.customerName}</Detail>

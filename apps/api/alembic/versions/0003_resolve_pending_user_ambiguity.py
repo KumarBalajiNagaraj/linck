@@ -16,6 +16,7 @@ duplicate registration or, once tenant selection exists, the sign-in flow can as
 Revision ID: 0003_resolve_ambiguity
 Revises: 0002_rls_audit_seed
 """
+
 from collections.abc import Sequence
 
 from alembic import op

@@ -12,3 +12,6 @@ coverage/
 __pycache__/
 *.pyc
 .vercel
+
+# Uploaded bill scans and WhatsApp media written by a local API.
+apps/api/var/

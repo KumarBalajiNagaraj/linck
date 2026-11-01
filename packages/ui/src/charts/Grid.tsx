@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChartFrame, linearScale, niceDomain, ReferenceLine } from './core.js';
+import { useUiWords } from '../lib/words.js';
+import { ChartFrame, labelWidth, linearScale, niceDomain, ReferenceLine } from './core.js';
 
 export interface HeatCell {
   row: string;
@@ -38,6 +39,7 @@ export function HeatGrid({
   rowLabelWidth?: number;
   onSelect?: (cell: HeatCell) => void;
 }) {
+  const words = useUiWords();
   const [hover, setHover] = useState<HeatCell | null>(null);
   const gap = 2;
   const height = rows.length * (cellSize + gap) + 34;
@@ -95,7 +97,7 @@ export function HeatGrid({
                       onClick={onSelect && cell ? () => onSelect(cell) : undefined}
                       style={{ cursor: onSelect ? 'pointer' : 'default' }}
                     >
-                      <title>{cell?.title ?? `${row} · ${col} · not recorded`}</title>
+                      <title>{cell?.title ?? `${row} · ${col} · ${words.chart.notRecorded}`}</title>
                     </rect>
                   );
                 })}
@@ -170,14 +172,13 @@ export function ScatterPlot({
         // Deliberately generous: a width estimate that runs short produces the
         // exact smear this placement exists to prevent, and the cost of being
         // wrong the other way is one dropped label.
-        const CHAR_W = 7;
         const LINE_H = 15;
         const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
         const labelAt = new Map<string, { tx: number; anchor: 'start' | 'end' }>();
 
         for (const p of points) {
           if (!p.flagged) continue;
-          const w = p.label.length * CHAR_W;
+          const w = labelWidth(p.label, 7);
           const cx = x(p.x);
           const cy = y(p.y);
           // Prefer the right of the dot; flip left when that would overflow.
@@ -279,6 +280,7 @@ export function TargetGauge({
   label?: string;
   height?: number;
 }) {
+  const words = useUiWords();
   const domain = niceDomain([0, value, target]);
   const short = value < target;
 
@@ -304,7 +306,7 @@ export function TargetGauge({
               {format(value)}
             </text>
             <text x={box.x1} y={box.y1 + 14} textAnchor="end" fontSize={11} fill="var(--text-tertiary)" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              target {format(target)}
+              {words.chart.target(format(target))}
             </text>
           </>
         );

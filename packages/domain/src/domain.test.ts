@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { formatAccounting, formatINR, formatINRCompact, parseTypedAmount } from './money.js';
-import { businessDate, daysUntil, fiscalQuarter, fiscalYearOf, fyRange } from './date.js';
+import { ENGLISH_COMPACT_UNITS, formatAccounting, formatINR, formatINRCompact, parseTypedAmount } from './money.js';
+import { businessDate, daysUntil, ENGLISH_MONTHS_SHORT, fiscalQuarter, fiscalYearOf, formatDayMonth, fyRange } from './date.js';
 import { can, resolveHome, type Grants } from './permissions.js';
 import { CFT_PER_UNIT, freezeQuantity, tonnesToUnits, unitsToTonnes, weighbridgeVariancePct } from './uom.js';
 
@@ -13,6 +13,18 @@ describe('money', () => {
     expect(formatINRCompact(12_300_000)).toBe('₹1.23 Cr');
     expect(formatINRCompact(450_000)).toBe('₹4.50 L');
     expect(formatINRCompact(85_000)).toBe('₹85.0 K');
+  });
+
+  it('ends a compact figure in the unit words it is given, and changes nothing else', () => {
+    const tamil = { thousand: 'ஆயிரம்', lakh: 'லட்சம்', crore: 'கோடி' };
+    expect(formatINRCompact(12_300_000, tamil)).toBe('₹1.23 கோடி');
+    expect(formatINRCompact('450000', tamil)).toBe('₹4.50 லட்சம்');
+    expect(formatINRCompact(85_000, tamil)).toBe('₹85.0 ஆயிரம்');
+    expect(formatINRCompact(-450_000, tamil)).toBe('-₹4.50 லட்சம்');
+    // Below a thousand there is no unit to translate.
+    expect(formatINRCompact(950, tamil)).toBe('₹950');
+    expect(formatINRCompact('', tamil)).toBe('–');
+    expect(formatINRCompact(450_000, ENGLISH_COMPACT_UNITS)).toBe(formatINRCompact(450_000));
   });
 
   it('renders negatives in accounting parentheses', () => {
@@ -75,6 +87,31 @@ describe('dates', () => {
   it('reports expiry as a signed day count', () => {
     expect(daysUntil('2026-08-18T00:00:00Z', '2026-08-08T06:00:00Z')).toBe(10);
     expect(daysUntil('2026-08-01T00:00:00Z', '2026-08-08T06:00:00Z')).toBe(-7);
+  });
+
+  it('labels a day with its date and short month, English by default', () => {
+    expect(formatDayMonth('2026-08-08')).toBe('08 Aug');
+    expect(formatDayMonth('2026-09-30')).toBe('30 Sep');
+    expect(formatDayMonth(new Date('2026-01-05T10:00:00Z'))).toBe('05 Jan');
+  });
+
+  it('labels a day on the IST calendar, not the UTC one', () => {
+    // 00:30 IST on 9 Aug is still 8 Aug in UTC.
+    expect(formatDayMonth('2026-08-08T19:00:00Z')).toBe('09 Aug');
+    expect(formatDayMonth('2026-08-08T18:10:00Z')).toBe('08 Aug');
+  });
+
+  it('labels a day in the month names it is given', () => {
+    const tamil = ['ஜன.', 'பிப்.', 'மார்ச்', 'ஏப்.', 'மே', 'ஜூன்', 'ஜூலை', 'ஆக.', 'செப்.', 'அக்.', 'நவ.', 'டிச.'];
+    expect(formatDayMonth('2026-08-08', tamil)).toBe('08 ஆக.');
+    expect(formatDayMonth('2026-07-26', tamil)).toBe('26 ஜூலை');
+    expect(formatDayMonth('2026-08-08', ENGLISH_MONTHS_SHORT)).toBe('08 Aug');
+  });
+
+  it('labels a missing or unreadable day as an en dash', () => {
+    expect(formatDayMonth(null)).toBe('–');
+    expect(formatDayMonth('')).toBe('–');
+    expect(formatDayMonth('not a date')).toBe('–');
   });
 });
 

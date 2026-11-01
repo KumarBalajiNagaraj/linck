@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { can, formatDateTime, formatINR, formatINRCompact, formatQty } from '@linck/domain';
+import { can, formatDateTime, formatINR, formatQty } from '@linck/domain';
 import { indentsForSite, isIndentOpen, NOW, SITES, type Indent } from '@linck/mock';
 import {
   AgeingBar,
@@ -32,6 +32,7 @@ import {
 } from '@linck/ui';
 import { statusWords } from '../../i18n/statusWords.js';
 import { useWords } from '../../i18n/words.js';
+import { useInrCompact } from '../../i18n/format.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { CATEGORY_CODES, indentWords, type CategoryCode } from './words.js';
@@ -142,16 +143,17 @@ const APPROVE_PERMISSION = 'stores.indent.approve';
 export function IndentQueue() {
   const { persona, siteScope, density } = useApp();
   const t = useWords(indentWords);
+  const inr = useInrCompact();
   const stageWord = useWords(statusWords).indent;
   // Bar rows are 22px on a mouse — a deliberate density choice — and 22px is
   // not a thumb target. Keyed to the pointer, not the screen: a weighbridge
   // terminal is a wide display that still gets fingers.
   const touch = useIsTouch();
   /**
-   * The Tamil "waiting approval" stamp is about 220px wide. A sheet header on a
-   * phone gives it the title's room, and a phone card's half-width cell is
-   * narrower than it, so on a phone the stage moves to where it has the full
-   * width: the top of the sheet body, and under the request number on a card.
+   * On a phone a row becomes a card whose corner holds the urgency stamp, so
+   * the stage goes under the request number, where it has the card's full
+   * width. (The sheet needs no such help: on a phone its header sets the stamp
+   * on its own row under the title.)
    */
   const phone = useIsPhone();
   const [overrides, setOverrides] = useState<Record<string, Stage>>({});
@@ -366,11 +368,10 @@ export function IndentQueue() {
           hero
           value={String(awaiting.length)}
           delta={{
-            text: t.tiles.worth(formatINRCompact(awaitingValue)),
+            text: t.tiles.worth(inr(awaitingValue)),
             ...(breakdownWaiting.length > 0 ? { tone: 'critical' as const } : {}),
           }}
-          asOf="14:42"
-          source="v_indent_queue"
+          asOfInHeader
         />
         {/*
           The number that should make somebody get up from their desk. A
@@ -384,8 +385,7 @@ export function IndentQueue() {
             text: breakdownWaiting.length > 0 ? t.tiles.stopped : t.tiles.nothingStopped,
             ...(breakdownWaiting.length > 0 ? { tone: 'critical' as const } : {}),
           }}
-          asOf="14:42"
-          source="v_indent_queue"
+          asOfInHeader
         />
         {/* Ageing is the control on this desk, not a blocked button — so past a
             day the tile says so, in the attention colour. */}
@@ -393,15 +393,13 @@ export function IndentQueue() {
           eyebrow={t.tiles.oldest}
           value={t.age(oldestHours)}
           delta={oldestHours > 24 ? { text: t.tiles.late, tone: 'attention' } : undefined}
-          asOf="14:42"
-          source="v_indent_queue"
+          asOfInHeader
         />
         <KpiTile
           eyebrow={t.tiles.approved}
-          value={formatINRCompact(committed)}
+          value={inr(committed)}
           delta={{ text: t.tiles.approvedNote }}
-          asOf="14:42"
-          source="v_procurement_commitment"
+          asOfInHeader
         />
       </TileRow>
 
@@ -484,13 +482,13 @@ export function IndentQueue() {
                     topGroup
                       ? t.spend.summary(
                           topGroup.label,
-                          formatINRCompact(topGroup.committed),
+                          inr(topGroup.committed),
                           stoppedGroups.map((g) => g.label),
                         )
                       : t.spend.none
                   }
                   data={spendBars}
-                  format={(v) => formatINRCompact(v)}
+                  format={inr}
                   labelWidth={groupBy === 'site' ? 176 : 148}
                   onSelect={(d) => pickGroup(d.label)}
                 />
@@ -571,8 +569,8 @@ export function IndentQueue() {
         onClose={() => setSelected(undefined)}
         title={selectedRow?.itemName ?? ''}
         identifier={selectedRow?.number}
-        status={phone ? undefined : sheetStamp}
-        revision={selectedRow && !phone ? t.sheet.asked(shortDateTime(selectedRow.raisedOn)) : undefined}
+        status={sheetStamp}
+        revision={selectedRow ? t.sheet.asked(shortDateTime(selectedRow.raisedOn)) : undefined}
         footer={
           selectedRow ? (
             mayApprove ? (
@@ -615,16 +613,7 @@ export function IndentQueue() {
           ) : null
         }
       >
-        {selectedRow ? (
-          <>
-            {phone && sheetStamp ? (
-              <p className="mb-4">
-                <StatusStamp status={sheetStamp.family} label={sheetStamp.label} severity={sheetStamp.severity} />
-              </p>
-            ) : null}
-            <IndentDetail row={selectedRow} siblings={siblings} t={t} stageWord={stageWord} />
-          </>
-        ) : null}
+        {selectedRow ? <IndentDetail row={selectedRow} siblings={siblings} t={t} stageWord={stageWord} /> : null}
       </SideSheet>
 
       {/*
@@ -716,7 +705,7 @@ function IndentDetail({ row, siblings, t, stageWord }: { row: Row; siblings: Row
           {/* A request's estimate is a storekeeper's guess against the last
               rate paid, not a quotation. It must never read as a committed price. */}
           <Detail label={t.sheet.estimate}>
-            <Provisional>
+            <Provisional by="person">
               <MoneyCell value={row.estimatedValue} accounting={false} />
             </Provisional>
           </Detail>

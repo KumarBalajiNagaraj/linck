@@ -7,6 +7,11 @@ import { words } from './words.js';
  *
  * Screens read these instead of the English-only `*_LABEL` maps in
  * `@linck/mock`.
+ *
+ * A status is a stamp, and a stamp does not wrap or shrink: the Tamil is kept
+ * as short as the English, a word or two. "Waiting approval" is அனுமதி
+ * வேண்டும் (approval needed), not அனுமதிக்காக காத்திருக்கிறது, which ran to
+ * 220px and squeezed every header and phone card it sat in.
  */
 
 interface StatusWords {
@@ -88,7 +93,7 @@ export const statusWords = words<StatusWords>({
       draft: 'வரைவு',
       issued: 'அனுப்பியது',
       part_paid: 'பாதி பணம் வந்தது',
-      payment_reported: 'பணம் வந்ததாக, சரிபார்க்கவில்லை',
+      payment_reported: 'சரிபார்க்காத பணம்',
       payment_verified: 'பணம் சரிபார்த்தது',
       closed: 'முடிந்தது',
       overdue: 'தாமதம்',
@@ -114,7 +119,7 @@ export const statusWords = words<StatusWords>({
       cancelled: 'ரத்து',
     },
     order: {
-      pending_approval: 'அனுமதிக்காக காத்திருக்கிறது',
+      pending_approval: 'அனுமதி வேண்டும்',
       approved: 'அனுமதித்தது',
       part_dispatched: 'பாதி அனுப்பியது',
       fulfilled: 'முடிந்தது',
@@ -130,8 +135,8 @@ export const statusWords = words<StatusWords>({
       deleted: 'நீக்கியது',
     },
     expenseKind: { diesel: 'டீசல்', repair: 'ரிப்பேர்', tyre: 'டயர்', spares: 'ஸ்பேர்ஸ்', toll: 'டோல்', other: 'மற்றவை' },
-    breakdown: { open: 'பழுது — நிற்கிறது', in_workshop: 'வொர்க்ஷாப்பில்', resolved: 'சரியானது' },
+    breakdown: { open: 'பழுது', in_workshop: 'வொர்க்ஷாப்பில்', resolved: 'சரியானது' },
     attendance: { present: 'வந்துள்ளார்', on_trip: 'ட்ரிப்பில்', rest: 'ஓய்வு நாள்', leave: 'விடுப்பு', absent: 'வரவில்லை' },
-    indent: { submitted: 'அனுமதிக்காக காத்திருக்கிறது', approved: 'அனுமதித்தது', issued: 'கொடுத்தது', rejected: 'நிராகரித்தது' },
+    indent: { submitted: 'அனுமதி வேண்டும்', approved: 'அனுமதித்தது', issued: 'கொடுத்தது', rejected: 'நிராகரித்தது' },
   },
 });

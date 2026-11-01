@@ -4,6 +4,7 @@ import {
   ChartFrame,
   DirectLabel,
   GridLines,
+  labelWidth,
   linearScale,
   niceDomain,
   ReferenceLine,
@@ -252,8 +253,9 @@ export function ProportionBar({
               // of them.
               const pct = `${Math.round((seg.value / total) * 100)}%`;
               const full = `${seg.label} ${pct}`;
+              // Script-aware: a Tamil name is wider than its letter count says.
               const room = (s: string) => {
-                const need = s.length * 5.9 + 8;
+                const need = labelWidth(s, 5.9) + 8;
                 return w >= need && x + need <= box.x1;
               };
               const text = room(full) ? full : room(pct) ? pct : null;

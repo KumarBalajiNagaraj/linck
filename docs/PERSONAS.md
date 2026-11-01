@@ -359,7 +359,7 @@ And the delegation the owner actually asked for — "admins in *their* team" —
 
 ## The three things that block everything else
 
-**1. Wire the web app to the API.** Every roadmap item above is a mock until this happens. The cutover is four steps, written in the header of `apps/web/src/auth/session.ts`: ship the endpoint, await it before mounting the router, feed the mapper into the store while deleting both demo switchers, then migrate screens off mock data one at a time. LIN-21 did the first three: with `VITE_API_URL` set, people sign in and the shell runs on the real session. The fourth is what remains. Diesel entry is the right first screen — highest frequency, and named in Phase 1 as a paper-replacing surface.
+**1. Wire the web app to the API.** Every roadmap item above is a mock until this happens. The cutover is four steps, written in the header of `apps/web/src/auth/session.ts`: ship the endpoint, await it before mounting the router, feed the mapper into the store while deleting both demo switchers, then migrate screens off mock data one at a time. LIN-21 did the first three: with `VITE_API_URL` set, people sign in and the shell runs on the real session. The fourth has begun with the expense chain, from upload to payment; every screen still on mock data says so in a banner. The rest of the fourth is what remains. Diesel entry is the right next screen — highest frequency, and named in Phase 1 as a paper-replacing surface.
 
 **2. Migrate the finance slice.** The owner's hard rule — an invoice does not close until payment is cross-verified — is currently a UI convention that a page refresh erases. It becomes real as a database trigger. The same migration is what makes the P&L possible.
 

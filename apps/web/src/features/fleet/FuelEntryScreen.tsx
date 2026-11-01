@@ -9,7 +9,9 @@ import {
   Section, SheetSection, SideSheet, Stacked, StatusStamp, SuggestionStrip, TrendChart, useIsTouch, type BarDatum,
   type Column,
 } from '@linck/ui';
+import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
+import { fleetWords, fuelWords } from './words.js';
 
 /**
  * Diesel and DEF entry.
@@ -22,6 +24,10 @@ import { useApp } from '../../shell/store.js';
  * still a fill that happened, and refusing to save it only moves the theft off
  * the system.
  *
+ * A driver keys this at the bunk, often in Tamil, so the screen says as little
+ * as it can: a label, the figure, and — only when something is off — what to
+ * check. "Benchmark" is said as "normal", the odometer as "km reading".
+ *
  * The single hard stop is a meter running backwards, and even that keeps the
  * typed value legible: a critical rail on the field's left edge and a message
  * in a RESERVED slot, so nothing under the cursor ever jumps.
@@ -29,12 +35,18 @@ import { useApp } from '../../shell/store.js';
  * Two charts sit alongside, and neither of them is decoration. The mileage
  * trend re-draws the moment the operator picks a different tipper, so the
  * question "is this fill odd for THIS lorry" is answered before the litres are
- * typed rather than after. The litres bar carries the tank capacity as a tick,
- * which is the only way an impossible fill — 432 L into a 300 L tank — is
- * visible at all; it is the theft that hides best, because every individual
- * number on the bill is plausible.
+ * typed rather than after. Only a full tank to a full tank yields a reading, so
+ * the line is sparse by construction — six to nine points a month, never
+ * thirty; a steady slide is what a leaking return line or a nightly can of
+ * diesel looks like, one bad point is usually a hill and a heavy load. The
+ * litres bar carries the tank capacity as a tick, which is the only way an
+ * impossible fill — 432 L into a 300 L tank — is visible at all; it is the
+ * theft that hides best, because every individual number on the bill is
+ * plausible.
  */
 export function FuelEntryScreen() {
+  const t = useWords(fuelWords);
+  const f = useWords(fleetWords);
   const { siteScope, density } = useApp();
   // A bar is a click target here — 20px of it is a miss on a thumb, and no CSS
   // reaches inside the SVG to say so.
@@ -43,7 +55,7 @@ export function FuelEntryScreen() {
   const crew = siteScope ? DRIVERS.filter((d) => d.siteId === siteScope) : DRIVERS;
 
   const bill = EXTRACTION_JOBS.find((j) => j.documentType === 'diesel_bill');
-  const billValue = (key: string) => bill?.fields.find((f) => f.key === key)?.value ?? '';
+  const billValue = (key: string) => bill?.fields.find((field) => field.key === key)?.value ?? '';
 
   const [vehicleId, setVehicleId] = useState(() => fleet.find((v) => v.displayReg === billValue('vehicle'))?.id ?? '');
   const [driverPick, setDriverPick] = useState('auto');
@@ -63,7 +75,7 @@ export function FuelEntryScreen() {
 
   // The review flag is a supervisor's bookmark, not a status the ledger owns —
   // it lives beside the entries rather than inside them, so flagging never
-  // rewrites a posted row.
+  // rewrites a posted row. On screen it is a "mark to check".
   const [flagged, setFlagged] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [selected, setSelected] = useState<FuelEntry | null>(null);
   const [lens, setLens] = useState<'all' | 'exceptions' | 'flagged'>('all');
@@ -73,8 +85,8 @@ export function FuelEntryScreen() {
   if (!vehicle) {
     return (
       <>
-        <PageHeader eyebrow="Fleet · Diesel" title="Record a fill" />
-        <EmptyState fact="No vehicles at this site." because="Widen the site scope to key a fill against a tipper." />
+        <PageHeader eyebrow={f.eyebrow} title={t.title} />
+        <EmptyState fact={t.noVehicles} because={t.pickSite} />
       </>
     );
   }
@@ -88,7 +100,7 @@ export function FuelEntryScreen() {
 
   const tank = tankCapacity(vehicle.classTonnes);
 
-  // Litres × rate must reconcile against the typed amount inside ₹1.
+  // Litres × rate must agree with the typed amount inside ₹1.
   const expected = litresN !== null && rateN !== null ? litresN * rateN : null;
   const drift = expected !== null && amountN !== null ? amountN - expected : null;
 
@@ -102,12 +114,14 @@ export function FuelEntryScreen() {
   const odoDelta = odoN !== null && !odoBackwards && lastFull ? odoN - lastFull.odometerKm : null;
   const implied = fullTank && odoDelta !== null && odoDelta > 0 && litresN ? odoDelta / litresN : null;
   const kmplShort = implied !== null && implied < vehicle.benchmarkKmpl * 0.82;
+  // DEF (AdBlue) as a share of the diesel: a BS-VI tipper runs 3 to 6%.
   const defPct = defN !== null && litresN ? (defN / litresN) * 100 : null;
   const overTank = litresN !== null && litresN > tank;
 
   const scoped = new Set(fleet.map((v) => v.id));
   const recent = entries.filter((e) => scoped.has(e.vehicleId)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14);
 
+  // Off benchmark by more than 18%, or more litres than the tank holds.
   const exceptions = recent.filter((e) => isShort(e) || overTankFill(e));
   const visible =
     lens === 'flagged' ? recent.filter((e) => flagged.has(e.id)) : lens === 'exceptions' ? exceptions : recent;
@@ -116,14 +130,15 @@ export function FuelEntryScreen() {
 
   // Redrawn from the picked vehicle, not from a snapshot — changing the select
   // above changes this line, which is the whole point of it being here.
-  const mileageSeries = mileageFor(vehicle.id).map((m) => ({ label: m.label, value: m.kmpl }));
+  const mileageSeries = mileageFor(vehicle.id).map((m) => ({ label: dayMonth(m.date), value: m.kmpl }));
   const kmplFloor = vehicle.benchmarkKmpl * 0.82;
   const belowFloor = mileageSeries.filter((p) => p.value < kmplFloor).length;
   const latestKmpl = mileageSeries[mileageSeries.length - 1]?.value ?? null;
 
   // Ten bars, most recent at the top, each with its own tank as the tick — the
   // 48-tonner and the 25-tonner do not share a ceiling and averaging them hides
-  // exactly the fill worth arguing about.
+  // exactly the fill worth arguing about. A bar past its tick did not all go
+  // into that lorry.
   const barOf = new Map<string, FuelEntry>();
   const fillBars: BarDatum[] = recent.slice(0, 10).map((e) => {
     const v = VEHICLES.find((x) => x.id === e.vehicleId);
@@ -147,6 +162,8 @@ export function FuelEntryScreen() {
 
   /* -------------------------------------------------------------- mutations */
 
+  // The odometer on the bill photo read at the lowest confidence, so it is not
+  // carried across; the strip asks the person to type it.
   const applyBill = () => {
     setPrefilled(true);
     setInkDry(false);
@@ -205,141 +222,146 @@ export function FuelEntryScreen() {
     else commit();
   };
 
+  // Saves and clears the form for the next fill.
+  const saveDisabled = odoBackwards || !litresN || !amountN;
+
   const hatch = prefilled && !inkDry;
   // Inside the hatch the control drops its own box, so the texture is unbroken
   // and the extracted figure still reads at full contrast against the photo.
   const boxed: React.CSSProperties = hatch ? { ...FIELD_BOX, background: 'transparent', boxShadow: 'none' } : FIELD_BOX;
 
   const tableColumns: Column<FuelEntry>[] = [
-    ...columns,
+    ...columnsFor(t, f),
     {
       key: 'standing',
-      header: 'Standing',
+      header: t.col.status,
       type: 'status',
-      width: 156,
-      group: 'The evidence',
+      width: 170,
       render: (e) => {
-        if (flagged.has(e.id)) return <StatusStamp status="attention" label="Flagged" />;
-        if (overTankFill(e)) return <StatusStamp status="critical" label="Over tank" />;
-        if (isShort(e)) return <StatusStamp status="attention" label="Off benchmark" severity={`-${shortfallPct(e)}%`} />;
-        if (e.provenance === 'proposed') return <StatusStamp status="pending" label="Unconfirmed" provisional />;
-        return <StatusStamp status="ready" label="Clean" />;
+        if (flagged.has(e.id)) return <StatusStamp status="attention" label={t.standing.marked} />;
+        if (overTankFill(e)) return <StatusStamp status="critical" label={t.standing.overTank} />;
+        if (isShort(e)) return <StatusStamp status="attention" label={t.standing.low} severity={`-${shortfallPct(e)}%`} />;
+        if (e.provenance === 'proposed') return <StatusStamp status="pending" label={t.standing.notChecked} provisional />;
+        return <StatusStamp status="ready" label={t.standing.ok} />;
       },
     },
   ];
 
   const sheetStatus = selected
     ? flagged.has(selected.id)
-      ? { family: 'attention' as const, label: 'Flagged for review' }
+      ? { family: 'attention' as const, label: t.standing.marked }
       : overTankFill(selected)
-        ? { family: 'critical' as const, label: 'Over tank' }
+        ? { family: 'critical' as const, label: t.standing.overTank }
         : isShort(selected)
-          ? { family: 'attention' as const, label: 'Off benchmark', severity: `-${shortfallPct(selected)}%` }
+          ? { family: 'attention' as const, label: t.standing.low, severity: `-${shortfallPct(selected)}%` }
           : selected.provenance === 'proposed'
-            ? { family: 'pending' as const, label: 'Unconfirmed', provisional: true }
-            : { family: 'ready' as const, label: 'Clean' }
+            ? { family: 'pending' as const, label: t.standing.notChecked, provisional: true }
+            : { family: 'ready' as const, label: t.standing.ok }
     : undefined;
 
   return (
     <>
       <PageHeader
-        eyebrow="Fleet · Diesel"
-        title="Record a fill"
-        meta={<AsOfStamp asOf={formatTime(NOW)} source="v_fuel_ledger" freshness="live" />}
+        eyebrow={f.eyebrow}
+        title={t.title}
+        meta={<AsOfStamp asOf={formatTime(NOW)} source={f.from.diesel} freshness="live" />}
         actions={
-          <Button variant="primary" onClick={post} disabled={odoBackwards || !litresN || !amountN}>
-            Post and key the next
-          </Button>
+          // On a phone the same button sits under the last field instead,
+          // where the thumb is when the form is done.
+          <div className="hidden md:block">
+            <Button variant="primary" onClick={post} disabled={saveDisabled}>
+              {t.save}
+            </Button>
+          </div>
         }
       />
 
       {bill && !prefilled && !dismissed ? (
         <div className="px-6 pt-4">
-          <SuggestionStrip onApply={applyBill} onDismiss={() => setDismissed(true)} applyLabel="Prefill from the bill">
-            A diesel bill photographed by {bill.capturedBy} at {formatTime(bill.capturedAt)} is waiting against{' '}
-            {billValue('vehicle')} — {billValue('litres')} L at ₹{billValue('rate')}. The odometer on that photo read at
-            the lowest confidence and is not carried across.
+          <SuggestionStrip onApply={applyBill} onDismiss={() => setDismissed(true)} applyLabel={t.fromBill}>
+            {t.billPhoto(bill.capturedBy, formatTime(bill.capturedAt), billValue('vehicle'), billValue('litres'), billValue('rate'))}
           </SuggestionStrip>
         </div>
       ) : null}
 
       <Section
-        caption="One fill, one vehicle, one meter reading"
-        title="New entry"
-        actions={hatch ? <Button variant="primary" onClick={() => setInkDry(true)}>Confirm all four</Button> : null}
+        title={t.newEntry}
+        // Confirms the four figures read off the bill photo: litres, rate,
+        // amount and bill number.
+        actions={hatch ? <Button variant="primary" onClick={() => setInkDry(true)}>{t.matchesBill}</Button> : null}
       >
         <div className="grid grid-cols-1 gap-x-10 gap-y-8 px-6 pt-1 xl:grid-cols-[minmax(0,560px)_minmax(0,1fr)] xl:gap-y-0">
           <div className="w-full max-w-[560px]">
-            <Field label="Vehicle">
+            <Field label={t.vehicle}>
               <select value={vehicle.id} className={CTRL} style={FIELD_BOX} onChange={(e) => { setVehicleId(e.target.value); setDriverPick('auto'); }}>
                 {fleet.map((v) => <option key={v.id} value={v.id}>{v.displayReg} · {v.model}</option>)}
               </select>
             </Field>
 
-            <Field
-              label="Driver"
-              help={driverPick === 'auto' ? 'Taken from the vehicle roster — change it if someone else took the tipper out.' : 'Overridden by hand.'}
-            >
+            {/* The driver is taken from the vehicle roster until someone picks another. */}
+            <Field label={t.driver} help={driverPick === 'auto' ? t.driverAuto : t.driverChanged}>
               <select value={driverPick === 'auto' ? (vehicle.driverId ?? '') : driverPick} className={CTRL} style={FIELD_BOX} onChange={(e) => setDriverPick(e.target.value)}>
-                <option value="">No driver recorded</option>
+                <option value="">{t.noDriver}</option>
                 {crew.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </Field>
 
-            <Field label="Date">
+            <Field label={t.date}>
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={CTRL} style={FIELD_BOX} />
             </Field>
 
+            {/* A part fill (a top-up) yields no km/l: the figure is held back
+                rather than guessed. Below the last reading, the fix is to check
+                the dash or raise a meter-change note. */}
             <Field
-              label="Odometer"
+              label={t.kmReading}
               margin={
                 !fullTank ? (
-                  <Margin>km/l not computed on a top-up</Margin>
+                  <Margin>{t.notFullNoMileage}</Margin>
                 ) : implied !== null ? (
                   <Margin tone={kmplShort ? 'attention' : 'quiet'}>
-                    This fill implies {formatQty(implied, 1)} km/l against a {formatQty(vehicle.benchmarkKmpl, 1)} benchmark
+                    {t.mileageIs(formatQty(implied, 1), formatQty(vehicle.benchmarkKmpl, 1))}
                   </Margin>
                 ) : prefilled ? (
                   <Margin>
-                    <span className="inline-flex items-center gap-1"><ConfidenceMeter level={1} /> read poorly off the photo</span>
+                    <span className="inline-flex items-center gap-1"><ConfidenceMeter level={1} /> {t.photoUnclear}</span>
                   </Margin>
                 ) : null
               }
-              error={odoBackwards ? `Below the last reading of ${formatQty(vehicle.odometerKm, 0)} km. A meter does not run backwards — check the dash, or raise a meter-change note.` : undefined}
-              help={lastFull ? `Last full tank ${formatDate(lastFull.date)} at ${formatQty(lastFull.odometerKm, 0)} km.` : undefined}
+              error={odoBackwards ? t.kmTooLow(formatQty(vehicle.odometerKm, 0)) : undefined}
+              help={lastFull ? t.lastFull(formatDate(lastFull.date), formatQty(lastFull.odometerKm, 0)) : undefined}
             >
               <input inputMode="decimal" value={odometer} placeholder={formatQty(vehicle.odometerKm, 0)} className={`${CTRL} text-right`} style={FIELD_BOX} onChange={(e) => setOdometer(e.target.value)} />
             </Field>
 
+            {/* More diesel than the tank holds: either two lorries were filled
+                on one bill, or some of it left in a can. */}
             <Field
-              label="Litres"
+              label={t.litres}
               margin={
                 overTank ? (
-                  <Margin tone="attention">
-                    {formatQty(litresN ?? 0, 0)} L into a {formatQty(tank, 0)} L tank
-                  </Margin>
+                  <Margin tone="attention">{t.overTank(formatQty(tank, 0))}</Margin>
                 ) : odoDelta ? (
-                  <Margin>{formatQty(odoDelta, 0)} km since that tank</Margin>
+                  <Margin>{t.sinceLastFull(formatQty(odoDelta, 0))}</Margin>
                 ) : null
               }
-              help={overTank ? 'More diesel than the tank holds. Either two lorries were filled on one bill, or some of it left in a can.' : undefined}
             >
               <Wrap on={prefilled} confirmed={inkDry}>
                 <input inputMode="decimal" value={litres} onChange={(e) => setLitres(e.target.value)} className={`${CTRL} text-right`} style={boxed} />
               </Wrap>
             </Field>
 
-            <Field label="Rate per litre ₹" margin={source === 'own_bunk' && !prefilled ? <Margin>Today&rsquo;s own-bunk issue rate</Margin> : null}>
+            <Field label={t.rate} margin={source === 'own_bunk' && !prefilled ? <Margin>{t.ourRate}</Margin> : null}>
               <Wrap on={prefilled} confirmed={inkDry}>
                 <input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} className={`${CTRL} text-right`} style={boxed} />
               </Wrap>
             </Field>
 
             <Field
-              label="Amount ₹"
+              label={t.amount}
               margin={
-                drift === null ? null : Math.abs(drift) <= 1 ? <Margin>Reconciles with litres × rate</Margin> : (
-                  <Margin tone="attention">{formatINR(Math.abs(drift))} {drift > 0 ? 'over' : 'under'} litres × rate, which comes to {formatINR(expected ?? 0)}</Margin>
+                drift === null ? null : Math.abs(drift) <= 1 ? <Margin>{t.amountMatches}</Margin> : (
+                  <Margin tone="attention">{t.litresTimesRate(formatINR(expected ?? 0))}</Margin>
                 )
               }
             >
@@ -348,61 +370,68 @@ export function FuelEntryScreen() {
               </Wrap>
             </Field>
 
-            <Field
-              label="Tank filled to the brim"
-              help={fullTank
-                ? 'Full tank to full tank is the only honest mileage. Leave it ticked whenever the nozzle cut off by itself.'
-                : 'A part fill records the litres and the money but yields no km/l — the implied figure is held back rather than guessed.'}
-            >
+            {/* Full tank to full tank is the only honest mileage. Leave it ticked
+                whenever the nozzle cut off by itself. */}
+            <Field label={t.tank} help={t.fullTankHelp}>
               <label
-                className="flex h-11 cursor-pointer items-center gap-2 text-[14px] [@media(hover:hover)]:h-[34px]"
+                className="flex h-11 cursor-pointer items-center gap-2.5 text-[15px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[14px]"
                 style={{ color: 'var(--text-primary)' }}
               >
                 <input
                   type="checkbox"
                   checked={fullTank}
                   onChange={(e) => setFullTank(e.target.checked)}
-                  className="h-5 w-5 [@media(hover:hover)]:h-4 [@media(hover:hover)]:w-4"
+                  className="h-6 w-6 [@media(hover:hover)]:h-4 [@media(hover:hover)]:w-4"
                   style={{ accentColor: 'var(--brand)' }}
                 />
-                Full tank
+                {t.fullTank}
               </label>
             </Field>
 
-            <Field label="Source">
+            <Field label={t.where}>
               <select value={source} onChange={(e) => setSource(e.target.value as FuelEntry['source'])} className={CTRL} style={FIELD_BOX}>
-                <option value="own_bunk">Own bunk — issued from site stock</option>
-                <option value="outside_bunk">Outside bunk — bought on the road</option>
+                <option value="own_bunk">{t.ownBunk}</option>
+                <option value="outside_bunk">{t.outsideBunk}</option>
               </select>
             </Field>
 
+            {/* An outside fill without a bill number cannot be set against the
+                vendor ledger. */}
             {source === 'outside_bunk' ? (
-              <Field label="Bill number" help="An outside fill without a bill number cannot be set against the vendor ledger.">
+              <Field label={t.billNumber} help={t.billNumberHelp}>
                 <Wrap on={prefilled} confirmed={inkDry}>
                   <input value={billNumber} onChange={(e) => setBillNumber(e.target.value)} className={`font-id ${CTRL}`} style={boxed} />
                 </Wrap>
               </Field>
             ) : null}
 
+            {/* Blank means nobody topped it up. Zero means somebody looked and
+                it was already full. */}
             <Field
-              label="DEF / AdBlue litres"
+              label={t.adBlue}
               margin={defPct === null ? null : (
-                <Margin tone={defPct > 6 || defPct < 3 ? 'attention' : 'quiet'}>{formatQty(defPct, 1)}% of the diesel — a BS-VI tipper runs 3 to 6%</Margin>
+                <Margin tone={defPct > 6 || defPct < 3 ? 'attention' : 'quiet'}>{t.adBlueShare(formatQty(defPct, 1))}</Margin>
               )}
-              help="Blank means nobody topped it up. Zero means somebody looked and it was already full."
+              help={t.adBlueHelp}
             >
               <input inputMode="decimal" value={def} onChange={(e) => setDef(e.target.value)} className={`${CTRL} text-right`} style={FIELD_BOX} />
             </Field>
+
+            <div className="mt-2 md:hidden">
+              <Button variant="primary" className="w-full" onClick={post} disabled={saveDisabled}>
+                {t.save}
+              </Button>
+            </div>
           </div>
 
           {/* The picked vehicle's own history, so the clerk is comparing this
               fill against this lorry rather than against the fleet average. */}
           <div className="min-w-0 pt-1">
             <p className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-              Twenty-eight days, tank to tank
+              {t.days28}
             </p>
             <h3 className="font-serif mb-1 text-[18px]" style={{ color: 'var(--text-primary)' }}>
-              {vehicle.displayReg} on mileage
+              {t.mileageOf(vehicle.displayReg)}
             </h3>
             {mileageSeries.length >= 2 ? (
               <>
@@ -413,18 +442,16 @@ export function FuelEntryScreen() {
                   <div className="min-w-[400px]">
                     <TrendChart
                       data={mileageSeries}
-                      summary={`${vehicle.displayReg} mileage over ${
-                        mileageSeries.length
-                      } full-tank fills, latest ${formatQty(
-                        latestKmpl,
-                        2,
-                      )} km/l against a ${formatQty(vehicle.benchmarkKmpl, 1)} benchmark; ${belowFloor} reading${
-                        belowFloor === 1 ? '' : 's'
-                      } below ${formatQty(kmplFloor, 2)} km/l.`}
+                      summary={t.mileageSummary(
+                        vehicle.displayReg,
+                        formatQty(latestKmpl, 2),
+                        formatQty(vehicle.benchmarkKmpl, 1),
+                        belowFloor,
+                      )}
                       seriesLabel={vehicle.displayReg}
                       benchmark={{
                         value: vehicle.benchmarkKmpl,
-                        label: `${formatQty(vehicle.benchmarkKmpl, 1)} benchmark`,
+                        label: t.normalAt(formatQty(vehicle.benchmarkKmpl, 1)),
                       }}
                       flagBelow={kmplFloor}
                       height={186}
@@ -432,25 +459,20 @@ export function FuelEntryScreen() {
                     />
                   </div>
                 </div>
-                <ChartCaption>
-                  Only a full tank to a full tank yields a reading, so the line is sparse by construction — six to nine
-                  points a month, never thirty. A steady slide is what a leaking return line or a nightly can of diesel
-                  looks like; one bad point is usually a hill and a heavy load.
-                </ChartCaption>
+                <ChartCaption>{t.mileageNote}</ChartCaption>
               </>
             ) : (
-              <Note>
-                No tank-to-tank readings for this vehicle yet. Mileage appears once two full-tank fills have been keyed
-                against the same meter.
-              </Note>
+              // Mileage appears once two full-tank fills have been keyed
+              // against the same meter.
+              <Note>{t.noMileage}</Note>
             )}
 
             <div className="mt-6">
               <p className="font-serif text-[13px] italic" style={{ color: 'var(--text-tertiary)' }}>
-                Last ten fills at this site
+                {t.last10}
               </p>
               <h3 className="font-serif mb-1 text-[18px]" style={{ color: 'var(--text-primary)' }}>
-                Litres against the tank
+                {t.litresVsTank}
               </h3>
               {/* The label reserve is 178px and the value gutter another 64, so
                   below a tablet the bars themselves would have nothing left to
@@ -459,11 +481,9 @@ export function FuelEntryScreen() {
               <div className="overflow-x-auto">
                 <div className="min-w-[460px]">
                   <BarChart
-                    summary={`Last ${fillBars.length} fills by litres against each vehicle's tank capacity; ${overFills} fill${
-                      overFills === 1 ? '' : 's'
-                    } larger than the tank it went into.`}
+                    summary={t.fillsSummary(fillBars.length, overFills)}
                     data={fillBars}
-                    format={(v) => `${formatQty(v, 0)} L`}
+                    format={(v) => t.litresShort(formatQty(v, 0))}
                     barHeight={touch ? 34 : 20}
                     labelWidth={178}
                     onSelect={(d) => {
@@ -473,31 +493,26 @@ export function FuelEntryScreen() {
                   />
                 </div>
               </div>
-              <ChartCaption>
-                The dashed tick is what the tank holds. A bar past it did not all go into that lorry — every figure on
-                such a bill is individually plausible, which is why this is the one that has to be drawn. Click a bar to
-                open the fill.
-              </ChartCaption>
+              <ChartCaption>{t.fillsNote}</ChartCaption>
             </div>
           </div>
         </div>
       </Section>
 
       <Section
-        caption="What this tipper and this bunk have already done"
-        title="Recent fills"
+        title={t.recent}
         actions={
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <Chip active={lens === 'all'} onClick={() => setLens('all')} count={recent.length}>
-              All
+              {t.lens.all}
             </Chip>
             <Chip active={lens === 'exceptions'} onClick={() => setLens('exceptions')} count={exceptions.length}>
-              Off benchmark or over tank
+              {t.lens.exceptions}
             </Chip>
             <Chip active={lens === 'flagged'} onClick={() => setLens('flagged')} count={flagged.size}>
-              Flagged
+              {t.lens.flagged}
             </Chip>
-            <AsOfStamp asOf={formatTime(NOW)} source="v_fuel_entry" freshness="live" />
+            <AsOfStamp asOf={formatTime(NOW)} source={f.from.diesel} freshness="live" />
           </div>
         }
       >
@@ -516,11 +531,11 @@ export function FuelEntryScreen() {
           })}
           empty={
             lens === 'flagged' ? (
-              <EmptyState fact="Nothing is flagged for review." because="Open a fill and flag it to put it on the supervisor's list." />
+              <EmptyState fact={t.noneMarked} because={t.howToMark} />
             ) : lens === 'exceptions' ? (
-              <EmptyState fact="No fill here reads as an exception." because="Every recent fill sits inside its tank and within 18% of its benchmark." />
+              <EmptyState fact={t.allFine} />
             ) : (
-              <EmptyState fact="No fills recorded at this site yet." because="The first entry keyed above lands here." />
+              <EmptyState fact={t.noFills} />
             )
           }
         />
@@ -528,63 +543,53 @@ export function FuelEntryScreen() {
 
       <div className="h-10" />
 
+      {/* Marking puts an attention rail on the row and nothing else. It does
+          not alter the posting, and clearing it only takes the rail away. */}
       <SideSheet
         open={selected !== null}
         onClose={() => setSelected(null)}
         width="form"
-        title={selected ? (VEHICLES.find((v) => v.id === selected.vehicleId)?.displayReg ?? 'Fill') : ''}
+        title={selected ? (VEHICLES.find((v) => v.id === selected.vehicleId)?.displayReg ?? t.fill) : ''}
         identifier={selected ? (selected.billNumber ?? selected.id) : undefined}
         {...(sheetStatus ? { status: sheetStatus } : {})}
-        revision={selected ? `FILLED ${formatDate(selected.date)} ${formatTime(selected.date)}` : undefined}
+        // When it was filled is the first section of the sheet, so the header
+        // does not repeat it.
         footer={
           selected ? (
-            <>
-              <Button
-                variant={flagged.has(selected.id) ? 'secondary' : 'primary'}
-                onClick={() => toggleFlag(selected.id)}
-              >
-                {flagged.has(selected.id) ? 'Clear the review flag' : 'Flag this fill for review'}
-              </Button>
-              {/* The sheet footer is a fixed 56px bar. Beside a 44px touch
-                  button on a 375px panel this sentence has nowhere to wrap, so
-                  on a phone it moves into the body of the sheet instead —
-                  FillDetail carries the same words under "Where these figures
-                  came from". */}
-              <span className="hidden font-serif text-[12px] italic md:inline" style={{ color: 'var(--text-tertiary)' }}>
-                {flagged.has(selected.id)
-                  ? 'The row carries an attention rail until somebody clears it.'
-                  : 'Puts an attention rail on the row and nothing else. It does not alter the posting.'}
-              </span>
-            </>
+            <Button
+              variant={flagged.has(selected.id) ? 'secondary' : 'primary'}
+              onClick={() => toggleFlag(selected.id)}
+            >
+              {flagged.has(selected.id) ? t.unmark : t.mark}
+            </Button>
           ) : undefined
         }
       >
-        {selected ? <FillDetail entry={selected} flagged={flagged.has(selected.id)} /> : null}
+        {selected ? <FillDetail entry={selected} /> : null}
       </SideSheet>
 
       {/*
         The margins never block and never refuse — that rule is untouched. This
         asks once, at the moment of writing to the ledger, and only when the fill
         already disagrees with itself. It posts either way; what it buys is that
-        nobody can later claim they did not see it.
+        nobody can later claim they did not see it. The entry posts as keyed and
+        carries a review flag into the supervisor's list.
       */}
       <ConfirmModal
         open={confirming}
         onClose={() => setConfirming(false)}
         onConfirm={commit}
-        title="Post a fill that reads as an exception"
-        confirmLabel="Post it and flag it"
+        title={t.confirmTitle}
+        confirmLabel={t.confirmLabel}
         consequence={
           <>
-            {formatQty(litresN ?? 0, 1)} L against {vehicle.displayReg} for {formatINR(amountN ?? 0)}.
-            {overTank ? ` That is more than the ${formatQty(tank, 0)} L this tank holds.` : ''}
-            {kmplShort && implied !== null
-              ? ` It implies ${formatQty(implied, 1)} km/l against a ${formatQty(vehicle.benchmarkKmpl, 1)} benchmark.`
-              : ''}
-            {drift !== null && Math.abs(drift) > 1
-              ? ` The amount is ${formatINR(Math.abs(drift))} ${drift > 0 ? 'over' : 'under'} litres × rate.`
-              : ''}{' '}
-            The entry posts as keyed and carries a review flag into the supervisor&rsquo;s list.
+            <p>{t.confirmHead(vehicle.displayReg, formatQty(litresN ?? 0, 1), formatINR(amountN ?? 0))}</p>
+            {overTank ? <p>{t.confirmOverTank(formatQty(tank, 0))}</p> : null}
+            {kmplShort && implied !== null ? (
+              <p>{t.confirmMileage(formatQty(implied, 1), formatQty(vehicle.benchmarkKmpl, 1))}</p>
+            ) : null}
+            {drift !== null && Math.abs(drift) > 1 ? <p>{t.confirmAmount(formatINR(Math.abs(drift)), drift > 0)}</p> : null}
+            <p className="mt-2">{t.confirmWillMark}</p>
           </>
         }
       />
@@ -598,9 +603,10 @@ export function FuelEntryScreen() {
  * This is the highest-keystroke surface in the product and half of it is keyed
  * standing at a bunk at six in the morning, so the control grows on a touch
  * pointer and shrinks back where a mouse is doing the aiming — the same trade
- * `Button` and `Chip` already make.
+ * `Button` and `Chip` already make. 16px type on a touch screen also stops a
+ * phone zooming into the field when it is tapped.
  */
-const CTRL = 'h-11 w-full px-2 text-[14px] [@media(hover:hover)]:h-[34px]';
+const CTRL = 'h-11 w-full px-2 text-[16px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[14px]';
 
 const FIELD_BOX: React.CSSProperties = {
   background: 'var(--surface)',
@@ -609,9 +615,17 @@ const FIELD_BOX: React.CSSProperties = {
   borderRadius: 'var(--r-1)',
 };
 
+type FuelText = (typeof fuelWords)['en'];
+type FleetText = (typeof fleetWords)['en'];
+
 function toNum(v: string): number | null {
   const n = Number.parseFloat(v);
   return v.trim() !== '' && Number.isFinite(n) ? n : null;
+}
+
+/** `2026-08-08` → `08-08` — digits read the same in both languages. */
+function dayMonth(isoDate: string): string {
+  return `${isoDate.slice(8, 10)}-${isoDate.slice(5, 7)}`;
 }
 
 function benchmarkOf(vehicleId: string): number {
@@ -648,28 +662,6 @@ function shortfallPct(e: FuelEntry): number {
 }
 
 /**
- * Provenance in the operator's words, not the enum's.
- *
- * "proposed" means nothing to a clerk at a bunk. What the row is really saying
- * is who is answerable for the number, and that is what gets written out.
- */
-const PROVENANCE_SENTENCE: Record<FuelEntry['provenance'], string> = {
-  human: 'Hand-typed from the paper bill. A person is answerable for every figure on it.',
-  proposed: 'Read by Linck off a photograph of the bill and not yet confirmed by anybody.',
-  confirmed: 'Read by Linck off a photograph and then confirmed, figure by figure, by a person.',
-  overridden: 'Read by Linck and then corrected by hand — the machine had it wrong.',
-  device: 'Posted straight from the bunk terminal. No hand touched it.',
-};
-
-const PROVENANCE_SHORT: Record<FuelEntry['provenance'], string> = {
-  human: 'Hand-typed',
-  proposed: 'Read by Linck, unconfirmed',
-  confirmed: 'Read by Linck, confirmed',
-  overridden: 'Corrected by hand',
-  device: 'From the bunk terminal',
-};
-
-/**
  * The full entry, opened over the list.
  *
  * It carries three things the row could not: the litres set against what the
@@ -678,8 +670,16 @@ const PROVENANCE_SHORT: Record<FuelEntry['provenance'], string> = {
  * figures. Machine-read values keep the hatch here exactly as they do in the
  * table — a value that has never been confirmed does not become confirmed by
  * being looked at more closely.
+ *
+ * "How entered" is provenance in the operator's words, not the enum's: who is
+ * answerable for the number. Hand-typed from the paper bill; read by Linck off
+ * a photograph and not yet confirmed; read and then confirmed figure by figure;
+ * read and then corrected by hand; or posted straight from the bunk terminal.
  */
-function FillDetail({ entry, flagged }: { entry: FuelEntry; flagged: boolean }) {
+function FillDetail({ entry }: { entry: FuelEntry }) {
+  const t = useWords(fuelWords);
+  const f = useWords(fleetWords);
+  const s = t.sheet;
   const vehicle = VEHICLES.find((v) => v.id === entry.vehicleId);
   const driver = DRIVERS.find((d) => d.id === entry.driverId);
   const cap = tankOf(entry.vehicleId);
@@ -701,129 +701,97 @@ function FillDetail({ entry, flagged }: { entry: FuelEntry; flagged: boolean }) 
 
   return (
     <>
-      <SheetSection caption="The fill">
+      <SheetSection caption={s.fill}>
         <DetailGrid>
-          <Detail label="Vehicle">
+          <Detail label={s.vehicle}>
             <Stacked primary={<IdCell>{vehicle?.displayReg}</IdCell>} secondary={vehicle?.model} />
           </Detail>
-          <Detail label="Driver">{driver ? driver.name : <Dash />}</Detail>
-          <Detail label="Filled">
+          <Detail label={s.driver}>{driver ? driver.name : <Dash />}</Detail>
+          <Detail label={s.date}>
             {formatDate(entry.date)} · {formatTime(entry.date)}
           </Detail>
-          <Detail label="Source">{entry.source === 'own_bunk' ? 'Own bunk — site stock' : 'Outside bunk — on the road'}</Detail>
-          <Detail label="Bill number">{entry.billNumber ? asRead(<IdCell>{entry.billNumber}</IdCell>) : <Dash />}</Detail>
-          <Detail label="Tank filled to the brim">{entry.fullTank ? 'Yes — nozzle cut off' : 'No — a top-up'}</Detail>
+          <Detail label={s.where}>{entry.source === 'own_bunk' ? t.ownBunk : t.outsideBunk}</Detail>
+          <Detail label={s.billNumber}>{entry.billNumber ? asRead(<IdCell>{entry.billNumber}</IdCell>) : <Dash />}</Detail>
+          <Detail label={s.fullTank}>{entry.fullTank ? s.yes : s.partFill}</Detail>
+          <Detail label={s.entered}>{t.provenance[entry.provenance]}</Detail>
         </DetailGrid>
-        {entry.source === 'outside_bunk' && entry.billNumber === null ? (
-          <Note>
-            Bought outside with no bill number recorded. It cannot be set against the vendor ledger until somebody
-            produces the paper.
-          </Note>
-        ) : null}
+        {/* Bought outside with no bill number: it cannot be set against the
+            vendor ledger until somebody produces the paper. */}
+        {entry.source === 'outside_bunk' && entry.billNumber === null ? <Note>{s.noBillNumber}</Note> : null}
       </SheetSection>
 
-      <SheetSection caption="The bill">
+      <SheetSection caption={s.bill}>
         <DetailGrid>
-          <Detail label="Litres">{asRead(<QuantityCell value={entry.litres} decimals={1} uom="L" />)}</Detail>
-          <Detail label="Rate per litre">{asRead(<MoneyCell value={entry.ratePerLitre} accounting={false} />)}</Detail>
-          <Detail label="Amount">{asRead(<MoneyCell value={entry.amount} accounting={false} />)}</Detail>
-          <Detail label="Litres × rate">
+          <Detail label={s.litres}>{asRead(<QuantityCell value={entry.litres} decimals={1} uom={f.litres} />)}</Detail>
+          <Detail label={s.rate}>{asRead(<MoneyCell value={entry.ratePerLitre} accounting={false} />)}</Detail>
+          <Detail label={s.amount}>{asRead(<MoneyCell value={entry.amount} accounting={false} />)}</Detail>
+          <Detail label={s.litresTimesRate}>
             <MoneyCell value={expected.toFixed(2)} accounting={false} />
           </Detail>
         </DetailGrid>
-        <Note>
-          {Math.abs(drift) <= 1
-            ? 'Amount reconciles with litres × rate inside a rupee — rounding at the pump, nothing more.'
-            : `${formatINR(Math.abs(drift))} ${drift > 0 ? 'over' : 'under'} litres × rate. Either the pump gave a discount nobody wrote down, or one of the three figures is wrong.`}
-        </Note>
+        {/* Inside a rupee is rounding at the pump. Beyond it, either the pump
+            gave a discount nobody wrote down, or one of the three figures is
+            wrong. */}
+        <Note>{Math.abs(drift) <= 1 ? s.amountMatches : s.amountOff(formatINR(Math.abs(drift)), drift > 0)}</Note>
       </SheetSection>
 
-      <SheetSection caption="Against the tank">
+      <SheetSection caption={s.tank}>
         {cap === null ? (
-          <Note>This vehicle is no longer on the roster, so its tank capacity cannot be looked up.</Note>
+          // The vehicle is no longer on the roster, so its tank cannot be looked up.
+          <Note>{s.tankUnknown}</Note>
         ) : (
           <>
             <ProportionBar
               height={22}
               summary={
                 over
-                  ? `${formatQty(entry.litres, 1)} litres billed into a ${formatQty(cap, 0)} litre tank — ${formatQty(
-                      entry.litres - cap,
-                      1,
-                    )} litres more than it holds.`
-                  : `${formatQty(entry.litres, 1)} litres into a ${formatQty(cap, 0)} litre tank, leaving ${formatQty(
-                      cap - entry.litres,
-                      1,
-                    )} litres of headroom.`
+                  ? s.tankOverSummary(formatQty(entry.litres, 1), formatQty(cap, 0), formatQty(entry.litres - cap, 1))
+                  : s.tankOkSummary(formatQty(entry.litres, 1), formatQty(cap, 0), formatQty(cap - entry.litres, 1))
               }
               segments={
                 over
                   ? [
-                      { label: 'Tank holds', value: cap, tone: 'var(--chart-2)' },
-                      { label: 'Beyond the tank', value: entry.litres - cap, tone: 'var(--status-critical)' },
+                      { label: s.tankPart, value: cap, tone: 'var(--chart-2)' },
+                      { label: s.extraPart, value: entry.litres - cap, tone: 'var(--status-critical)' },
                     ]
                   : [
-                      { label: 'This fill', value: entry.litres, tone: 'var(--chart-2)' },
-                      { label: 'Headroom', value: cap - entry.litres, tone: 'var(--surface-sunken)' },
+                      { label: s.thisFill, value: entry.litres, tone: 'var(--chart-2)' },
+                      { label: s.spaceLeft, value: cap - entry.litres, tone: 'var(--surface-sunken)' },
                     ]
               }
             />
-            <Note>
-              {over
-                ? `${formatQty(entry.litres - cap, 1)} litres more than the tank holds. Either two lorries were filled on one bill, or the rest left the bunk in a can.`
-                : `Sits inside the ${formatQty(cap, 0)} litre tank, so the quantity itself is at least possible.`}
-            </Note>
+            {/* Over the tank: either two lorries were filled on one bill, or
+                the rest left the bunk in a can. */}
+            <Note>{over ? s.tankOver(formatQty(entry.litres - cap, 1)) : s.tankOk(formatQty(cap, 0))}</Note>
           </>
         )}
       </SheetSection>
 
-      <SheetSection caption="The evidence">
+      <SheetSection caption={s.mileage}>
         <DetailGrid>
-          <Detail label="Odometer at the fill">
-            <QuantityCell value={entry.odometerKm} decimals={0} uom="km" />
+          <Detail label={s.kmReading}>
+            <QuantityCell value={entry.odometerKm} decimals={0} uom={f.km} />
           </Detail>
-          <Detail label="Implied mileage">
-            {entry.impliedKmpl === null ? <Dash /> : <QuantityCell value={entry.impliedKmpl} decimals={2} uom="km/l" />}
+          <Detail label={s.mileage}>
+            {entry.impliedKmpl === null ? <Dash /> : <QuantityCell value={entry.impliedKmpl} decimals={2} uom={f.kmpl} />}
           </Detail>
-          <Detail label="Benchmark for this model">
-            <QuantityCell value={benchmark} decimals={1} uom="km/l" />
+          <Detail label={s.normalForModel}>
+            <QuantityCell value={benchmark} decimals={1} uom={f.kmpl} />
           </Detail>
-          <Detail label="Against benchmark">
+          <Detail label={s.vsNormal}>
             {entry.impliedKmpl === null ? (
               <Dash />
             ) : (
               <span style={isShort(entry) ? { color: 'var(--status-attention)' } : undefined}>
-                {shortfallPct(entry) > 0 ? `${shortfallPct(entry)}% short` : `${-shortfallPct(entry)}% ahead`}
+                {shortfallPct(entry) > 0 ? s.pctLow(shortfallPct(entry)) : s.pctBetter(-shortfallPct(entry))}
               </span>
             )}
           </Detail>
         </DetailGrid>
-        <Note>
-          {entry.impliedKmpl === null
-            ? 'A part fill yields no mileage. The litres and the money are recorded; the km/l is held back rather than guessed.'
-            : isShort(entry)
-              ? 'More than 18% off benchmark. That is the threshold at which this stops being a hill and a heavy load, and starts being worth a conversation with the driver.'
-              : 'Within 18% of benchmark, which is ordinary variation between a loaded run and an empty one.'}
-        </Note>
-      </SheetSection>
-
-      <SheetSection caption="Where these figures came from">
-        <Detail label="Provenance">{PROVENANCE_SHORT[entry.provenance]}</Detail>
-        <Note>{PROVENANCE_SENTENCE[entry.provenance]}</Note>
-        {flagged ? (
-          <div className="mt-3">
-            <Note>Flagged for review. It stays on the supervisor&rsquo;s list until somebody clears it.</Note>
-          </div>
-        ) : null}
-        {/* What the footer button does, said where there is room to say it —
-            the footer bar itself is 56px and holds only the button on a phone. */}
-        <div className="mt-3 md:hidden">
-          <Note>
-            {flagged
-              ? 'Clearing the flag leaves the posting exactly as it is; only the attention rail on the row goes away.'
-              : 'Flagging puts an attention rail on the row and nothing else. It does not alter the posting.'}
-          </Note>
-        </div>
+        {/* More than 18% off benchmark is where this stops being a hill and a
+            heavy load, and starts being worth a conversation with the driver.
+            Inside it is ordinary variation between a loaded run and an empty one. */}
+        <Note>{entry.impliedKmpl === null ? s.noMileage : isShort(entry) ? s.tooLow : s.fine}</Note>
       </SheetSection>
     </>
   );
@@ -862,7 +830,7 @@ function Field({
 
   return (
     <div className="mb-2">
-      <label className="mb-1 block text-[12px]" style={{ color: 'var(--text-secondary)' }}>{label}</label>
+      <label className="mb-1 block text-[13px]" style={{ color: 'var(--text-secondary)' }}>{label}</label>
       <div className="relative flex flex-col gap-1 pl-2 md:flex-row md:items-center md:gap-3">
         {/* The field itself never turns red — the typed value has to stay
             readable while it is being corrected. The rail carries the alarm. */}
@@ -872,7 +840,7 @@ function Field({
       </div>
       <div className="min-h-[17px] pl-2 pt-1">
         {error ? (
-          <span className="text-[11px]" style={{ color: 'var(--status-critical)' }}>{error}</span>
+          <span className="text-[12px]" style={{ color: 'var(--status-critical)' }}>{error}</span>
         ) : help ? (
           <span className="font-serif text-[12px] italic" style={{ color: 'var(--text-tertiary)' }}>{help}</span>
         ) : null}
@@ -912,47 +880,49 @@ function Wrap({ on, confirmed, children }: { on: boolean; confirmed: boolean; ch
   );
 }
 
-const columns: Column<FuelEntry>[] = [
-  { key: 'date', header: 'Filled', sticky: true, width: 112, group: 'Entry', render: (e) => <Stacked primary={formatDate(e.date)} secondary={formatTime(e.date)} /> },
-  {
-    key: 'vehicle', header: 'Vehicle', type: 'id', width: 168, group: 'Entry',
-    render: (e) => {
-      const v = VEHICLES.find((x) => x.id === e.vehicleId);
-      return v ? <Stacked primary={<IdCell>{v.displayReg}</IdCell>} secondary={v.model} /> : null;
+function columnsFor(t: FuelText, f: FleetText): Column<FuelEntry>[] {
+  return [
+    { key: 'date', header: t.col.date, sticky: true, width: 112, render: (e) => <Stacked primary={formatDate(e.date)} secondary={formatTime(e.date)} /> },
+    {
+      key: 'vehicle', header: t.col.vehicle, type: 'id', width: 168,
+      render: (e) => {
+        const v = VEHICLES.find((x) => x.id === e.vehicleId);
+        return v ? <Stacked primary={<IdCell>{v.displayReg}</IdCell>} secondary={v.model} /> : null;
+      },
     },
-  },
-  { key: 'driver', header: 'Driver', width: 148, group: 'Entry', render: (e) => DRIVERS.find((d) => d.id === e.driverId)?.name ?? null },
-  { key: 'litres', header: 'Litres', unit: 'L', type: 'num', width: 90, group: 'The bill', render: (e) => <QuantityCell value={e.litres} decimals={1} /> },
-  { key: 'rate', header: 'Rate', unit: '₹', type: 'money', width: 86, group: 'The bill', render: (e) => <MoneyCell value={e.ratePerLitre} /> },
-  {
-    key: 'amount', header: 'Amount', unit: '₹', type: 'money', width: 118, group: 'The bill',
-    // Anything a machine read stays hatched until a second pair of eyes agrees.
-    render: (e) =>
-      e.provenance === 'human' || e.provenance === 'device' ? (
-        <MoneyCell value={e.amount} />
-      ) : (
-        <Provisional confirmed={e.provenance !== 'proposed'} overridden={e.provenance === 'overridden'}>
+    { key: 'driver', header: t.col.driver, width: 148, render: (e) => DRIVERS.find((d) => d.id === e.driverId)?.name ?? null },
+    { key: 'litres', header: t.col.litres, type: 'num', width: 90, render: (e) => <QuantityCell value={e.litres} decimals={1} /> },
+    { key: 'rate', header: t.col.rate, unit: '₹', type: 'money', width: 86, render: (e) => <MoneyCell value={e.ratePerLitre} /> },
+    {
+      key: 'amount', header: t.col.amount, unit: '₹', type: 'money', width: 118,
+      // Anything a machine read stays hatched until a second pair of eyes agrees.
+      render: (e) =>
+        e.provenance === 'human' || e.provenance === 'device' ? (
           <MoneyCell value={e.amount} />
-        </Provisional>
+        ) : (
+          <Provisional confirmed={e.provenance !== 'proposed'} overridden={e.provenance === 'overridden'}>
+            <MoneyCell value={e.amount} />
+          </Provisional>
+        ),
+    },
+    { key: 'odometer', header: t.col.km, type: 'num', width: 120, render: (e) => <QuantityCell value={e.odometerKm} decimals={0} /> },
+    {
+      key: 'kmpl', header: t.col.mileage, unit: f.kmpl, type: 'num', width: 130,
+      render: (e) => (
+        <Stacked
+          primary={<span style={isShort(e) ? { color: 'var(--status-attention)' } : undefined}><QuantityCell value={e.impliedKmpl} decimals={2} /></span>}
+          secondary={t.normalAt(formatQty(benchmarkOf(e.vehicleId), 1))}
+        />
       ),
-  },
-  { key: 'odometer', header: 'Odometer', unit: 'km', type: 'num', width: 106, group: 'The evidence', render: (e) => <QuantityCell value={e.odometerKm} decimals={0} /> },
-  {
-    key: 'kmpl', header: 'Implied', unit: 'km/l', type: 'num', width: 112, group: 'The evidence',
-    render: (e) => (
-      <Stacked
-        primary={<span style={isShort(e) ? { color: 'var(--status-attention)' } : undefined}><QuantityCell value={e.impliedKmpl} decimals={2} /></span>}
-        secondary={`vs ${formatQty(benchmarkOf(e.vehicleId), 1)}`}
-      />
-    ),
-  },
-  {
-    key: 'source', header: 'Source', width: 158, group: 'The evidence',
-    render: (e) => (
-      <Stacked
-        primary={e.source === 'own_bunk' ? 'Own bunk' : 'Outside bunk'}
-        secondary={e.billNumber ? <IdCell>{e.billNumber}</IdCell> : undefined}
-      />
-    ),
-  },
-];
+    },
+    {
+      key: 'source', header: t.col.where, width: 158,
+      render: (e) => (
+        <Stacked
+          primary={e.source === 'own_bunk' ? t.ownBunk : t.outsideBunk}
+          secondary={e.billNumber ? <IdCell>{e.billNumber}</IdCell> : undefined}
+        />
+      ),
+    },
+  ];
+}

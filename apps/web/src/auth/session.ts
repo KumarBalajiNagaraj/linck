@@ -50,7 +50,7 @@ export interface SessionOrganization {
   baseCurrency: string;
   timezone: string;
   fiscalYearStartMonth: number;
-  /** `block` | `review_queue` | `off` — how hard segregation of duties bites. */
+  /** `review_queue` (the default: a second signature is allowed, with a reason, and goes to review) or `hard_block` (refused). The API reads it (app/api/access.py); the web does not yet. */
   segregationEnforcement: string;
 }
 

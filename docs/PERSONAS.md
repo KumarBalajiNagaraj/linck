@@ -95,7 +95,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Insurance, road tax, insurance end date, permit dates — manually entered | Partial — the register displays them; **there is nowhere to enter them** |
 | The hard rule: invoice does not close until cross-verified | Partial — enforced in the UI, not yet in the database, and a page refresh erases it |
 | Billing | Partial — read-only; the permission exists, no screen writes |
-| Expense management | Partial — the fleet and store managers upload scanned bills (diesel, repair, tyre, spares, toll) into an expense register on mock data; validation, approval and payment are not built |
+| Expense management | Built — the fleet and store managers upload scanned bills (diesel, repair, tyre, spares, toll), or bring diesel slips in from WhatsApp; the bill is checked, approved by the director, passed by accounts and paid. On the API in live mode (LIN-20, LIN-21) |
 | Ad-hoc expenses | Not started |
 | Vehicle EMI | Not started |
 | Employee salary | Not started |
@@ -204,7 +204,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Raising an indent | Not started — he holds the permission, the button has no handler |
 | Goods receipt | Not started — though the AI queue tells him in plain words that confirming an invoice "posts a GRN into Karapakkam Workshop stores" |
 | Purchase order | Not started |
-| Expense bills | Partial — upload and register built; nobody validates a stores bill yet — who does is settled with the approval chain (LIN-14) |
+| Expense bills | Built — upload and register; a stores bill is checked by whoever holds `stores.expense.validate` (the fleet manager, in the standard roles), then approved by the director and passed and paid by accounts (LIN-14) |
 
 **Next, in order.**
 

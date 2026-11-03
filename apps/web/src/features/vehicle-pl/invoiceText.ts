@@ -33,6 +33,10 @@ export function invoiceProblemText(p: InvoiceProblem, w: InvoiceWords): string {
       const most = decimal.cmp(decimal.dec(p.free), decimal.dec(p.due)) < 0 ? p.free : p.due;
       return w.errors[p.code](inrExact(most));
     }
+    case 'seller-gstin-wrong':
+      return w.errors[p.code](p.gstin);
+    case 'server':
+      return w.errors.server(p.status);
     default:
       return w.errors[p.code];
   }

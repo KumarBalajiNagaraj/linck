@@ -98,7 +98,21 @@ export type InvoiceProblem =
   | { code: 'invoice-paid' }
   | { code: 'too-much'; free: string; due: string }
   | { code: 'invoice-gone' }
-  | { code: 'receipt-gone' };
+  | { code: 'receipt-gone' }
+  /*
+   * Live only (invoiceApi.ts): the API's own refusals this store never makes,
+   * and what can go wrong on the way to it.
+   */
+  /** The site's GST registration has a GSTIN that names no state. */
+  | { code: 'seller-gstin-wrong'; gstin: string }
+  /** What the draft bills changed under it meanwhile. */
+  | { code: 'invoice-changed' }
+  /** The session ended and could not be renewed. The sign-in screen follows. */
+  | { code: 'signed-out' }
+  /** The API did not answer at all. */
+  | { code: 'offline' }
+  /** The API answered with a fault, or with something this app cannot read. */
+  | { code: 'server'; status: number };
 
 export type InvoiceResult = { ok: true; id: string } | { ok: false; problem: InvoiceProblem };
 

@@ -112,7 +112,25 @@ export type PlProblem =
   | { code: 'name-used' | 'code-used'; name: string }
   | { code: 'gstin-set'; gstin: string }
   /** LIN-27: a sale line on a draft or issued invoice stays as billed. */
-  | { code: 'sale-invoiced'; field?: string; tripNumber: string; invoiceId: string; invoiceNumber: string | null; status: string };
+  | { code: 'sale-invoiced'; field?: string; tripNumber: string; invoiceId: string; invoiceNumber: string | null; status: string }
+  /*
+   * Live only (plApi.ts): the API's own refusals this store never makes, and
+   * what can go wrong on the way to it.
+   */
+  /** Another party in the master already has this GSTIN. */
+  | { code: 'gstin-used'; gstin: string }
+  /** The sheet, party, material or photo is not there: deleted, or another company's. */
+  | { code: 'gone' }
+  /** A photo the API would not keep. */
+  | { code: 'too-big' }
+  | { code: 'wrong-file' }
+  | { code: 'empty-file' }
+  /** The session ended and could not be renewed. The sign-in screen follows. */
+  | { code: 'signed-out' }
+  /** The API did not answer at all. */
+  | { code: 'offline' }
+  /** The API answered with a fault, or with something this app cannot read. */
+  | { code: 'server'; status: number };
 
 export type SaveResult = { ok: true; id: string } | { ok: false; problem: PlProblem };
 

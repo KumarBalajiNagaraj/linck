@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { calculateSheet, can, decimal, formatDate, purchaseFigures, saleFigures, type SheetCalc, type TripCalc } from '@linck/domain';
-import { DRIVERS, VEHICLES, type PlDieselSource, type PlEnRouteKind, type PlMaintenanceKind, type PlPartyDue, type PlSaleInvoice, type PlSheetInput, type PlSheetRecord } from '@linck/mock';
+import { DRIVERS, VEHICLES, type PlPartyDue, type PlSaleInvoice } from '@linck/mock';
 import { Button, ConfirmModal, PageHeader, Rail, Section } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
@@ -20,200 +20,37 @@ import {
   READ_KEYS,
   readable,
   sheetPath,
-  todayIso,
   usePl,
   usePlBook,
   WRITE,
   type PlProblem,
 } from './plStore.js';
+import { problemField, problemText } from './plText.js';
+import {
+  asText as s,
+  blankDiesel,
+  blankDraft,
+  blankPayment,
+  blankPurchase,
+  blankRoad,
+  blankSale,
+  blankTrip,
+  fromRecord,
+  MAINT,
+  MODES,
+  toInput,
+  type DDiesel,
+  type DPayment,
+  type DPurchase,
+  type DRoad,
+  type DSale,
+  type DTrip,
+  type Draft,
+} from './sheetDraft.js';
 import { SheetInvoices } from './SheetInvoices.js';
 import { plWords, sheetWords } from './words.js';
 
-/* ------------------------------------------------------------- the draft */
-
-let seq = 0;
-const key = () => `k${(seq += 1)}`;
-const MODES = ['UPI', 'NEFT', 'RTGS', 'IMPS', 'Cheque', 'Cash'] as const;
-const MAINT: PlMaintenanceKind[] = ['tyre_rotation', 'wheel_alignment', 'greasing', 'engine_oil', 'coolant', 'misc'];
-
-interface DDiesel { key: string; id?: string; source: PlDieselSource; litres: string; rate: string; amount: string; vendorId: string; vendor: string; billNumber: string; expenseBillId: string; fuelEntryId: string; filledAt: string | null; attachmentId: string | null }
-interface DRoad { key: string; id?: string; kind: PlEnRouteKind; maintenanceKind: string; description: string; date: string; location: string; reference: string; amount: string; attachmentId: string | null }
-interface DPurchase { key: string; id?: string; vendorId: string; location: string; materialId: string; hsnCode: string; unit: string; quantity: string; rate: string; gstBilled: boolean; gstRatePct: string; vendorGstin: string; invoiceNumber: string; invoiceDate: string; attachmentIds: string[] }
-interface DSale { key: string; id?: string; customerId: string; location: string; purchaseOrderId: string; poRef: string; materialId: string; hsnCode: string; unit: string; quantity: string; rate: string; transport: string; gstBilled: boolean; gstRatePct: string; partyGstin: string; challanNumber: string; invoiceNumber: string; poAttachmentId: string | null; dcAttachmentId: string | null }
-interface DPayment { key: string; id?: string; direction: 'in' | 'out'; partyId: string; paidOn: string; mode: (typeof MODES)[number]; reference: string; amount: string; note: string }
-interface DTrip { key: string; id?: string; tripNumber?: string; date: string; startKm: string; endKm: string; batta: string; notes: string; diesel: DDiesel[]; enRoute: DRoad[]; purchases: DPurchase[]; sales: DSale[]; payments: DPayment[]; more: boolean }
-interface Draft { siteId: string; vehicleId: string; registrationNumber: string; vehicleModel: string; driverId: string; driverName: string; driverPhone: string; startDate: string; endDate: string; startKm: string; endKm: string; batta: string; notes: string; diesel: DDiesel[]; enRoute: DRoad[]; payments: DPayment[]; trips: DTrip[] }
-
-const s = (v: string | number | null | undefined) => (v === null || v === undefined ? '' : String(v));
-const num = (v: string) => (v.trim() === '' || Number.isNaN(Number(v)) ? null : Number(v));
-const amount = (v: string) => (v.trim() === '' ? null : v.trim());
-
-const blankDiesel = (): DDiesel => ({ key: key(), source: 'typed', litres: '', rate: '', amount: '', vendorId: '', vendor: '', billNumber: '', expenseBillId: '', fuelEntryId: '', filledAt: null, attachmentId: null });
-const blankRoad = (date: string): DRoad => ({ key: key(), kind: 'toll', maintenanceKind: '', description: '', date, location: '', reference: '', amount: '', attachmentId: null });
-const blankPurchase = (date: string): DPurchase => ({ key: key(), vendorId: '', location: '', materialId: '', hsnCode: '', unit: '', quantity: '', rate: '', gstBilled: true, gstRatePct: '', vendorGstin: '', invoiceNumber: '', invoiceDate: date, attachmentIds: [] });
-const blankSale = (): DSale => ({ key: key(), customerId: '', location: '', purchaseOrderId: '', poRef: '', materialId: '', hsnCode: '', unit: '', quantity: '', rate: '', transport: '', gstBilled: true, gstRatePct: '', partyGstin: '', challanNumber: '', invoiceNumber: '', poAttachmentId: null, dcAttachmentId: null });
-const blankPayment = (direction: 'in' | 'out', date: string): DPayment => ({ key: key(), direction, partyId: '', paidOn: date, mode: 'UPI', reference: '', amount: '', note: '' });
-const blankTrip = (date: string): DTrip => ({ key: key(), date, startKm: '', endKm: '', batta: '', notes: '', diesel: [], enRoute: [], purchases: [blankPurchase(date)], sales: [blankSale()], payments: [], more: false });
-
-function fromRecord(r: PlSheetRecord): Draft {
-  const diesel = (d: PlSheetRecord['diesel'][number]): DDiesel => ({ key: key(), id: d.id, source: d.source, litres: s(d.litres), rate: s(d.rate), amount: s(d.amount), vendorId: d.vendorId ?? '', vendor: d.vendor ?? '', billNumber: d.billNumber ?? '', expenseBillId: d.expenseBillId ?? '', fuelEntryId: d.fuelEntryId ?? '', filledAt: d.filledAt ?? null, attachmentId: d.attachment?.id ?? null });
-  const road = (e: PlSheetRecord['enRoute'][number]): DRoad => ({ key: key(), id: e.id, kind: e.kind, maintenanceKind: e.maintenanceKind ?? '', description: e.description ?? '', date: e.date ?? '', location: e.location ?? '', reference: e.reference ?? '', amount: s(e.amount), attachmentId: e.attachment?.id ?? null });
-  const pay = (m: PlSheetRecord['payments'][number]): DPayment => ({ key: key(), id: m.id, direction: m.direction, partyId: m.partyId, paidOn: m.paidOn, mode: m.mode, reference: m.reference ?? '', amount: s(m.amount), note: m.note ?? '' });
-  return {
-    siteId: r.siteId,
-    vehicleId: r.vehicleId,
-    registrationNumber: r.registrationNumber,
-    vehicleModel: r.vehicleModel,
-    driverId: r.driverId ?? '',
-    driverName: r.driverName,
-    driverPhone: r.driverPhone,
-    startDate: r.startDate,
-    endDate: r.endDate ?? '',
-    startKm: s(r.startKm),
-    endKm: s(r.endKm),
-    batta: s(r.batta),
-    notes: r.notes,
-    diesel: r.diesel.map(diesel),
-    enRoute: r.enRoute.map(road),
-    payments: r.payments.map(pay),
-    trips: [...r.trips]
-      .sort((a, b) => (a.date === b.date ? a.tripNumber.localeCompare(b.tripNumber) : a.date < b.date ? -1 : 1))
-      .map((t) => ({
-        key: key(),
-        id: t.id,
-        tripNumber: t.tripNumber,
-        date: t.date,
-        startKm: s(t.startKm),
-        endKm: s(t.endKm),
-        batta: s(t.batta),
-        notes: t.notes,
-        diesel: t.diesel.map(diesel),
-        enRoute: t.enRoute.map(road),
-        payments: t.payments.map(pay),
-        more: t.diesel.length + t.enRoute.length > 0 || t.batta !== null || t.startKm !== null,
-        purchases: t.purchases.map((p) => ({ key: key(), id: p.id, vendorId: p.vendorId, location: p.location ?? '', materialId: p.materialId, hsnCode: p.hsnCode ?? '', unit: p.unit, quantity: s(p.quantity), rate: s(p.rate), gstBilled: p.gstBilled, gstRatePct: p.gstBilled ? s(p.gstRatePct) : '', vendorGstin: p.vendorGstin ?? '', invoiceNumber: p.invoiceNumber ?? '', invoiceDate: p.invoiceDate ?? '', attachmentIds: p.attachments.map((a) => a.id) })),
-        sales: t.sales.map((x) => ({ key: key(), id: x.id, customerId: x.customerId, location: x.location ?? '', purchaseOrderId: x.purchaseOrderId ?? '', poRef: x.poRef ?? '', materialId: x.materialId, hsnCode: x.hsnCode ?? '', unit: x.unit, quantity: s(x.quantity), rate: s(x.rate), transport: s(x.transport), gstBilled: x.gstBilled, gstRatePct: x.gstBilled ? s(x.gstRatePct) : '', partyGstin: x.partyGstin ?? '', challanNumber: x.challanNumber ?? '', invoiceNumber: x.invoiceNumber ?? '', poAttachmentId: x.poAttachment?.id ?? null, dcAttachmentId: x.dcAttachment?.id ?? null })),
-      })),
-  };
-}
-
-function blankDraft(grantsSite: (siteId: string) => boolean): Draft {
-  const today = todayIso();
-  const vehicle = VEHICLES.find((v) => grantsSite(v.siteId));
-  const driver = DRIVERS.find((d) => d.id === vehicle?.driverId);
-  return {
-    siteId: vehicle?.siteId ?? '',
-    vehicleId: vehicle?.id ?? '',
-    registrationNumber: vehicle?.displayReg ?? '',
-    vehicleModel: vehicle?.model ?? '',
-    driverId: driver?.id ?? '',
-    driverName: driver?.name ?? '',
-    driverPhone: driver?.phone ?? '',
-    startDate: today,
-    endDate: today,
-    startKm: '',
-    endKm: '',
-    batta: '',
-    notes: '',
-    diesel: [blankDiesel()],
-    enRoute: [],
-    payments: [],
-    trips: [blankTrip(today)],
-  };
-}
-
-function toInput(d: Draft): PlSheetInput {
-  const diesel = (x: DDiesel) => ({
-    id: x.id ?? null,
-    source: x.source,
-    ...(x.source === 'expense_bill'
-      ? { expenseBillId: x.expenseBillId || null }
-      : x.source === 'fuel_entry'
-        ? { fuelEntryId: x.fuelEntryId || null, litres: num(x.litres), amount: amount(x.amount), billNumber: x.billNumber, vendor: x.vendor, filledAt: x.filledAt }
-        : { litres: num(x.litres), rate: amount(x.rate), vendorId: x.vendorId || null, billNumber: x.billNumber, attachmentId: x.attachmentId }),
-  });
-  const road = (x: DRoad) => ({ id: x.id ?? null, kind: x.kind, maintenanceKind: x.kind === 'maintenance' ? (x.maintenanceKind as PlMaintenanceKind) || null : null, description: x.description, date: x.date || null, location: x.location, reference: x.reference, amount: x.amount.trim(), attachmentId: x.attachmentId });
-  const pay = (x: DPayment) => ({ id: x.id ?? null, direction: x.direction, partyId: x.partyId, paidOn: x.paidOn, mode: x.mode, reference: x.reference.trim().toUpperCase() || null, amount: x.amount.trim(), note: x.note });
-  return {
-    siteId: d.siteId,
-    vehicleId: d.vehicleId,
-    registrationNumber: d.registrationNumber,
-    vehicleModel: d.vehicleModel,
-    driverId: d.driverId || null,
-    driverName: d.driverName,
-    driverPhone: d.driverPhone,
-    startDate: d.startDate,
-    endDate: d.endDate || null,
-    startKm: num(d.startKm),
-    endKm: num(d.endKm),
-    batta: amount(d.batta),
-    notes: d.notes,
-    diesel: d.diesel.map(diesel),
-    enRoute: d.enRoute.map(road),
-    payments: d.payments.map(pay),
-    trips: d.trips.map((t) => ({
-      id: t.id ?? null,
-      date: t.date,
-      startKm: num(t.startKm),
-      endKm: num(t.endKm),
-      batta: amount(t.batta),
-      notes: t.notes,
-      diesel: t.diesel.map(diesel),
-      enRoute: t.enRoute.map(road),
-      payments: t.payments.map(pay),
-      purchases: t.purchases.map((p) => ({ id: p.id ?? null, vendorId: p.vendorId, location: p.location, materialId: p.materialId, hsnCode: p.hsnCode || null, unit: p.unit || null, quantity: num(p.quantity) ?? 0, rate: p.rate.trim(), gstBilled: p.gstBilled, gstRatePct: p.gstBilled ? num(p.gstRatePct) : null, vendorGstin: p.vendorGstin.trim().toUpperCase() || null, invoiceNumber: p.invoiceNumber, invoiceDate: p.invoiceDate || null, attachmentIds: p.attachmentIds })),
-      sales: t.sales.map((x) => ({ id: x.id ?? null, customerId: x.customerId, location: x.location, purchaseOrderId: x.purchaseOrderId || null, poRef: x.poRef, materialId: x.materialId, hsnCode: x.hsnCode || null, unit: x.unit || null, quantity: num(x.quantity) ?? 0, rate: x.rate.trim(), transport: amount(x.transport), gstBilled: x.gstBilled, gstRatePct: x.gstBilled ? num(x.gstRatePct) : null, partyGstin: x.partyGstin.trim().toUpperCase() || null, challanNumber: x.challanNumber, invoiceNumber: x.invoiceNumber, poAttachmentId: x.poAttachmentId, dcAttachmentId: x.dcAttachmentId })),
-    })),
-  };
-}
-
 /* ------------------------------------------------------------ the parts */
-
-type SW = (typeof sheetWords)['en'];
-
-const REASON: Record<string, keyof SW['errors']> = {
-  required: 'required',
-  'must be more than zero': 'positive',
-  'after today': 'afterToday',
-  "outside the sheet's dates": 'outsideDates',
-  'before the start date': 'beforeStart',
-  'less than the start km': 'kmOrder',
-  'required on a GST bill': 'gstin',
-  'not one of your GST rates': 'notRate',
-  'that GST rate is switched off': 'rateOff',
-  'not a customer of this trip': 'notOnTrip',
-  'not a vendor of this trip': 'notOnTrip',
-  'no longer in use': 'notInUse',
-  'required for maintenance, and only there': 'maintenanceKind',
-  'say what the maintenance was': 'describe',
-};
-
-function problemText(p: PlProblem, w: SW): string {
-  switch (p.code) {
-    case 'invalid': {
-      const k = REASON[p.reason] ?? 'other';
-      const v = w.errors[k];
-      return typeof v === 'string' ? v : w.errors.other;
-    }
-    case 'diesel-other-vehicle':
-    case 'diesel-bill-void':
-    case 'diesel-same-bill':
-    case 'diesel-bill-exists':
-      return w.errors[p.code](p.billNumber);
-    case 'diesel-bill-on-sheet':
-      return w.errors[p.code](p.billNumber, p.sheetNumber);
-    case 'diesel-linked-elsewhere':
-      return w.errors[p.code](p.sheetNumber);
-    case 'not-paid-in-full':
-      return w.errors[p.code](`₹${p.due}`);
-    case 'sale-invoiced':
-      return w.errors[p.code](p.tripNumber, p.status === 'draft' ? null : p.invoiceNumber);
-    default:
-      return w.errors[p.code];
-  }
-}
-
-const problemField = (p: PlProblem | null) => (p && 'field' in p ? p.field : null);
 
 function Field({ label, error, wide, children }: { label: string; error?: string | null; wide?: boolean; children: React.ReactNode }) {
   return (

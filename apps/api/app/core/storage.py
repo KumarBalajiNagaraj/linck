@@ -41,16 +41,13 @@ from typing import Any, BinaryIO, Protocol
 from urllib.parse import quote
 
 from botocore.exceptions import ClientError
-from fastapi import HTTPException, UploadFile, status
-from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from fastapi import UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.core.settings import Settings, get_settings
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _CHUNK = 1024 * 1024
-#: Room for the multipart framing and the form fields around the file.
-MULTIPART_MARGIN = 64 * 1024
 
 
 class UploadRefused(Exception):
@@ -364,48 +361,3 @@ def stored_file_response(
             f"inline; filename*=utf-8''{quoted}" if quoted != filename else f'inline; filename="{filename}"'
         )
     return StreamingResponse(stored.chunks, media_type=media_type, headers=out)
-
-
-class UploadSizeLimit:
-    """Refuse an upload over the cap before its body is read.
-
-    FastAPI parses a multipart body before any dependency runs, authentication
-    included, so a cap checked inside the route only bites after the whole body
-    has been spooled to disk, for anyone who can reach the URL. This sits in
-    front of the named paths: a declared Content-Length over the cap is refused
-    at once, and a body that declares none is counted as it arrives and cut off
-    at the cap. `read_capped` still checks the file itself.
-    """
-
-    def __init__(self, app: ASGIApp, paths: tuple[str, ...]) -> None:
-        self.app = app
-        self.paths = frozenset(paths)
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] not in self.paths:
-            await self.app(scope, receive, send)
-            return
-        limit = get_settings().file_max_bytes + MULTIPART_MARGIN
-        declared = dict(scope["headers"]).get(b"content-length")
-        if declared is not None and (not declared.isdigit() or int(declared) > limit):
-            refusal = JSONResponse(
-                {"detail": {"problem": {"code": "too-big"}}}, status_code=status.HTTP_413_CONTENT_TOO_LARGE
-            )
-            await refusal(scope, receive, send)
-            return
-
-        seen = 0
-
-        async def counted() -> Message:
-            nonlocal seen
-            message = await receive()
-            if message["type"] == "http.request":
-                seen += len(message.get("body", b""))
-                if seen > limit:
-                    # Raised while FastAPI reads the form; it passes HTTP errors through.
-                    raise HTTPException(
-                        status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail={"problem": {"code": "too-big"}}
-                    )
-            return message
-
-        await self.app(scope, counted, send)

@@ -32,7 +32,7 @@ from app.core.db import check_rls_posture, engine
 from app.core.limits import BodySizeLimit
 from app.core.security import session_secret_problems
 from app.core.settings import get_settings
-from app.core.storage import UploadSizeLimit, file_store_problems
+from app.core.storage import file_store_problems
 
 log = logging.getLogger("linck.api")
 
@@ -85,12 +85,11 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.environment != "production" else None,
     )
 
-    # Refuses an oversized upload before its body is parsed, which FastAPI does
-    # ahead of authentication. Added first so it is the INNERMOST middleware:
-    # inside request_id_middleware below, whose receive runs in a task group
-    # that would wrap the refusal into a generic 400.
-    app.add_middleware(UploadSizeLimit, paths=("/expenses/attachments", "/vehicle-pl/attachments"))
-    app.add_middleware(BodySizeLimit)  # Every route's body, the same way and for the same reason.
+    # Refuses a body over its route's cap before it is parsed, which FastAPI
+    # does ahead of authentication (app/core/limits.py). Added first so it is
+    # the INNERMOST middleware: inside request_id_middleware below, whose
+    # receive runs in a task group that would wrap the refusal into a generic 400.
+    app.add_middleware(BodySizeLimit)
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next) -> Response:  # type: ignore[no-untyped-def]

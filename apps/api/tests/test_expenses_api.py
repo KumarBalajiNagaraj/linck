@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
-from conftest import FakeS3, Person, Tenant
+from conftest import TOO_BIG, FakeS3, Feed, Person, Tenant
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -713,6 +713,45 @@ async def test_an_oversized_upload_is_refused_before_its_body_is_read(  # type: 
     )
     assert r.status_code == 413 and r.json() == {"detail": {"problem": {"code": "too-big"}}}
     assert not any(file_dir.rglob("*")) or all(p.is_dir() for p in file_dir.rglob("*"))
+
+
+async def test_a_json_body_declared_over_the_cap_is_refused_before_authentication(api) -> None:  # type: ignore[no-untyped-def]
+    """FastAPI reads and parses a JSON body before authentication runs too, so
+    a route that only takes a signed-in person still has its cap come first."""
+    from app.core.settings import get_settings
+
+    cap = get_settings().max_body_bytes
+    # Under the cap, a stranger's bill is read, then refused for who is sending it.
+    small = await api().post("/expenses", json={"billNumber": "BK/48213"})
+    assert small.status_code == 401
+    # Over it, refused for its size before a byte is read, let alone anyone asked who sent it.
+    oversized = Feed(b'{"billNumber":"' + b"9" * cap + b'"}')
+    r = await api().post(
+        "/expenses",
+        content=oversized,
+        headers={"Content-Type": "application/json", "Content-Length": str(len(oversized.body))},
+    )
+    assert r.status_code == 413 and r.json() == TOO_BIG
+    assert oversized.taken == 0
+    # The server is told to hang up rather than read the rest to keep the connection.
+    assert r.headers["connection"] == "close"
+    # Inside the request-id middleware, so a refusal can be traced like any other answer.
+    assert r.headers["x-request-id"]
+
+
+async def test_a_chunked_json_body_is_cut_off_at_the_cap_before_authentication(api) -> None:  # type: ignore[no-untyped-def]
+    """No Content-Length to go by: counted as it arrives, and cut off at the cap."""
+    from app.core.settings import get_settings
+
+    cap = get_settings().max_body_bytes
+    oversized = Feed(b'{"billNumber":"' + b"9" * (4 * cap) + b'"}')
+    r = await api().post("/expenses", content=oversized, headers={"Content-Type": "application/json"})
+    # The API's own 413, not the 401 a stranger gets, nor the 400 FastAPI makes of
+    # any other error met while reading a body.
+    assert r.status_code == 413 and r.json() == TOO_BIG
+    # Read as far as the chunk that crossed the cap, and no further.
+    assert cap < oversized.taken <= cap + oversized.chunk
+    assert r.headers["connection"] == "close"
 
 
 async def test_another_tenant_can_neither_fetch_a_scan_nor_attach_it(  # type: ignore[no-untyped-def]

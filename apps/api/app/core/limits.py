@@ -11,21 +11,25 @@ Either way the answer is a 413 in the shape every refusal has,
 `{"detail": {"problem": {"code": "too-big"}}}`, and the connection is then
 closed, so the rest of the body is never read at all.
 
-Every route takes the general cap, `max_body_bytes` (1 MB unless
-LINCK_MAX_BODY_BYTES says otherwise), but four whose bodies are not a screen's
-small JSON:
+Every route but the two uploads takes one cap, `max_body_bytes` (4 MiB unless
+LINCK_MAX_BODY_BYTES says otherwise), sized for the two largest bodies the API
+is sent:
 
-- The two uploads, an expense bill's scan and a trip sheet's paper: up to
-  `file_max_bytes` each, with room for the multipart framing. UploadSizeLimit
-  (app/core/storage.py) holds those paths to the same figure; they are named
-  here as well so that no route is ever uncapped.
-- A WhatsApp chat import: up to 500 claims, each with the driver's message
-  and the slip's reading. A full one measures about 0.9 MB in English and more
-  in Tamil, so it gets 4 MB rather than sitting just under the general cap.
-- Meta's WhatsApp webhook: 3 MB, the most Meta says one delivery can be.
-  Refusing a real delivery would lose a driver's slip once Meta stops
-  retrying. The body passes through untouched, so the signature is still
-  checked over the exact bytes Meta signed.
+- A WhatsApp chat import at its 500-claim limit, each claim with its slip's
+  capture record. As the browser sends one, that is 0.7 MiB with English
+  captions and 1.9 MiB with 300-letter Tamil ones, three bytes a letter. With
+  every caption in Tamil and as long as its claim key allows (the key carries
+  the caption, and is at most 1000 letters), it is 3.6 MiB:
+  tests/test_request_limits.py builds that one and sends it.
+- Meta's WhatsApp webhook: at most 3 MB a delivery, Meta says. Refusing a real
+  one would lose a driver's slip once Meta stops retrying. The body passes
+  through untouched, so the signature is still checked over the exact bytes
+  Meta signed.
+
+The two uploads, an expense bill's scan and a trip sheet's paper, have a cap
+of their own: up to `file_max_bytes` each, with room for the multipart
+framing. `read_capped` (app/core/storage.py) then holds the file itself to
+`file_max_bytes`.
 """
 
 from __future__ import annotations
@@ -37,25 +41,19 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.settings import Settings, get_settings
-from app.core.storage import MULTIPART_MARGIN
 
 TOO_BIG = {"problem": {"code": "too-big"}}
 #: The rest of a refused body is unwanted: the server closes the connection
 #: instead of reading the body to its end to keep the connection alive.
 CLOSE = {"Connection": "close"}
 
-#: The largest payload Meta's webhook documentation says it sends.
-WHATSAPP_WEBHOOK_MAX_BYTES = 3 * 1024 * 1024
+#: Room for the multipart framing and the form fields around an uploaded file.
+MULTIPART_MARGIN = 64 * 1024
 
-#: A full WhatsApp chat import (500 claims), with room for Tamil text.
-WHATSAPP_IMPORT_MAX_BYTES = 4 * 1024 * 1024
-
-#: The routes whose bodies are not small JSON, and the cap each takes instead.
+#: The routes whose bodies are not JSON, and the cap each takes instead.
 OWN_CAPS: Mapping[str, Callable[[Settings], int]] = {
     "/expenses/attachments": lambda settings: settings.file_max_bytes + MULTIPART_MARGIN,
     "/vehicle-pl/attachments": lambda settings: settings.file_max_bytes + MULTIPART_MARGIN,
-    "/webhooks/whatsapp": lambda settings: WHATSAPP_WEBHOOK_MAX_BYTES,
-    "/whatsapp/imports": lambda settings: WHATSAPP_IMPORT_MAX_BYTES,
 }
 
 
@@ -73,7 +71,8 @@ class BodySizeLimit:
     HTTPException met while it reads the body is passed through to its
     handler, so the refusal is the API's own 413 rather than a generic 400.
     That holds only while nothing between here and the route runs `receive`
-    in a task group, so this sits inside request_id_middleware (app/main.py).
+    in a task group, so this is the innermost middleware, inside
+    request_id_middleware (app/main.py).
     """
 
     def __init__(self, app: ASGIApp) -> None:

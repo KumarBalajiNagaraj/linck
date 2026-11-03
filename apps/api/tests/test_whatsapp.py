@@ -319,15 +319,21 @@ async def test_the_webhook_route_refuses_unsigned_posts_and_stores_signed_ones(
     assert fetched == [wamid]
 
 
-async def test_the_webhook_has_a_cap_of_its_own_and_still_checks_the_raw_body(configured: None) -> None:
-    """Meta's deliveries are not a screen's JSON. One over the cap every other
-    route has is taken, up to the most Meta says a delivery can be, and its
-    signature is still checked over the bytes as they came. Past its own cap a
-    body is refused before any signature is computed over it: at once if it
-    says its size, at the cap if it does not."""
-    from app.core.limits import WHATSAPP_WEBHOOK_MAX_BYTES
+#: The most Meta's webhook documentation says one delivery can be.
+META_MAX_DELIVERY = 3 * 1024 * 1024
+
+
+async def test_the_webhook_takes_a_delivery_as_big_as_meta_sends_and_checks_its_raw_body(
+    configured: None,
+) -> None:
+    """Meta's deliveries are not a screen's JSON. One as big as Meta says a
+    delivery can be fits under the cap every route has, and its signature is
+    still checked over the bytes as they came. Past the cap a body is refused
+    before any signature is computed over it: at once if it says its size, at
+    the cap if it does not."""
     from app.main import app
 
+    cap = get_settings().max_body_bytes
     words = {
         "from": "919578246168",
         "id": f"wamid.{uuid.uuid4().hex}",
@@ -335,10 +341,11 @@ async def test_the_webhook_has_a_cap_of_its_own_and_still_checks_the_raw_body(co
         "type": "text",
         "text": {"body": "432 ltr"},
     }
-    body = json.dumps({**payload(words), "padding": "x" * get_settings().max_body_bytes}).encode()
-    assert get_settings().max_body_bytes < len(body) < WHATSAPP_WEBHOOK_MAX_BYTES
+    padding = META_MAX_DELIVERY - len(json.dumps({**payload(words), "padding": ""}).encode())
+    body = json.dumps({**payload(words), "padding": "x" * padding}).encode()
+    assert len(body) == META_MAX_DELIVERY < cap
     # Unsigned, so a body that got through would be refused with a 401, not a 413.
-    too_big = b"x" * (WHATSAPP_WEBHOOK_MAX_BYTES + 1)
+    too_big = b"x" * (cap + 1)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://api") as http:
         tampered = body.replace(b"432 ltr", b"999 ltr")
@@ -360,7 +367,7 @@ async def test_the_webhook_has_a_cap_of_its_own_and_still_checks_the_raw_body(co
         undeclared = Feed(too_big * 2)
         r = await http.post("/webhooks/whatsapp", content=undeclared)
         assert r.status_code == 413 and r.json() == TOO_BIG
-        assert WHATSAPP_WEBHOOK_MAX_BYTES < undeclared.taken <= WHATSAPP_WEBHOOK_MAX_BYTES + undeclared.chunk
+        assert cap < undeclared.taken <= cap + undeclared.chunk
 
 
 async def test_the_subscription_handshake(monkeypatch: pytest.MonkeyPatch) -> None:

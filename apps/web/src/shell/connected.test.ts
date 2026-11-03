@@ -18,6 +18,11 @@ describe('which live screens say "sample data"', () => {
       '/sales/customers',
       '/sales/orders',
       '/fleet/breakdowns',
+      '/fleet/pl',
+      '/fleet/pl/new',
+      '/fleet/pl/sheets/$sheetId',
+      '/overview/pl',
+      '/finance/pl',
     ]) {
       expect(connectionOf(route), route).toBe('api');
     }
@@ -34,9 +39,9 @@ describe('which live screens say "sample data"', () => {
     expect(others).toContain('/fleet/vehicles');
     expect(others).toContain('/sales/invoices');
     expect(others).toContain('/sales/dispatch');
-    expect(connectionOf('/fleet/pl/sheets/$sheetId')).toBe('sample');
-    // LIN-27 adds invoices to the vehicle P&L; until it moves to the API it is sample data.
-    expect(connectionOf('/fleet/pl')).toBe('sample');
+    // The trip invoices are sample data until they move to the API.
+    expect(connectionOf('/fleet/pl/invoices')).toBe('sample');
+    expect(connectionOf('/finance/invoices/$invoiceId')).toBe('sample');
   });
 
   it('says so in both languages', () => {

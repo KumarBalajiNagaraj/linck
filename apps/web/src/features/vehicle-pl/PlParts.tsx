@@ -1,9 +1,10 @@
 import type { PlTotals } from '@linck/domain';
-import { Chip, KpiTile, TileRow } from '@linck/ui';
+import { Chip, EmptyState, KpiTile, TileRow } from '@linck/ui';
 import { useInrCompact } from '../../i18n/format.js';
 import { useWords } from '../../i18n/words.js';
-import { todayIso } from './plStore.js';
-import { plWords } from './words.js';
+import { todayIso, type PlProblem } from './plStore.js';
+import { problemText } from './plText.js';
+import { plWords, sheetWords } from './words.js';
 
 /** The form controls' look, as the fuel entry screen has it: 44px on touch, 34px with a mouse. */
 export const CTRL = 'h-11 w-full min-w-0 px-2 text-[16px] [@media(hover:hover)]:h-[34px] [@media(hover:hover)]:text-[14px]';
@@ -178,4 +179,15 @@ export function Signed({ value, strong, compact }: { value: string; strong?: boo
       {loss ? `(${text})` : text}
     </span>
   );
+}
+
+/**
+ * Live only: the list or report is on its way, or could not be read, and
+ * says why with a way to ask again. The demo's are always there.
+ */
+export function NotRead({ read }: { read: { state: 'loading' | 'ready' | 'failed'; problem: PlProblem | null; retry: () => void } }) {
+  const w = useWords(plWords);
+  const sw = useWords(sheetWords);
+  if (read.state === 'loading') return <EmptyState fact={w.loading} />;
+  return <EmptyState fact={w.failed} {...(read.problem ? { because: problemText(read.problem, sw) } : {})} action={{ label: w.retry, onClick: read.retry }} />;
 }

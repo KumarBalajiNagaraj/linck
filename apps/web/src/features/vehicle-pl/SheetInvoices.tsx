@@ -3,6 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { can, decimal, formatDate, saleFigures } from '@linck/domain';
 import type { PlInvoiceTripRow, PlSaleInvoice, PlSheetRecord } from '@linck/mock';
 import { Button, Section } from '@linck/ui';
+import { LIVE } from '../../auth/api.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { INVOICE_READ, INVOICE_WRITE, invoicePath, liveInvoices, tripsToInvoice, useInvoices, useInvoiceWorld } from './invoiceStore.js';
@@ -30,7 +31,12 @@ interface Row {
  * trips at a time — to make the invoice from. The sheet is at one site, so
  * every pick here bills under one GSTIN.
  */
-export function SheetInvoices({ record }: { record: PlSheetRecord }) {
+export function SheetInvoices(props: { record: PlSheetRecord; invoiced: Map<string, PlSaleInvoice> }) {
+  // Until the invoices are on the API too (the next change), live shows none rather than the demo's.
+  return LIVE ? null : <DemoSheetInvoices record={props.record} />;
+}
+
+function DemoSheetInvoices({ record }: { record: PlSheetRecord }) {
   const w = useWords(invoiceWords);
   const { persona } = useApp();
   const navigate = useNavigate();

@@ -1,31 +1,35 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { calculateSheet, can, decimal, formatDate, purchaseFigures, saleFigures, type SheetCalc, type TripCalc } from '@linck/domain';
 import { DRIVERS, VEHICLES, type PlPartyDue, type PlSaleInvoice } from '@linck/mock';
-import { Button, ConfirmModal, PageHeader, Rail, Section } from '@linck/ui';
+import { Button, ConfirmModal, EmptyState, PageHeader, Rail, Section } from '@linck/ui';
+import { LIVE } from '../../auth/api.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
-import { useExpenses } from '../expenses/expenseStore.js';
-import { invoicePath, liveInvoices, useInvoices } from './invoiceStore.js';
+import { spacedRegistration, useSites, vehicleRef } from '../expenses/bills.js';
+import { invoicePath } from './invoiceStore.js';
 import { invoiceWords } from './invoiceWords.js';
 import { CTRL, FIELD_BOX, Signed } from './PlParts.js';
-import {
-  CLOSE,
-  dieselBillsFor,
-  draftDomain,
-  fuelEntriesFor,
-  mastersOf,
-  ordersFor,
-  LIST_PATH,
-  READ_KEYS,
-  readable,
-  sheetPath,
-  usePl,
-  usePlBook,
-  WRITE,
-  type PlProblem,
-} from './plStore.js';
+import type { Masters } from './plApi.js';
+import { CLOSE, draftDomain, LIST_PATH, READ_KEYS, readable, sheetPath, WRITE, type PlProblem } from './plStore.js';
 import { problemField, problemText } from './plText.js';
+import {
+  FUEL_ENTRIES_OFFERED,
+  SheetBeingEdited,
+  useCloseTrip,
+  useDeleteSheet,
+  useDieselBills,
+  useFuelEntries,
+  useMasterMoves,
+  useMasterRefusal,
+  useOrdersFor,
+  usePhotos,
+  usePlMasters,
+  useSaveSheet,
+  useSheet,
+  useWritableSites,
+  type SheetView,
+} from './sheets.js';
 import {
   asText as s,
   blankDiesel,
@@ -39,6 +43,7 @@ import {
   MAINT,
   MODES,
   toInput,
+  typedBlankDraft,
   type DDiesel,
   type DPayment,
   type DPurchase,
@@ -52,7 +57,8 @@ import { plWords, sheetWords } from './words.js';
 
 /* ------------------------------------------------------------ the parts */
 
-function Field({ label, error, wide, children }: { label: string; error?: string | null; wide?: boolean; children: React.ReactNode }) {
+/** A labelled field. `echo` reads back what was typed (live: a vehicle number, as it will be kept). */
+function Field({ label, error, wide, echo, children }: { label: string; error?: string | null; wide?: boolean; echo?: string | null; children: React.ReactNode }) {
   return (
     <label className={`relative flex min-w-0 flex-col gap-1 ${wide ? 'col-span-2' : ''}`}>
       <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
@@ -65,6 +71,10 @@ function Field({ label, error, wide, children }: { label: string; error?: string
       {error ? (
         <span className="text-[12px]" style={{ color: 'var(--status-critical)' }}>
           {error}
+        </span>
+      ) : echo ? (
+        <span className="num text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+          {echo}
         </span>
       ) : null}
     </label>
@@ -84,7 +94,10 @@ function Txt({ ro, value, onChange, list, inputMode, placeholder, type = 'text' 
   return <input type={type} className={CTRL} style={FIELD_BOX} value={value} list={list} inputMode={inputMode} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />;
 }
 
-function Sel({ ro, value, onChange, options, placeholder, add }: { ro: boolean; value: string; onChange: (v: string) => void; options: { value: string; label: string; disabled?: boolean }[]; placeholder?: string; add?: { label: string; onAdd: (name: string) => string | null } }) {
+/** Adding to a master from a line: the demo's id at once; live, once the API has answered (null: refused). */
+type Adder = (name: string) => string | null | Promise<string | null>;
+
+function Sel({ ro, value, onChange, options, placeholder, add }: { ro: boolean; value: string; onChange: (v: string) => void; options: { value: string; label: string; disabled?: boolean }[]; placeholder?: string; add?: { label: string; onAdd: Adder } }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const sw = useWords(sheetWords);
@@ -97,7 +110,8 @@ function Sel({ ro, value, onChange, options, placeholder, add }: { ro: boolean; 
           variant="primary"
           onClick={() => {
             const made = name.trim() ? add.onAdd(name.trim()) : null;
-            if (made) onChange(made);
+            if (made instanceof Promise) void made.then((id) => id && onChange(id));
+            else if (made) onChange(made);
             setAdding(false);
             setName('');
           }}
@@ -165,21 +179,10 @@ function Figure({ label, value, strong }: { label: string; value: string; strong
 
 function Photo({ ro, label, ids, onChange, multiple }: { ro: boolean; label: string; ids: string[]; onChange: (ids: string[]) => void; multiple?: boolean }) {
   const sw = useWords(sheetWords);
-  const files = usePl((st) => st.files);
-  const sheets = usePl((st) => st.sheets);
-  const known = useMemo(() => {
-    const all = new Map(Object.entries(files));
-    for (const sh of sheets) {
-      for (const d of [...sh.diesel, ...sh.trips.flatMap((t) => t.diesel)]) if (d.attachment) all.set(d.attachment.id, d.attachment);
-      for (const e of [...sh.enRoute, ...sh.trips.flatMap((t) => t.enRoute)]) if (e.attachment) all.set(e.attachment.id, e.attachment);
-      for (const t of sh.trips) {
-        for (const p of t.purchases) for (const a of p.attachments) all.set(a.id, a);
-        for (const x of t.sales) for (const a of [x.poAttachment, x.dcAttachment]) if (a) all.set(a.id, a);
-      }
-    }
-    return all;
-  }, [files, sheets]);
-  const upload = usePl((st) => st.upload);
+  const { known, upload } = usePhotos();
+  /** Live only: a photo on its way to the API, or why it was refused. */
+  const [sending, setSending] = useState(false);
+  const [refused, setRefused] = useState<PlProblem | null>(null);
   const names = ids.map((id) => known.get(id)).filter((a): a is NonNullable<typeof a> => Boolean(a));
   return (
     <span className="flex min-w-0 flex-col gap-1">
@@ -204,13 +207,27 @@ function Photo({ ro, label, ids, onChange, multiple }: { ro: boolean; label: str
                 const file = e.target.files?.[0];
                 if (!file) return;
                 const a = upload(file);
-                onChange(multiple ? [...ids, a.id] : [a.id]);
+                if (a instanceof Promise) {
+                  setSending(true);
+                  setRefused(null);
+                  void a.then((got) => {
+                    setSending(false);
+                    if ('code' in got) setRefused(got);
+                    else onChange(multiple ? [...ids, got.id] : [got.id]);
+                  });
+                } else onChange(multiple ? [...ids, a.id] : [a.id]);
                 e.target.value = '';
               }}
             />
           </label>
         )}
+        {sending && <span style={{ color: 'var(--text-secondary)' }}>{sw.photo.sending}</span>}
       </span>
+      {refused && (
+        <span className="text-[12px]" role="alert" style={{ color: 'var(--status-critical)' }}>
+          {problemText(refused, sw)}
+        </span>
+      )}
     </span>
   );
 }
@@ -234,34 +251,74 @@ const money = (v: string | number | null | undefined) => decimal.toFixed(decimal
 
 /* -------------------------------------------------------------- the page */
 
+/**
+ * Fleet → Vehicle P&L → a trip sheet (LIN-22): one vehicle and driver from a
+ * start date to an end date, its trips, every line on them, and the P&L box
+ * that works the profit out as the sheet is typed.
+ *
+ * The sheet comes from sheets.ts: the demo store, or live the API. Live, the
+ * page waits for the sheet and the masters its pickers offer; a sheet that is
+ * not there, or not this person's to read, is not found, as in the demo.
+ */
 export function SheetPage() {
+  const params = useParams({ strict: false }) as { sheetId?: string };
+  const { persona } = useApp();
+  const sheet = useSheet(params.sheetId);
+  const masters = usePlMasters();
+  const view = sheet.data;
+  if (params.sheetId && sheet.state !== 'ready') return <NotRead read={sheet} />;
+  if (params.sheetId && !view) return <NotFound />;
+  if (view && !readable(persona.grants, READ_KEYS, view.record.siteId)) return <NotFound />;
+  if (masters.state !== 'ready') return <NotRead read={masters} />;
+  return (
+    <SheetBeingEdited.Provider value={view}>
+      <SheetForm key={params.sheetId ?? 'new'} view={view} masters={masters.data} />
+    </SheetBeingEdited.Provider>
+  );
+}
+
+const NO_INVOICES = new Map<string, PlSaleInvoice>();
+
+function SheetForm({ view, masters }: { view: SheetView | null; masters: Masters }) {
   const w = useWords(sheetWords);
   const pw = useWords(plWords);
   const navigate = useNavigate();
-  const params = useParams({ strict: false }) as { sheetId?: string };
-  const { persona } = useApp();
-  const book = usePlBook();
-  const bills = useExpenses((st) => st.bills);
-  const store = usePl();
-  const masters = mastersOf(store);
-  const allInvoices = useInvoices((st) => st.invoices);
-  const invoiced = useMemo(() => liveInvoices(allInvoices), [allInvoices]);
-  const record = params.sheetId ? (book.byId.get(params.sheetId) ?? null) : null;
+  const { persona, siteScope } = useApp();
+  const sites = useSites();
+  const writable = useWritableSites();
+  const moves = useMasterMoves();
+  const saving = useSaveSheet();
+  const deleting = useDeleteSheet();
+  const record = view?.record ?? null;
+  const invoiced = view?.invoiced ?? NO_INVOICES;
   const writeAt = (siteId: string) => can(persona.grants, WRITE, { siteId });
-  const [editing, setEditing] = useState(!params.sheetId);
-  const [draft, setDraft] = useState<Draft>(() => (record ? fromRecord(record) : blankDraft(writeAt)));
+  const [editing, setEditing] = useState(!record);
+  const [draft, setDraft] = useState<Draft>(() =>
+    record ? fromRecord(record) : LIVE ? typedBlankDraft(writable.find((x) => x.id === siteScope)?.id ?? writable[0]?.id ?? '') : blankDraft(writeAt),
+  );
   const [problem, setProblem] = useState<PlProblem | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [closeProblem, setCloseProblem] = useState<string | null>(null);
   const ro = !editing;
+  const { bills } = useDieselBills(draft.vehicleId);
+  /** Live: why a party, material, rate or GSTIN added from a line was refused. */
+  const masterRefusal = useMasterRefusal((st) => st.problem);
+  const clearMasterRefusal = useMasterRefusal((st) => st.set);
+  useEffect(() => () => clearMasterRefusal(null), [clearMasterRefusal]);
+
+  // Live, a sheet read again (someone else saved it) is shown as it now is, unless it is being edited.
+  const shownAt = useRef(record?.updatedAt);
+  useEffect(() => {
+    if (!LIVE || editing || !record || shownAt.current === record.updatedAt) return;
+    shownAt.current = record.updatedAt;
+    setDraft(fromRecord(record));
+  }, [record, editing]);
 
   const input = useMemo(() => toInput(draft), [draft]);
   const calc: SheetCalc = useMemo(
-    () => (editing || !record ? calculateSheet(draftDomain(input, record, store.materials, book.bills)) : book.calcs.get(record.id)!),
-    [editing, record, input, store.materials, book.bills, book.calcs],
+    () => (editing || !view ? calculateSheet(draftDomain(input, record, masters.materials, bills)) : view.calc),
+    [editing, view, record, input, masters.materials, bills],
   );
-  if (params.sheetId && !record) return <NotFound />;
-  if (record && !readable(persona.grants, READ_KEYS, record.siteId)) return <NotFound />;
 
   const canWrite = writeAt(draft.siteId || record?.siteId || '');
   const canClose = record ? can(persona.grants, CLOSE, { siteId: record.siteId }) : false;
@@ -275,28 +332,29 @@ export function SheetPage() {
   const partyOptions = (role: 'customer' | 'vendor') => (role === 'customer' ? masters.customers : masters.vendors).map((p) => ({ value: p.id, label: p.name }));
   const rateOptions = (current: string) =>
     masters.gstRates.filter((r) => r.active || String(r.ratePct) === current).map((r) => ({ value: String(r.ratePct), label: `${r.ratePct}%` }));
-  const addParty = (role: 'customer' | 'vendor') => (name: string) => store.addParty({ role, name }).id;
+  const addParty = (role: 'customer' | 'vendor') => (name: string) => moves.addParty(role, name, draft.siteId);
   const addRate = (text: string) => {
     const n = Number(text.replace('%', ''));
     if (!Number.isFinite(n) || n < 0 || n > 100) return null;
-    return String(store.addGstRate(n).ratePct);
+    return moves.addRate(n);
   };
 
-  const save = () => {
+  const save = async () => {
     setProblem(null);
-    const result = store.save(input, record?.id ?? null, { name: persona.name, grants: persona.grants }, bills);
+    clearMasterRefusal(null);
+    // Live, a vehicle is kept as its registration, written as people write it: TN 38 AL 1050.
+    const sent = LIVE ? { ...input, registrationNumber: spacedRegistration(input.vehicleId) || input.registrationNumber.trim() } : input;
+    const result = await saving.run({ input: sent, record });
     if (!result.ok) {
       setProblem(result.problem);
       return;
     }
-    // Places and GSTINs typed on lines go into the masters as well (the workbook's "addable").
-    for (const t of input.trips) {
-      for (const p of t.purchases) if (p.location) store.addLocation(p.vendorId, p.location);
-      for (const x of t.sales) if (x.location) store.addLocation(x.customerId, x.location);
-    }
     setEditing(false);
     if (!record) void navigate({ to: sheetPath(result.id) });
-    else setDraft(fromRecord(usePl.getState().sheets.find((x) => x.id === record.id)!));
+    else {
+      shownAt.current = result.record.updatedAt;
+      setDraft(fromRecord(result.record));
+    }
   };
 
   const title = record ? w.sheet(record.sheetNumber) : w.newSheet;
@@ -326,47 +384,80 @@ export function SheetPage() {
         <div className="min-w-0">
           <Section caption={w.section.vehicle}>
             <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 py-3 md:grid-cols-4 md:px-6">
-              <Field label={w.vehicle.vehicle} error={err('vehicleId') ?? err('siteId')} wide>
-                <Sel
-                  ro={ro || Boolean(record)}
-                  value={draft.vehicleId}
-                  options={vehicles}
-                  placeholder={w.vehicle.pick}
-                  onChange={(id) => {
-                    const v = VEHICLES.find((x) => x.id === id);
-                    const d = DRIVERS.find((x) => x.id === v?.driverId);
-                    set({ vehicleId: id, siteId: v?.siteId ?? '', registrationNumber: v?.displayReg ?? '', vehicleModel: v?.model ?? '', driverId: d?.id ?? draft.driverId, driverName: d?.name ?? draft.driverName, driverPhone: d?.phone ?? draft.driverPhone });
-                  }}
-                />
-              </Field>
-              <Field label={w.vehicle.model}>
-                <Shown value={draft.vehicleModel} />
-              </Field>
-              <Field label={w.vehicle.driver}>
-                <Sel
-                  ro={ro}
-                  value={draft.driverId}
-                  options={drivers}
-                  placeholder={w.vehicle.pickDriver}
-                  onChange={(id) => {
-                    const d = DRIVERS.find((x) => x.id === id);
-                    set({ driverId: id, driverName: d?.name ?? '', driverPhone: d?.phone ?? '' });
-                  }}
-                />
-              </Field>
-              <Field label={w.vehicle.phone}>
-                <Shown value={draft.driverPhone} />
-              </Field>
+              {LIVE ? (
+                <>
+                  <Field
+                    label={w.vehicle.vehicle}
+                    error={err('vehicleId') ?? err('registrationNumber')}
+                    echo={!ro && !record && draft.vehicleId ? w.vehicle.readAs(spacedRegistration(draft.vehicleId)) : null}
+                    wide
+                  >
+                    <Txt ro={ro || Boolean(record)} value={draft.registrationNumber} placeholder="TN 38 AL 1050" onChange={(v) => set({ registrationNumber: v.toUpperCase(), vehicleId: vehicleRef(v) ?? '' })} />
+                  </Field>
+                  <Field label={w.vehicle.site} error={err('siteId')}>
+                    <Sel
+                      ro={ro || Boolean(record)}
+                      value={draft.siteId}
+                      options={(ro || record ? sites : writable).map((x) => ({ value: x.id, label: x.name }))}
+                      placeholder={w.vehicle.pickSite}
+                      onChange={(siteId) => set({ siteId })}
+                    />
+                  </Field>
+                  <Field label={w.vehicle.model} error={err('vehicleModel')}>
+                    <Txt ro={ro} value={draft.vehicleModel} onChange={(v) => set({ vehicleModel: v })} />
+                  </Field>
+                  <Field label={w.vehicle.driver} error={err('driverName')}>
+                    <Txt ro={ro} value={draft.driverName} onChange={(v) => set({ driverName: v })} />
+                  </Field>
+                  <Field label={w.vehicle.phone} error={err('driverPhone')}>
+                    <Txt ro={ro} inputMode="numeric" value={draft.driverPhone} onChange={(v) => set({ driverPhone: v })} />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label={w.vehicle.vehicle} error={err('vehicleId') ?? err('siteId')} wide>
+                    <Sel
+                      ro={ro || Boolean(record)}
+                      value={draft.vehicleId}
+                      options={vehicles}
+                      placeholder={w.vehicle.pick}
+                      onChange={(id) => {
+                        const v = VEHICLES.find((x) => x.id === id);
+                        const d = DRIVERS.find((x) => x.id === v?.driverId);
+                        set({ vehicleId: id, siteId: v?.siteId ?? '', registrationNumber: v?.displayReg ?? '', vehicleModel: v?.model ?? '', driverId: d?.id ?? draft.driverId, driverName: d?.name ?? draft.driverName, driverPhone: d?.phone ?? draft.driverPhone });
+                      }}
+                    />
+                  </Field>
+                  <Field label={w.vehicle.model}>
+                    <Shown value={draft.vehicleModel} />
+                  </Field>
+                  <Field label={w.vehicle.driver}>
+                    <Sel
+                      ro={ro}
+                      value={draft.driverId}
+                      options={drivers}
+                      placeholder={w.vehicle.pickDriver}
+                      onChange={(id) => {
+                        const d = DRIVERS.find((x) => x.id === id);
+                        set({ driverId: id, driverName: d?.name ?? '', driverPhone: d?.phone ?? '' });
+                      }}
+                    />
+                  </Field>
+                  <Field label={w.vehicle.phone}>
+                    <Shown value={draft.driverPhone} />
+                  </Field>
+                </>
+              )}
               <Field label={w.vehicle.start} error={err('startDate')}>
                 <Txt ro={ro} type="date" value={draft.startDate} onChange={(v) => set({ startDate: v })} />
               </Field>
               <Field label={w.vehicle.end} error={err('endDate')}>
                 <Txt ro={ro} type="date" value={draft.endDate} onChange={(v) => set({ endDate: v })} />
               </Field>
-              <Field label={w.vehicle.batta}>
+              <Field label={w.vehicle.batta} error={err('batta')}>
                 <Txt ro={ro} inputMode="decimal" value={draft.batta} onChange={(v) => set({ batta: v })} />
               </Field>
-              <Field label={w.vehicle.startKm}>
+              <Field label={w.vehicle.startKm} error={err('startKm')}>
                 <Txt ro={ro} inputMode="decimal" value={draft.startKm} onChange={(v) => set({ startKm: v })} />
               </Field>
               <Field label={w.vehicle.endKm} error={err('endKm')}>
@@ -435,7 +526,7 @@ export function SheetPage() {
             </div>
           </Section>
 
-          {record && !editing && <SheetInvoices record={record} />}
+          {record && !editing && <SheetInvoices record={record} invoiced={invoiced} />}
 
           <Section caption={w.section.sheetMoney}>
             <div className="px-4 md:px-6">
@@ -461,6 +552,10 @@ export function SheetPage() {
           <span className="min-w-0 flex-1 text-[13px]">
             {problem ? (
               <span style={{ color: 'var(--status-critical)' }}>{problemField(problem) && problem.code !== 'sale-invoiced' ? w.errors.fix : problemText(problem, w)}</span>
+            ) : masterRefusal ? (
+              <span role="alert" style={{ color: 'var(--status-critical)' }}>
+                {problemText(masterRefusal, w)}
+              </span>
             ) : (
               <span style={{ color: 'var(--text-secondary)' }}>
                 {calc.pl.net.startsWith('-') ? w.box.loss : w.box.profit} <Signed value={calc.pl.net} strong />
@@ -478,8 +573,8 @@ export function SheetPage() {
               {w.cancel}
             </Button>
           )}
-          <Button variant="primary" onClick={save}>
-            {w.save}
+          <Button variant="primary" disabled={saving.busy} onClick={() => void save()}>
+            {saving.busy ? w.saving : w.save}
           </Button>
         </div>
       )}
@@ -489,13 +584,14 @@ export function SheetPage() {
           open={confirming}
           onClose={() => setConfirming(false)}
           onConfirm={() => {
-            const result = store.remove(record.id, { name: persona.name, grants: persona.grants });
-            if (result.ok) void navigate({ to: LIST_PATH });
-            else setProblem(result.problem);
-            setConfirming(false);
+            void deleting.run(record).then((refused) => {
+              if (!refused) void navigate({ to: LIST_PATH });
+              else setProblem(refused);
+              setConfirming(false);
+            });
           }}
           title={w.confirm.title}
-          consequence={w.confirm.consequence(record.sheetNumber, record.trips.length, `₹${money(book.calcs.get(record.id)?.pl.net)}`)}
+          consequence={w.confirm.consequence(record.sheetNumber, record.trips.length, `₹${money(view?.calc.pl.net)}`)}
           confirmLabel={w.confirm.yes}
           backLabel={w.confirm.back}
           destructive
@@ -514,22 +610,33 @@ function NotFound() {
   );
 }
 
+/**
+ * Live only: the sheet, or the masters its pickers offer, on their way, or
+ * not read. A sheet the API says is not there, or not this person's, is not
+ * found, as the demo says of one.
+ */
+function NotRead({ read }: { read: { state: 'loading' | 'ready' | 'failed'; problem: PlProblem | null; retry: () => void } }) {
+  const w = useWords(sheetWords);
+  if (read.state === 'failed' && (read.problem?.code === 'gone' || read.problem?.code === 'needs-permission')) return <NotFound />;
+  if (read.state === 'loading') return <EmptyState fact={w.loading} />;
+  return <EmptyState fact={w.failed} {...(read.problem ? { because: problemText(read.problem, w) } : {})} action={{ label: w.retry, onClick: read.retry }} />;
+}
+
 /* ------------------------------------------------------------ the lines */
 
 type Err = (path: string) => string | null;
 
 function DieselLines({ ro, where, lines, calc, onChange, err, draft, recordId }: { ro: boolean; where: string; lines: DDiesel[]; calc: SheetCalc['diesel']; onChange: (l: DDiesel[]) => void; err: Err; draft: Draft; recordId: string | null }) {
   const w = useWords(sheetWords);
-  const book = usePlBook();
-  const bills = useExpenses((st) => st.bills);
-  const store = usePl();
-  const masters = mastersOf(store);
-  const billOptions = dieselBillsFor(book, bills, draft.vehicleId).map((b) => ({
+  const masters = usePlMasters().data;
+  const moves = useMasterMoves();
+  const fuelEntries = useFuelEntries(draft.vehicleId);
+  const billOptions = useDieselBills(draft.vehicleId).options.map((b) => ({
     value: b.id,
     label: `${b.billNumber} · ${formatDate(b.billDate)} · ₹${b.amount}${b.linkedSheet && b.linkedSheet.sheetId !== recordId ? ` · ${w.diesel.onSheet(b.linkedSheet.sheetNumber)}` : ''}`,
     disabled: Boolean(b.linkedSheet && b.linkedSheet.sheetId !== recordId),
   }));
-  const fuelOptions = fuelEntriesFor(book, draft.vehicleId).map(({ entry, linkedSheet }) => ({
+  const fuelOptions = fuelEntries.map(({ entry, linkedSheet }) => ({
     value: entry.id,
     label: `${formatDate(entry.date)} · ${w.litres(entry.litres)} · ₹${entry.amount}${linkedSheet ? ` · ${w.diesel.onSheet(linkedSheet)}` : ''}`,
     disabled: Boolean(linkedSheet) && !lines.some((l) => l.fuelEntryId === entry.id),
@@ -550,7 +657,8 @@ function DieselLines({ ro, where, lines, calc, onChange, err, draft, recordId }:
                 options={[
                   { value: 'typed', label: w.diesel.typed },
                   { value: 'expense_bill', label: w.diesel.bill },
-                  { value: 'fuel_entry', label: w.diesel.fuel },
+                  // Live, the fuel register is not on the API: no fuel entry to link.
+                  ...(FUEL_ENTRIES_OFFERED || l.source === 'fuel_entry' ? [{ value: 'fuel_entry' as const, label: w.diesel.fuel }] : []),
                 ]}
                 onChange={(source) => put(i, { ...blankDiesel(), key: l.key, source })}
               />
@@ -569,11 +677,11 @@ function DieselLines({ ro, where, lines, calc, onChange, err, draft, recordId }:
                   <Txt ro={ro} inputMode="decimal" value={l.rate} onChange={(v) => put(i, { rate: v })} />
                 </Field>
                 <Figure label={w.diesel.amount} value={f?.amount ?? '0.00'} />
-                <Field label={w.diesel.billNo}>
+                <Field label={w.diesel.billNo} error={err(`${at}.billNumber`)}>
                   <Txt ro={ro} value={l.billNumber} onChange={(v) => put(i, { billNumber: v })} />
                 </Field>
-                <Field label={w.diesel.vendor} wide>
-                  <Sel ro={ro} value={l.vendorId} options={bunks} placeholder={w.diesel.pickVendor} onChange={(v) => put(i, { vendorId: v })} add={{ label: w.adding.vendor, onAdd: (name) => store.addParty({ role: 'vendor', name }).id }} />
+                <Field label={w.diesel.vendor} error={err(`${at}.vendorId`)} wide>
+                  <Sel ro={ro} value={l.vendorId} options={bunks} placeholder={w.diesel.pickVendor} onChange={(v) => put(i, { vendorId: v })} add={{ label: w.adding.vendor, onAdd: (name) => moves.addParty('vendor', name, draft.siteId) }} />
                 </Field>
                 <div className="col-span-2">
                   <Photo ro={ro} label={w.bought.photo} ids={l.attachmentId ? [l.attachmentId] : []} onChange={(ids) => put(i, { attachmentId: ids[0] ?? null })} />
@@ -603,7 +711,7 @@ function DieselLines({ ro, where, lines, calc, onChange, err, draft, recordId }:
                     options={fuelOptions}
                     placeholder={fuelOptions.length ? w.diesel.pickFuel : w.diesel.noFuel}
                     onChange={(v) => {
-                      const e = fuelEntriesFor(book, draft.vehicleId).find((x) => x.entry.id === v)?.entry;
+                      const e = fuelEntries.find((x) => x.entry.id === v)?.entry;
                       put(i, { fuelEntryId: v, litres: s(e?.litres), amount: s(e?.amount), billNumber: e?.billNumber ?? '', vendor: e?.source === 'own_bunk' ? 'Own bunk' : 'Outside bunk', filledAt: e?.date ?? null });
                     }}
                   />
@@ -649,17 +757,17 @@ function RoadLines({ ro, where, lines, onChange, err, date }: { ro: boolean; whe
                 <Txt ro={ro} value={l.description} onChange={(v) => put(i, { description: v })} />
               </Field>
             )}
-            <Field label={w.road.date}>
+            <Field label={w.road.date} error={err(`${at}.date`)}>
               <Txt ro={ro} type="date" value={l.date || date} onChange={(v) => put(i, { date: v })} />
             </Field>
             <Field label={w.road.amount} error={err(`${at}.amount`)}>
               <Txt ro={ro} inputMode="decimal" value={l.amount} onChange={(v) => put(i, { amount: v })} />
             </Field>
-            <Field label={w.road.location}>
+            <Field label={w.road.location} error={err(`${at}.location`)}>
               <Txt ro={ro} value={l.location} onChange={(v) => put(i, { location: v })} />
             </Field>
             {l.kind === 'toll' && (
-              <Field label={w.road.reference}>
+              <Field label={w.road.reference} error={err(`${at}.reference`)}>
                 <Txt ro={ro} value={l.reference} onChange={(v) => put(i, { reference: v })} />
               </Field>
             )}
@@ -702,7 +810,7 @@ function PaymentLines({ ro, where, lines, onChange, err, parties, date }: { ro: 
             <Field label={w.money.mode}>
               <Sel ro={ro} value={l.mode} options={MODES.map((m) => ({ value: m, label: w.modes[m] }))} onChange={(v) => put(i, { mode: v as DPayment['mode'] })} />
             </Field>
-            <Field label={w.money.reference} error={err(at)}>
+            <Field label={w.money.reference} error={err(at) ?? err(`${at}.reference`)}>
               <Txt ro={ro} value={l.reference} onChange={(v) => put(i, { reference: v })} />
             </Field>
           </LineFrame>
@@ -721,7 +829,7 @@ function PaymentLines({ ro, where, lines, onChange, err, parties, date }: { ro: 
 function DuesTable({ dues, paidExtra, closing, onClose, closedBy }: { dues: { partyId: string; role: string; billed: string; settled: string; due: string; status: PlPartyDue['status'] }[]; paidExtra?: { partyId: string }[]; closing?: boolean; onClose?: (partyId: string, close: boolean) => void; closedBy?: { partyId: string; closedBy: string }[] }) {
   const w = useWords(sheetWords);
   const pw = useWords(plWords);
-  const parties = usePl((st) => st.parties);
+  const parties = usePlMasters().data.parties;
   if (dues.length === 0) return null;
   const extra = new Set((paidExtra ?? []).map((d) => d.partyId));
   return (
@@ -798,8 +906,8 @@ function TripCard({
   onRemove: () => void;
   partyOptions: (role: 'customer' | 'vendor') => { value: string; label: string }[];
   rateOptions: (current: string) => { value: string; label: string }[];
-  addParty: (role: 'customer' | 'vendor') => (name: string) => string;
-  addRate: (text: string) => string | null;
+  addParty: (role: 'customer' | 'vendor') => Adder;
+  addRate: Adder;
   draft: Draft;
   recordId: string | null;
   closing: { sheetId: string; tripId: string } | null;
@@ -809,25 +917,23 @@ function TripCard({
   invoiced: Map<string, PlSaleInvoice>;
 }) {
   const w = useWords(sheetWords);
-  const store = usePl();
-  const bills = useExpenses((st) => st.bills);
-  const { persona } = useApp();
-  const masters = mastersOf(store);
+  const masters = usePlMasters().data;
+  const moves = useMasterMoves();
+  const closeTrip = useCloseTrip();
+  const ordersFor = useOrdersFor();
   const at = `trips[${index}]`;
   const materials = masters.materials.filter((m) => m.active || trip.purchases.some((p) => p.materialId === m.id) || trip.sales.some((x) => x.materialId === m.id)).map((m) => ({ value: m.id, label: m.name }));
   const units = [...new Set(masters.materials.map((m) => m.unit))];
   const putP = (i: number, patch: Partial<DPurchase>) => onChange({ purchases: trip.purchases.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
   const putS = (i: number, patch: Partial<DSale>) => onChange({ sales: trip.sales.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
-  const addMaterial = (line: { hsnCode: string; unit: string; gstRatePct: string }) => (name: string) => {
-    const r = store.addMaterial({ name, hsnCode: line.hsnCode || null, unit: line.unit || 'unit', gstRatePct: Number(line.gstRatePct) || 5 });
-    return r.ok ? r.material.id : null;
-  };
+  const addMaterial = (line: { hsnCode: string; unit: string; gstRatePct: string }) => (name: string) =>
+    moves.addMaterial({ name, hsnCode: line.hsnCode || null, unit: line.unit || 'unit', gstRatePct: Number(line.gstRatePct) || 5 });
   const tripParties = (role: 'customer' | 'vendor') => {
     const ids = new Set(role === 'customer' ? trip.sales.map((x) => x.customerId) : trip.purchases.map((p) => p.vendorId));
     return partyOptions(role).filter((o) => ids.has(o.value));
   };
-  const locations = (partyId: string) => store.parties.find((p) => p.id === partyId)?.locations ?? [];
-  const partyOf = (id: string) => store.parties.find((p) => p.id === id);
+  const locations = (partyId: string) => masters.parties.find((p) => p.id === partyId)?.locations ?? [];
+  const partyOf = (id: string) => masters.parties.find((p) => p.id === id);
   return (
     <div className="flex flex-col" style={{ ...FIELD_BOX, padding: '12px' }}>
       <div className="flex flex-wrap items-center gap-2">
@@ -858,13 +964,13 @@ function TripCard({
             {w.section.tripMore}
           </p>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 py-2 md:grid-cols-4">
-            <Field label={w.vehicle.startKm}>
+            <Field label={w.vehicle.startKm} error={err(`${at}.startKm`)}>
               <Txt ro={ro} inputMode="decimal" value={trip.startKm} onChange={(v) => onChange({ startKm: v })} />
             </Field>
             <Field label={w.vehicle.endKm} error={err(`${at}.endKm`)}>
               <Txt ro={ro} inputMode="decimal" value={trip.endKm} onChange={(v) => onChange({ endKm: v })} />
             </Field>
-            <Field label={w.vehicle.batta}>
+            <Field label={w.vehicle.batta} error={err(`${at}.batta`)}>
               <Txt ro={ro} inputMode="decimal" value={trip.batta} onChange={(v) => onChange({ batta: v })} />
             </Field>
           </div>
@@ -884,7 +990,7 @@ function TripCard({
             <Field label={w.bought.vendor} error={err(`${pat}.vendorId`)} wide>
               <Sel ro={ro} value={p.vendorId} options={partyOptions('vendor')} placeholder={w.bought.pickVendor} onChange={(v) => putP(i, { vendorId: v, vendorGstin: partyOf(v)?.gstin ?? '', gstBilled: Boolean(partyOf(v)?.gstin) })} add={{ label: w.adding.vendor, onAdd: addParty('vendor') }} />
             </Field>
-            <Field label={w.bought.location} wide>
+            <Field label={w.bought.location} error={err(`${pat}.location`)} wide>
               <Txt ro={ro} value={p.location} list={listId} onChange={(v) => putP(i, { location: v })} />
               <datalist id={listId}>
                 {locations(p.vendorId).map((l) => (
@@ -899,16 +1005,16 @@ function TripCard({
                 options={materials}
                 placeholder={w.bought.pickMaterial}
                 onChange={(v) => {
-                  const m = store.materials.find((x) => x.id === v);
+                  const m = masters.materials.find((x) => x.id === v);
                   putP(i, { materialId: v, hsnCode: m?.hsnCode ?? '', unit: m?.unit ?? '', gstRatePct: m ? String(m.gstRatePct) : '' });
                 }}
                 add={{ label: w.adding.material, onAdd: addMaterial(p) }}
               />
             </Field>
-            <Field label={w.bought.hsn}>
+            <Field label={w.bought.hsn} error={err(`${pat}.hsnCode`)}>
               <Txt ro={ro} inputMode="numeric" value={p.hsnCode} onChange={(v) => putP(i, { hsnCode: v })} />
             </Field>
-            <Field label={w.bought.unit}>
+            <Field label={w.bought.unit} error={err(`${pat}.unit`)}>
               <Txt ro={ro} value={p.unit} list="pl-units" onChange={(v) => putP(i, { unit: v })} />
             </Field>
             <Field label={w.bought.qty} error={err(`${pat}.quantity`)}>
@@ -926,7 +1032,7 @@ function TripCard({
                 <Field label={w.bought.gstin} error={err(`${pat}.vendorGstin`)} wide>
                   <Txt ro={ro} value={p.vendorGstin} onChange={(v) => putP(i, { vendorGstin: v.toUpperCase() })} />
                   {!ro && vendor && !vendor.gstin && p.vendorGstin.length === 15 && (
-                    <Button onClick={() => store.patchParty(vendor.id, { gstin: p.vendorGstin })}>{w.adding.gstinTo(vendor.name)}</Button>
+                    <Button onClick={() => moves.saveGstin(vendor.id, p.vendorGstin)}>{w.adding.gstinTo(vendor.name)}</Button>
                   )}
                 </Field>
                 <Field label={w.bought.gstRate} error={err(`${pat}.gstRatePct`)}>
@@ -936,7 +1042,7 @@ function TripCard({
               </>
             )}
             <Figure label={w.bought.total} value={f.total} strong />
-            <Field label={w.bought.invoice}>
+            <Field label={w.bought.invoice} error={err(`${pat}.invoiceNumber`) ?? err(`${pat}.invoiceDate`)}>
               <Txt ro={ro} value={p.invoiceNumber} onChange={(v) => putP(i, { invoiceNumber: v })} />
             </Field>
             <div className="col-span-2">
@@ -968,7 +1074,7 @@ function TripCard({
             <Field label={w.sold.customer} error={err(`${sat}.customerId`)} wide>
               <Sel ro={lro} value={x.customerId} options={partyOptions('customer')} placeholder={w.sold.pickCustomer} onChange={(v) => putS(i, { customerId: v, partyGstin: partyOf(v)?.gstin ?? '', poRef: ordersFor(v)[0]?.customerPoRef ?? '', purchaseOrderId: ordersFor(v)[0]?.id ?? '' })} add={{ label: w.adding.customer, onAdd: addParty('customer') }} />
             </Field>
-            <Field label={w.sold.location} wide>
+            <Field label={w.sold.location} error={err(`${sat}.location`)} wide>
               <Txt ro={lro} value={x.location} list={listId} onChange={(v) => putS(i, { location: v })} />
               <datalist id={listId}>
                 {locations(x.customerId).map((l) => (
@@ -976,7 +1082,7 @@ function TripCard({
                 ))}
               </datalist>
             </Field>
-            <Field label={w.sold.poRef}>
+            <Field label={w.sold.poRef} error={err(`${sat}.poRef`) ?? err(`${sat}.purchaseOrderId`)}>
               <Txt ro={ro} value={x.poRef} onChange={(v) => putS(i, { poRef: v, purchaseOrderId: '' })} />
             </Field>
             <Field label={w.bought.material} error={err(`${sat}.materialId`)}>
@@ -986,7 +1092,7 @@ function TripCard({
                 options={materials}
                 placeholder={w.bought.pickMaterial}
                 onChange={(v) => {
-                  const m = store.materials.find((y) => y.id === v);
+                  const m = masters.materials.find((y) => y.id === v);
                   putS(i, { materialId: v, hsnCode: m?.hsnCode ?? '', unit: m?.unit ?? '', gstRatePct: m ? String(m.gstRatePct) : '' });
                 }}
                 add={{ label: w.adding.material, onAdd: addMaterial(x) }}
@@ -997,10 +1103,10 @@ function TripCard({
                 <Button onClick={() => putS(i, { materialId: first.materialId, hsnCode: first.hsnCode, unit: first.unit, quantity: first.quantity, gstRatePct: first.gstRatePct || x.gstRatePct })}>{w.sold.sameAsBought}</Button>
               </div>
             )}
-            <Field label={w.bought.hsn}>
+            <Field label={w.bought.hsn} error={err(`${sat}.hsnCode`)}>
               <Txt ro={lro} inputMode="numeric" value={x.hsnCode} onChange={(v) => putS(i, { hsnCode: v })} />
             </Field>
-            <Field label={w.bought.unit}>
+            <Field label={w.bought.unit} error={err(`${sat}.unit`)}>
               <Txt ro={lro} value={x.unit} list="pl-units" onChange={(v) => putS(i, { unit: v })} />
             </Field>
             <Field label={w.sold.qty} error={err(`${sat}.quantity`)}>
@@ -1009,7 +1115,7 @@ function TripCard({
             <Field label={w.sold.rate} error={err(`${sat}.rate`)}>
               <Txt ro={lro} inputMode="decimal" value={x.rate} onChange={(v) => putS(i, { rate: v })} />
             </Field>
-            <Field label={w.sold.transport}>
+            <Field label={w.sold.transport} error={err(`${sat}.transport`)}>
               <Txt ro={lro} inputMode="decimal" value={x.transport} onChange={(v) => putS(i, { transport: v })} />
             </Field>
             <Figure label={w.sold.taxable} value={f.taxable} />
@@ -1018,9 +1124,9 @@ function TripCard({
             </Field>
             {x.gstBilled && (
               <>
-                <Field label={w.sold.gstin} wide>
+                <Field label={w.sold.gstin} error={err(`${sat}.partyGstin`)} wide>
                   <Txt ro={ro} value={x.partyGstin} onChange={(v) => putS(i, { partyGstin: v.toUpperCase() })} />
-                  {!ro && customer && !customer.gstin && x.partyGstin.length === 15 && <Button onClick={() => store.patchParty(customer.id, { gstin: x.partyGstin })}>{w.adding.gstinTo(customer.name)}</Button>}
+                  {!ro && customer && !customer.gstin && x.partyGstin.length === 15 && <Button onClick={() => moves.saveGstin(customer.id, x.partyGstin)}>{w.adding.gstinTo(customer.name)}</Button>}
                 </Field>
                 <Field label={w.bought.gstRate} error={err(`${sat}.gstRatePct`)}>
                   <Sel ro={lro} value={x.gstRatePct} options={rateOptions(x.gstRatePct)} onChange={(v) => putS(i, { gstRatePct: v })} add={{ label: w.adding.rate, onAdd: addRate }} />
@@ -1029,10 +1135,10 @@ function TripCard({
               </>
             )}
             <Figure label={w.sold.total} value={f.total} strong />
-            <Field label={w.sold.dc}>
+            <Field label={w.sold.dc} error={err(`${sat}.challanNumber`)}>
               <Txt ro={lro} value={x.challanNumber} onChange={(v) => putS(i, { challanNumber: v })} />
             </Field>
-            <Field label={w.sold.invoice}>
+            <Field label={w.sold.invoice} error={err(`${sat}.invoiceNumber`)}>
               <Txt ro={lro} value={x.invoiceNumber} onChange={(v) => putS(i, { invoiceNumber: v })} />
             </Field>
             <div className="col-span-2 flex flex-wrap gap-4">
@@ -1057,8 +1163,7 @@ function TripCard({
           closedBy={closedBy}
           onClose={(partyId, close) => {
             if (!closing) return;
-            const r = store.close(closing.sheetId, closing.tripId, partyId, { name: persona.name, grants: persona.grants }, bills, close);
-            onCloseProblem(r.ok ? null : problemText(r.problem, w));
+            void closeTrip.run({ sheetId: closing.sheetId, tripId: closing.tripId, partyId, close }).then((refused) => onCloseProblem(refused ? problemText(refused, w) : null));
           }}
         />
       )}

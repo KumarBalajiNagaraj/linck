@@ -63,6 +63,7 @@ import {
   type PlTripReportRow,
   type PlVehicleRow,
 } from '@linck/mock';
+import { LIVE } from '../../auth/api.js';
 import { useExpenses } from '../expenses/expenseStore.js';
 
 /**
@@ -95,7 +96,8 @@ export const sheetPath = (id: string): string => `/fleet/pl/sheets/${id}`;
 const VOID_BILL = new Set(['rejected', 'deleted']);
 const money = (v: string | number | null | undefined) => decimal.toFixed(decimal.dec(v ?? 0), 2);
 const positive = (v: string | number | null | undefined) => decimal.cmp(decimal.dec(v ?? 0), decimal.dec(0)) > 0;
-export const todayIso = () => businessDate(NOW);
+/** Today as a business date: the demo's seeded day, or, live, the real one. */
+export const todayIso = LIVE ? () => businessDate(new Date()) : () => businessDate(NOW);
 
 export type PlProblem =
   | { code: 'invalid'; field: string; reason: string }
@@ -513,7 +515,19 @@ function checkDiesel(state: PlState, input: PlSheetInput, existing: PlSheetRecor
   return { ...rest, field: lineId } as PlProblem;
 }
 
-function wireDiesel(id: string, d: PlDieselInput, bills: Map<string, ExpenseBill>): DomainDiesel {
+/**
+ * A diesel bill as a line linking it reads it: an expense bill in the demo,
+ * or, live, what the API says of a bill on the sheet or offered to it
+ * (plApi.ts linkedBillsOf).
+ */
+export interface LinkableBill {
+  billNumber: string;
+  litres: number | null;
+  amount: string;
+  status: string;
+}
+
+function wireDiesel(id: string, d: PlDieselInput, bills: ReadonlyMap<string, LinkableBill>): DomainDiesel {
   if (d.source === 'expense_bill') {
     const bill = d.expenseBillId ? bills.get(d.expenseBillId) : undefined;
     return { id, source: 'expense_bill', litres: bill?.litres ?? null, amount: bill?.amount ?? null, expenseBillId: d.expenseBillId ?? null, billNumber: bill?.billNumber ?? null };
@@ -623,7 +637,7 @@ function toRecord(
 /* -------------------------------------------------------------- the rules */
 
 /** A stored sheet as the rules see it, with linked bills read from Expenses. */
-export function toDomain(s: PlSheetRecord, bills: Map<string, ExpenseBill>): PlSheet {
+export function toDomain(s: PlSheetRecord, bills: ReadonlyMap<string, LinkableBill>): PlSheet {
   const diesel = (d: PlDieselRecord): DomainDiesel => {
     if (d.source !== 'expense_bill') return wireDiesel(d.id, d, bills);
     const bill = d.expenseBillId ? bills.get(d.expenseBillId) : undefined;
@@ -660,7 +674,7 @@ export function toDomain(s: PlSheetRecord, bills: Map<string, ExpenseBill>): PlS
 }
 
 /** The form as it stands, for the P&L box: what is typed so far, nothing stored. Trip ids are `draft-<index>`. */
-export function draftDomain(input: PlSheetInput, existing: PlSheetRecord | null, materials: readonly PlMaterial[], bills: Map<string, ExpenseBill>): PlSheet {
+export function draftDomain(input: PlSheetInput, existing: PlSheetRecord | null, materials: readonly PlMaterial[], bills: ReadonlyMap<string, LinkableBill>): PlSheet {
   const rate = (line: { gstBilled: boolean; gstRatePct?: number | null; materialId: string }) =>
     line.gstBilled ? (line.gstRatePct ?? materials.find((m) => m.id === line.materialId)?.gstRatePct ?? 0) : 0;
   const lines = dieselLines(input);

@@ -98,6 +98,10 @@ export const plWords = words({
     noTripYet: 'No trip yet',
     sheetPayment: 'Paid on the sheet',
     noSheets: 'No trip sheets yet',
+    // Live only: the API has not answered yet, or could not.
+    loading: 'Getting the trip sheets…',
+    failed: 'Could not get the trip sheets.',
+    retry: 'Try again',
     noneMatch: 'No trip sheet matches',
     noneMatchWhy: 'Try another search, or a wider period.',
     showAll: 'Show all',
@@ -191,6 +195,9 @@ export const plWords = words({
     noTripYet: 'இன்னும் ட்ரிப் இல்லை',
     sheetPayment: 'ஷீட்டில் வந்த பணம்',
     noSheets: 'இன்னும் ட்ரிப் ஷீட் இல்லை',
+    loading: 'ட்ரிப் ஷீட்களை எடுக்கிறது…',
+    failed: 'ட்ரிப் ஷீட்களை எடுக்க முடியவில்லை.',
+    retry: 'மீண்டும் முயல்',
     noneMatch: 'பொருந்தும் ட்ரிப் ஷீட் இல்லை',
     noneMatchWhy: 'வேறு தேடல், அல்லது பெரிய காலம் தேர்ந்தெடுக்கவும்.',
     showAll: 'எல்லாம் காட்டு',
@@ -220,6 +227,10 @@ export const plWords = words({
 export const sheetWords = words({
   en: {
     newSheet: 'New trip sheet',
+    // Live only: the sheet, or the masters it picks from, on their way from the API.
+    loading: 'Getting the trip sheet…',
+    failed: 'Could not get the trip sheet.',
+    retry: 'Try again',
     sheet: (no: string) => `Trip sheet ${no}`,
     back: 'Trip sheets',
     edit: 'Edit',
@@ -270,6 +281,10 @@ export const sheetWords = words({
       distance: 'Distance',
       batta: 'Driver batta',
       tripDate: 'Trip date',
+      // Live only: the vehicle is typed and kept as its registration, at one of the person's sites.
+      site: 'Site',
+      pickSite: 'Pick a site',
+      readAs: (reg: string) => `Read as ${reg}`,
     },
     diesel: {
       typed: 'Typed',
@@ -373,6 +388,7 @@ export const sheetWords = words({
       add: 'Add photo',
       change: 'Change',
       none: 'No photo',
+      sending: 'Adding the photo…',
     },
     box: {
       title: 'Profit and loss',
@@ -457,6 +473,9 @@ export const sheetWords = words({
   },
   ta: {
     newSheet: 'புதிய ட்ரிப் ஷீட்',
+    loading: 'ட்ரிப் ஷீட்டை எடுக்கிறது…',
+    failed: 'ட்ரிப் ஷீட்டை எடுக்க முடியவில்லை.',
+    retry: 'மீண்டும் முயல்',
     sheet: (no: string) => `ட்ரிப் ஷீட் ${no}`,
     back: 'ட்ரிப் ஷீட்கள்',
     edit: 'மாற்று',
@@ -507,6 +526,9 @@ export const sheetWords = words({
       distance: 'தூரம்',
       batta: 'டிரைவர் பேட்டா',
       tripDate: 'ட்ரிப் தேதி',
+      site: 'சைட்',
+      pickSite: 'சைட்டைத் தேர்ந்தெடுக்கவும்',
+      readAs: (reg: string) => `${reg} எனப் படித்தது`,
     },
     diesel: {
       typed: 'எழுதியது',
@@ -610,6 +632,7 @@ export const sheetWords = words({
       add: 'போட்டோ சேர்',
       change: 'மாற்று',
       none: 'போட்டோ இல்லை',
+      sending: 'போட்டோ சேர்க்கிறது…',
     },
     box: {
       title: 'லாபம், நஷ்டம்',

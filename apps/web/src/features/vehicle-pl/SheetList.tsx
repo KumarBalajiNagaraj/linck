@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { can, formatDate } from '@linck/domain';
-import { NOW, VEHICLES, type PlSheetRow, type PlTripReportRow } from '@linck/mock';
+import { formatDate } from '@linck/domain';
+import type { PlSheetRow, PlTripReportRow } from '@linck/mock';
 import { Button, Chip, DataTable, EmptyState, IdCell, MoneyCell, PageHeader, QuantityCell, Stacked, type Column } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
-import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { now } from '../expenses/bills.js';
 import { downloadXlsx, PrintView, type ReportSheet } from './exporters.js';
-import { FilterBar, NO_FILTER, PlTiles, type FilterState } from './PlParts.js';
-import { listSheets, NEW_PATH, READ_KEYS, reportUnits, sheetPath, sheetsTotal, tripReport, usePl, usePlBook, WRITE, type SheetFilter } from './plStore.js';
+import { FilterBar, NO_FILTER, NotRead, PlTiles, type FilterState } from './PlParts.js';
+import { NEW_PATH, sheetPath, type SheetFilter } from './plStore.js';
+import { useMayWriteSheets, useSheetList, useSheetOptions, useTripReport } from './sheets.js';
 import { sheetsSheet, tripsSheet } from './reportSheets.js';
 import { plWords } from './words.js';
 
@@ -21,36 +22,24 @@ const VIEWS = ['sheets', 'trips'] as const;
  */
 export function SheetList() {
   const w = useWords(plWords);
-  const { persona } = useApp();
   const navigate = useNavigate();
-  const book = usePlBook();
-  const parties = usePl((s) => s.parties);
   const [view, setView] = useViewParam(VIEWS, 'sheets');
   const [filter, setFilter] = useState<FilterState>(NO_FILTER);
   const [printing, setPrinting] = useState<ReportSheet[] | null>(null);
   const f: SheetFilter = { from: filter.from || null, to: filter.to || null, q: filter.q, vehicleId: filter.vehicleId || null, customerId: filter.customerId || null };
 
-  const rows = useMemo(() => listSheets(book, persona.grants, READ_KEYS, f), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
-  const trips = useMemo(() => tripReport(book, reportUnits(book, persona.grants, READ_KEYS, f)), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
-  const total = view === 'sheets' ? sheetsTotal(rows) : trips.total;
-  const writable = VEHICLES.some((v) => can(persona.grants, WRITE, { siteId: v.siteId }));
-
-  const vehicles = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const s of book.sheets) seen.set(s.vehicleId, s.registrationNumber);
-    return [...seen].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [book.sheets]);
-  const customers = useMemo(
-    () =>
-      parties
-        .filter((p) => p.roles.includes('customer'))
-        .map((p) => ({ id: p.id, label: p.name }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [parties],
-  );
+  const list = useSheetList(f);
+  const report = useTripReport(f);
+  const rows = list.data.rows;
+  const trips = report.data;
+  const total = view === 'sheets' ? list.data.total : trips.total;
+  const writable = useMayWriteSheets();
+  const { vehicles, customers, none } = useSheetOptions();
+  // Live, until the API has answered there is nothing to say "none" of.
+  const shown = view === 'sheets' ? list : report;
 
   const subtitle = filter.from || filter.to ? w.periodLine(filter.from ? formatDate(filter.from) : '…', filter.to ? formatDate(filter.to) : '…') : w.allDates;
-  const sheetsForExport = (): ReportSheet[] => [view === 'sheets' ? sheetsSheet(w, rows, sheetsTotal(rows), subtitle) : tripsSheet(w, trips, subtitle)];
+  const sheetsForExport = (): ReportSheet[] => [view === 'sheets' ? sheetsSheet(w, rows, list.data.total, subtitle) : tripsSheet(w, trips, subtitle)];
   const dates = (r: PlSheetRow) => (r.endDate && r.endDate !== r.startDate ? `${formatDate(r.startDate)} – ${formatDate(r.endDate)}` : formatDate(r.startDate));
 
   const sheetColumns: Column<PlSheetRow>[] = [
@@ -84,7 +73,9 @@ export function SheetList() {
   ];
 
   const empty =
-    book.sheets.length === 0 ? (
+    shown.state !== 'ready' ? (
+      <NotRead read={shown} />
+    ) : none ? (
       <EmptyState fact={w.noSheets} />
     ) : (
       <EmptyState fact={w.noneMatch} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />
@@ -97,7 +88,7 @@ export function SheetList() {
         title={w.title}
         actions={
           <div className="flex flex-wrap justify-end gap-2">
-            <Button onClick={() => downloadXlsx(`vehicle-pl-${view}-${formatDate(NOW).replace(/\//g, '-')}`, sheetsForExport())}>{w.excel}</Button>
+            <Button onClick={() => downloadXlsx(`vehicle-pl-${view}-${formatDate(now()).replace(/\//g, '-')}`, sheetsForExport())}>{w.excel}</Button>
             <Button onClick={() => setPrinting(sheetsForExport())}>{w.print}</Button>
             {writable && (
               <Button variant="primary" onClick={() => void navigate({ to: NEW_PATH })}>
@@ -115,7 +106,7 @@ export function SheetList() {
         ))}
       </div>
       <FilterBar value={filter} onChange={setFilter} vehicles={vehicles} customers={customers} />
-      <PlTiles total={total} asOf={formatDate(NOW)} />
+      <PlTiles total={total} asOf={formatDate(now())} />
       {view === 'sheets' ? (
         <DataTable
           columns={sheetColumns}
@@ -135,7 +126,7 @@ export function SheetList() {
           empty={empty}
         />
       )}
-      {printing && <PrintView sheets={printing} printedOn={formatDate(NOW)} onClose={() => setPrinting(null)} />}
+      {printing && <PrintView sheets={printing} printedOn={formatDate(now())} onClose={() => setPrinting(null)} />}
     </div>
   );
 }

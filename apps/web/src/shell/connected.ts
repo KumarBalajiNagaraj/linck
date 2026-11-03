@@ -38,6 +38,13 @@ const CONNECTED: Readonly<Record<string, Connection>> = {
   '/sales/customers': 'api',
   '/sales/orders': 'api',
   '/fleet/breakdowns': 'api',
+  // LIN-21: the vehicle P&L — trip sheets, their trips and lines, and the
+  // profit reports — on /vehicle-pl.
+  '/fleet/pl': 'api',
+  '/fleet/pl/new': 'api',
+  '/fleet/pl/sheets/$sheetId': 'api',
+  '/overview/pl': 'api',
+  '/finance/pl': 'api',
   // LIN-10: the news digest is built on the server.
   '/overview/industry': 'api',
   // The boards: these counts are the API's; their other counts are not yet.

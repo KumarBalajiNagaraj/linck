@@ -1,17 +1,20 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { formatDate } from '@linck/domain';
-import { NOW, type PlMonthRow, type PlOutstandingRow, type PlTripReportRow, type PlVehicleRow } from '@linck/mock';
+import type { PlMonthRow, PlOutstandingRow, PlTripReportRow, PlVehicleRow } from '@linck/mock';
 import { Button, Chip, DataTable, EmptyState, IdCell, MoneyCell, PageHeader, QuantityCell, Stacked, type Column } from '@linck/ui';
 import { monthNames } from '../../i18n/format.js';
 import { useWords } from '../../i18n/words.js';
-import { useApp } from '../../shell/store.js';
+import { Refusal } from '../../shell/Field.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { now } from '../expenses/bills.js';
 import { downloadXlsx, PrintView, type ReportSheet } from './exporters.js';
-import { FilterBar, NO_FILTER, PlTiles, type FilterState } from './PlParts.js';
-import { monthReport, outstandingReport, READ_KEYS, reportUnits, sheetPath, tripReport, usePl, usePlBook, vehicleReport, type SheetFilter } from './plStore.js';
+import { FilterBar, NO_FILTER, NotRead, PlTiles, type FilterState } from './PlParts.js';
+import { sheetPath, type PlProblem, type SheetFilter } from './plStore.js';
+import { problemText } from './plText.js';
+import { usePlReports, useSheetOptions, type AllReports } from './sheets.js';
 import { monthsSheet, outstandingSheet, tripsSheet, vehiclesSheet } from './reportSheets.js';
-import { plWords } from './words.js';
+import { plWords, sheetWords } from './words.js';
 
 const TABS = ['trips', 'vehicles', 'months', 'customers', 'vendors'] as const;
 type Tab = (typeof TABS)[number];
@@ -24,40 +27,48 @@ type Tab = (typeof TABS)[number];
  */
 export function PlReports() {
   const w = useWords(plWords);
+  const sw = useWords(sheetWords);
   const months = useWords(monthNames);
-  const { persona } = useApp();
   const navigate = useNavigate();
-  const book = usePlBook();
-  const parties = usePl((s) => s.parties);
   const [tab, setTab] = useViewParam(TABS, 'trips');
   const [filter, setFilter] = useState<FilterState>(NO_FILTER);
   const [printing, setPrinting] = useState<ReportSheet[] | null>(null);
+  /** Live only: why Excel could not read every report. */
+  const [problem, setProblem] = useState<PlProblem | null>(null);
   const f: SheetFilter = { from: filter.from || null, to: filter.to || null, q: filter.q, vehicleId: filter.vehicleId || null, customerId: filter.customerId || null };
 
-  const units = useMemo(() => reportUnits(book, persona.grants, READ_KEYS, { ...f, q: null }), [book, persona.grants, f.from, f.to, f.vehicleId, f.customerId]);
-  const searched = useMemo(() => reportUnits(book, persona.grants, READ_KEYS, f), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
-  const trips = useMemo(() => tripReport(book, searched), [book, searched]);
-  const vehicles = useMemo(() => vehicleReport(searched), [searched]);
-  const monthly = useMemo(() => monthReport(searched), [searched]);
-  const customersDue = useMemo(() => outstandingReport(book, units, 'customer', f.q), [book, units, f.q]);
-  const vendorsDue = useMemo(() => outstandingReport(book, units, 'vendor', f.q), [book, units, f.q]);
+  const reports = usePlReports(f, tab);
+  const trips = reports.read.trips.data;
+  const vehicles = reports.read.vehicles.data;
+  const monthly = reports.read.months.data;
+  const customersDue = reports.read.customers.data;
+  const vendorsDue = reports.read.vendors.data;
 
   const monthLabel = (m: string) => `${months[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
   const subtitle = filter.from || filter.to ? w.periodLine(filter.from ? formatDate(filter.from) : '…', filter.to ? formatDate(filter.to) : '…') : w.allDates;
-  const all: Record<Tab, () => ReportSheet> = {
-    trips: () => tripsSheet(w, trips, subtitle),
-    vehicles: () => vehiclesSheet(w, vehicles, subtitle),
-    months: () => monthsSheet(w, monthly, monthLabel, subtitle),
-    customers: () => outstandingSheet(w, customersDue, 'customer', subtitle),
-    vendors: () => outstandingSheet(w, vendorsDue, 'vendor', subtitle),
+  const sheetFor = (t: Tab, r: AllReports): ReportSheet => {
+    switch (t) {
+      case 'trips':
+        return tripsSheet(w, r.trips, subtitle);
+      case 'vehicles':
+        return vehiclesSheet(w, r.vehicles, subtitle);
+      case 'months':
+        return monthsSheet(w, r.months, monthLabel, subtitle);
+      case 'customers':
+        return outstandingSheet(w, r.customers, 'customer', subtitle);
+      case 'vendors':
+        return outstandingSheet(w, r.vendors, 'vendor', subtitle);
+    }
   };
+  const onScreen: AllReports = { trips, vehicles, months: monthly, customers: customersDue, vendors: vendorsDue };
+  // Excel takes every report, one sheet each: live, those not read yet are read first.
+  const excel = () => {
+    setProblem(null);
+    void reports.withAll((all) => downloadXlsx(`vehicle-pl-reports-${formatDate(now())}`, TABS.map((t) => sheetFor(t, all)))).then(setProblem);
+  };
+  const print = () => setPrinting([sheetFor(tab, onScreen)]);
 
-  const vehicleOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const s of book.sheets) seen.set(s.vehicleId, s.registrationNumber);
-    return [...seen].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [book.sheets]);
-  const customerOptions = useMemo(() => parties.filter((p) => p.roles.includes('customer')).map((p) => ({ id: p.id, label: p.name })).sort((a, b) => a.label.localeCompare(b.label)), [parties]);
+  const { vehicles: vehicleOptions, customers: customerOptions } = useSheetOptions();
 
   const plCols = <T extends { sales: string; materialCost: string; totalEnRoute: string; net: string; profitPct: number | null }>(): Column<T>[] => [
     { key: 'sales', header: w.col.sales, group: w.col.groupMoney, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.sales} /> },
@@ -103,7 +114,8 @@ export function PlReports() {
     { key: 'last', header: w.col.last, render: (r) => formatDate(r.lastDate) },
   ];
 
-  const empty = <EmptyState fact={w.noRows} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />;
+  const shown = reports.read[tab];
+  const empty = shown.state !== 'ready' ? <NotRead read={shown} /> : <EmptyState fact={w.noRows} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />;
   const toSheet = (sheetId: string) => void navigate({ to: sheetPath(sheetId) });
   const loss = (net: string) => (net.startsWith('-') ? { status: 'critical' as const } : undefined);
 
@@ -114,8 +126,8 @@ export function PlReports() {
         title={w.reportsTitle}
         actions={
           <div className="flex flex-wrap justify-end gap-2">
-            <Button onClick={() => downloadXlsx(`vehicle-pl-reports-${formatDate(NOW)}`, TABS.map((t) => all[t]()))}>{w.excel}</Button>
-            <Button onClick={() => setPrinting([all[tab]()])}>{w.print}</Button>
+            <Button onClick={excel}>{w.excel}</Button>
+            <Button onClick={print}>{w.print}</Button>
           </div>
         }
       />
@@ -127,13 +139,18 @@ export function PlReports() {
         ))}
       </div>
       <FilterBar value={filter} onChange={setFilter} vehicles={tab === 'customers' || tab === 'vendors' ? undefined : vehicleOptions} customers={tab === 'trips' ? customerOptions : undefined} />
-      <PlTiles total={trips.total} asOf={formatDate(NOW)} />
+      {problem && (
+        <div className="px-4 pt-3 md:px-6">
+          <Refusal text={problemText(problem, sw)} />
+        </div>
+      )}
+      <PlTiles total={trips.total} asOf={formatDate(now())} />
       {tab === 'trips' && <DataTable columns={tripCols} rows={trips.rows} rowKey={(r) => `${r.sheetId}:${r.tripId ?? r.kind}`} rail={(r) => loss(r.pl.net)} onRowClick={(r) => toSheet(r.sheetId)} empty={empty} />}
       {tab === 'vehicles' && <DataTable columns={vehicleCols} rows={vehicles.rows} rowKey={(r) => r.vehicleId} rail={(r) => loss(r.net)} empty={empty} />}
       {tab === 'months' && <DataTable columns={monthCols} rows={monthly.rows} rowKey={(r) => r.month} rail={(r) => loss(r.net)} empty={empty} />}
       {tab === 'customers' && <DataTable columns={dueCols('customer')} rows={customersDue.rows} rowKey={(r) => r.partyId} empty={empty} />}
       {tab === 'vendors' && <DataTable columns={dueCols('vendor')} rows={vendorsDue.rows} rowKey={(r) => r.partyId} empty={empty} />}
-      {printing && <PrintView sheets={printing} printedOn={formatDate(NOW)} onClose={() => setPrinting(null)} />}
+      {printing && <PrintView sheets={printing} printedOn={formatDate(now())} onClose={() => setPrinting(null)} />}
     </div>
   );
 }

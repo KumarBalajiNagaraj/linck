@@ -1,5 +1,7 @@
 import type { ComplianceDocument, FuelEntry } from '@linck/mock';
 import { words } from '../../i18n/words.js';
+import type { RecordProblem } from '../../shell/recordApi.js';
+import type { BreakdownGap } from './breakdownApi.js';
 
 /**
  * The fleet screens' words, in English and Tamil (LIN-23, docs/WRITING.md).
@@ -185,6 +187,84 @@ export const driverWords = words({
   },
 });
 
+/* -------------------------------------------- breakdowns: the API's refusals */
+
+/** Who holds each key, in words a person knows. */
+const BREAKDOWN_WHO_EN: Record<string, string> = {
+  'fleet.vehicle.write': 'the fleet manager',
+  'fleet.breakdown.read': 'the fleet desk',
+};
+const BREAKDOWN_WHO_TA: Record<string, string> = {
+  'fleet.vehicle.write': 'ஃப்ளீட் மேனேஜர்',
+  'fleet.breakdown.read': 'வண்டிப் பிரிவு',
+};
+
+/**
+ * A value the API would not store, said as the fix. `field` is the request's
+ * name for it; `reason`, the API's note in English for the log, only picks
+ * between two fixes and is never shown.
+ */
+function breakdownInvalidEn(field: string, reason: string): string {
+  switch (field) {
+    case 'vehicleId':
+      return 'Type the vehicle number';
+    case 'location':
+      return 'Type where it is';
+    case 'cause':
+      return 'Type what broke';
+    case 'reportedBy':
+      return 'Type who told you';
+    case 'reportedAt':
+      return reason === 'in the future' ? 'Time cannot be after now' : 'Pick when it broke down';
+    case 'resolvedAt':
+      return reason === 'in the future'
+        ? 'Time cannot be after now'
+        : reason.startsWith('before')
+          ? 'It cannot be fixed before it broke down'
+          : 'Pick when it was fixed';
+    case 'repairCost':
+      return 'Type the repair cost, like 12,500';
+    case 'siteId':
+      return 'Pick the site first';
+    case 'status':
+      return 'Pick the status';
+    case 'driverId':
+      return 'Check the driver';
+    default:
+      return 'Check the details, then try again';
+  }
+}
+function breakdownInvalidTa(field: string, reason: string): string {
+  switch (field) {
+    case 'vehicleId':
+      return 'வண்டி எண் டைப் செய்யுங்கள்';
+    case 'location':
+      return 'எங்கே என்று டைப் செய்யுங்கள்';
+    case 'cause':
+      return 'என்ன பழுது என்று டைப் செய்யுங்கள்';
+    case 'reportedBy':
+      return 'யார் சொன்னார் என்று டைப் செய்யுங்கள்';
+    case 'reportedAt':
+      return reason === 'in the future' ? 'நேரம் இப்போதைக்குப் பிறகு இருக்கக்கூடாது' : 'பழுதான நேரத்தைத் தேர்ந்தெடுங்கள்';
+    case 'resolvedAt':
+      return reason === 'in the future'
+        ? 'நேரம் இப்போதைக்குப் பிறகு இருக்கக்கூடாது'
+        : reason.startsWith('before')
+          ? 'பழுதான நேரத்துக்கு முன் சரியாகியிருக்க முடியாது'
+          : 'சரியான நேரத்தைத் தேர்ந்தெடுங்கள்';
+    case 'repairCost':
+      return 'ரிப்பேர் செலவு டைப் செய்யுங்கள், உதா. 12,500';
+    case 'siteId':
+      return 'முதலில் சைட்டைத் தேர்ந்தெடுங்கள்';
+    case 'status':
+      return 'நிலையைத் தேர்ந்தெடுங்கள்';
+    case 'driverId':
+      return 'டிரைவரைச் சரிபாருங்கள்';
+    default:
+      return 'விவரங்களைச் சரிபார்த்து, மீண்டும் முயலுங்கள்';
+  }
+}
+
 export const breakdownWords = words({
   en: {
     title: 'Breakdowns',
@@ -204,6 +284,74 @@ export const breakdownWords = words({
       hours: 'hrs',
       repair: 'Repair cost',
     },
+    /* Live: the register is the API's, and the fleet manager writes it. */
+    one: 'Breakdown',
+    add: 'Add breakdown',
+    newTitle: 'New breakdown',
+    change: 'Change',
+    changeTitle: 'Change breakdown',
+    markFixed: 'Mark fixed',
+    fixTitle: 'Back on the road',
+    save: 'Save',
+    cancel: 'Cancel',
+    saving: 'Saving…',
+    retry: 'Try again',
+    vehicleSite: "Vehicle's site",
+    brokeDown: 'Broke down',
+    fixedAt: 'Fixed at',
+    toldBy: 'Told by',
+    toldByHint: (name: string) => `Blank: ${name}`,
+    repairRupees: 'Repair cost ₹',
+    readAs: (v: string) => `Read as ${v}`,
+    needs: {
+      vehicle: 'Vehicle',
+      cause: 'What broke',
+      location: 'Where',
+      when: 'Broke down',
+      site: "Vehicle's site",
+      fixedAt: 'Fixed at',
+      fixedBeforeDown: 'Fixed at',
+      repairCost: 'Repair cost',
+    } satisfies Record<BreakdownGap, string>,
+    wrong: {
+      when: 'Time cannot be after now.',
+      fixedAt: 'Time cannot be after now.',
+      fixedBeforeDown: 'It cannot be fixed before it broke down.',
+      repairCost: 'Type rupees, like 12,500.',
+    },
+    stillNeeded: (list: string[]) => `Still needed: ${list.join(', ')}`,
+    cannotChange: 'Only the fleet manager at its site can change this.',
+    loading: 'Getting the breakdowns…',
+    failed: 'Could not get the breakdowns.',
+    /**
+     * Why a breakdown could not be saved, read or moved: live, the API's
+     * refusal, or the API not answering. `status` is a breakdown's status in
+     * words; a vehicle comes as people write it (TN 38 AL 1050).
+     */
+    problem: (p: RecordProblem, status: (s: string) => string): string => {
+      switch (p.code) {
+        case 'needs-permission':
+          return `Only ${BREAKDOWN_WHO_EN[p.permission] ?? 'someone else'} can do this here.`;
+        case 'wrong-step':
+          return `Not now — this breakdown is "${status(p.status)}".`;
+        case 'vehicle-already-down':
+          return `${p.vehicle} is already down. Mark that one fixed first.`;
+        case 'gone':
+          return 'This breakdown is no longer here.';
+        case 'invalid':
+          return `${breakdownInvalidEn(p.field, p.reason)}.`;
+        case 'signed-out':
+          return 'You were signed out. Sign in again.';
+        case 'offline':
+          return 'Linck did not answer. Check the internet, then try again.';
+        case 'server':
+          return p.status > 0 ? `Linck had a problem (error ${p.status}). Try again.` : 'Linck had a problem. Try again.';
+        // Not refusals the register's requests are ever given.
+        case 'needs-reason':
+        case 'gstin-used':
+          return 'Check the details, then try again.';
+      }
+    },
   },
   ta: {
     title: 'பழுதுகள்',
@@ -222,6 +370,67 @@ export const breakdownWords = words({
       offRoad: 'ஓடாத நேரம்',
       hours: 'மணி',
       repair: 'ரிப்பேர் செலவு',
+    },
+    one: 'பழுது',
+    add: 'பழுது சேர்',
+    newTitle: 'புது பழுது',
+    change: 'மாற்று',
+    changeTitle: 'பழுது விவரம் மாற்று',
+    markFixed: 'சரியானதாகக் குறி',
+    fixTitle: 'மீண்டும் ஓடுகிறது',
+    save: 'சேமி',
+    cancel: 'ரத்து',
+    saving: 'சேமிக்கிறது…',
+    retry: 'மீண்டும் முயல்',
+    vehicleSite: 'வண்டியின் சைட்',
+    brokeDown: 'பழுதான நேரம்',
+    fixedAt: 'சரியான நேரம்',
+    toldBy: 'சொன்னவர்',
+    toldByHint: (name) => `காலியாக விட்டால்: ${name}`,
+    repairRupees: 'ரிப்பேர் செலவு ₹',
+    readAs: (v) => `${v} எனப் படித்தது`,
+    needs: {
+      vehicle: 'வண்டி',
+      cause: 'என்ன பழுது',
+      location: 'எங்கே',
+      when: 'பழுதான நேரம்',
+      site: 'வண்டியின் சைட்',
+      fixedAt: 'சரியான நேரம்',
+      fixedBeforeDown: 'சரியான நேரம்',
+      repairCost: 'ரிப்பேர் செலவு',
+    },
+    wrong: {
+      when: 'நேரம் இப்போதைக்குப் பிறகு இருக்கக்கூடாது.',
+      fixedAt: 'நேரம் இப்போதைக்குப் பிறகு இருக்கக்கூடாது.',
+      fixedBeforeDown: 'பழுதான நேரத்துக்கு முன் சரியாகியிருக்க முடியாது.',
+      repairCost: 'ரூபாய் டைப் செய்யுங்கள், உதா. 12,500.',
+    },
+    stillNeeded: (list) => `இன்னும் தேவை: ${list.join(', ')}`,
+    cannotChange: 'இதை அதன் சைட்டின் ஃப்ளீட் மேனேஜர் மட்டுமே மாற்ற முடியும்.',
+    loading: 'பழுதுகளை எடுக்கிறது…',
+    failed: 'பழுதுகளை எடுக்க முடியவில்லை.',
+    problem: (p, status) => {
+      switch (p.code) {
+        case 'needs-permission':
+          return `இதை ${BREAKDOWN_WHO_TA[p.permission] ?? 'வேறொருவர்'} மட்டுமே செய்ய முடியும்.`;
+        case 'wrong-step':
+          return `இப்போது முடியாது — பழுது "${status(p.status)}" நிலையில் உள்ளது.`;
+        case 'vehicle-already-down':
+          return `${p.vehicle} ஏற்கனவே பழுதில் உள்ளது. முதலில் அதைச் சரியானதாகக் குறியுங்கள்.`;
+        case 'gone':
+          return 'இந்தப் பழுது இப்போது இல்லை.';
+        case 'invalid':
+          return `${breakdownInvalidTa(p.field, p.reason)}.`;
+        case 'signed-out':
+          return 'நீங்கள் வெளியேற்றப்பட்டீர்கள். மீண்டும் உள்நுழையுங்கள்.';
+        case 'offline':
+          return 'Linck பதில் தரவில்லை. இணையத்தைச் சரிபார்த்து, மீண்டும் முயலுங்கள்.';
+        case 'server':
+          return p.status > 0 ? `Linck-இல் பிழை (${p.status}). மீண்டும் முயலுங்கள்.` : 'Linck-இல் பிழை. மீண்டும் முயலுங்கள்.';
+        case 'needs-reason':
+        case 'gstin-used':
+          return 'விவரங்களைச் சரிபார்த்து, மீண்டும் முயலுங்கள்.';
+      }
     },
   },
 });

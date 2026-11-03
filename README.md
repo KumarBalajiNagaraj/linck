@@ -59,7 +59,7 @@ The seed prints the emails you can sign in as, across three tenants of deliberat
 VITE_API_URL=http://localhost:8000 pnpm dev
 ```
 
-The app then asks `GET /me/session` before it shows anything, and without a session shows the sign-in screen: Google, and in a development build a *Developer sign-in* that uses dev-login with an email the seed printed. The persona and tenant-shape selectors are gone, because the session now says who you are and what the tenant has; the menu, the landing page and every `Forbidden` follow your real grants. The screens themselves are still on mock data. The API's `LINCK_WEB_APP_URL` must be the web app's origin, `http://localhost:5173` as in `.env.example`.
+The app then asks `GET /me/session` before it shows anything, and without a session shows the sign-in screen: Google, and in a development build a *Developer sign-in* that uses dev-login with an email the seed printed. The persona and tenant-shape selectors are gone, because the session now says who you are and what the tenant has; the menu, the landing page and every `Forbidden` follow your real grants. The expense screens — both registers, accounts' expense bills, the director's approvals, the diesel report and WhatsApp bills — read and write the API, and so do the customers, the orders and the breakdown register; every other screen is still on mock data, and says so in a banner at its top. The two command boards say which of their counts are real. The API's `LINCK_WEB_APP_URL` must be the web app's origin, `http://localhost:5173` as in `.env.example`.
 
 A real company and its first admin come from `apps/api/scripts/create_org.py`, not the seed: see step 8 of [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -147,6 +147,6 @@ Both exist because `SECURITY DEFINER` escapes the caller's privileges but **not*
 
 ## Not built yet
 
-Signing in is wired: with `VITE_API_URL` set, the shell boots from `GET /me/session` and the sign-in screen stands in front of it. The screens are not: every one still renders mock data, so moving them to the API one at a time is next. The cutover steps, and how far they have got, are in the header of `apps/web/src/auth/session.ts`.
+Signing in is wired: with `VITE_API_URL` set, the shell boots from `GET /me/session` and the sign-in screen stands in front of it. Of the screens, the expense chain (`apps/web/src/features/expenses/bills.ts`), the customers and their orders (`features/sales/customers.ts`, `orders.ts`) and the breakdown register (`features/fleet/breakdowns.ts`) are on the API so far: every other one still renders mock data under a "Sample data" banner, and moving them to the API one at a time is next. Which screens are connected is listed once, in `apps/web/src/shell/connected.ts`. The cutover steps, and how far they have got, are in the header of `apps/web/src/auth/session.ts`.
 
 Beyond `core`, the eleven business schemas in `docs/DATABASE.md` are designed but not migrated. Phase 2 is the money: production costing, GST invoicing, receipts with the cross-verification rule, and the double-entry ledger.

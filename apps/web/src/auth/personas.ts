@@ -95,6 +95,9 @@ export const PERSONAS: Persona[] = [
         // LIN-22: the profit reports and money-due lists; closing a trip paid in full is receipt.verify.
         'fleet.trip_pl.read',
         'finance.pl_report.read',
+        // LIN-27: makes and issues trip invoices, and alone cancels one; counting money on them is receipt.verify.
+        'sales.invoice.write',
+        'sales.invoice.cancel',
       ]),
       ...scoped(['fleet.vehicle.read', 'sales.trip.read'], [KRP, TVL]),
     },
@@ -126,6 +129,9 @@ export const PERSONAS: Persona[] = [
         // LIN-22: enters trip sheets, and sees each one's profit.
         'fleet.trip_pl.read',
         'fleet.trip_pl.write',
+        // LIN-27: makes and issues invoices from those trips; cancelling one is accounts'.
+        'sales.invoice.read',
+        'sales.invoice.write',
       ],
       [KRP, TVL, WSP],
     ),

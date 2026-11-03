@@ -46,6 +46,7 @@ from app.schemas.vehicle_pl import (
     PlOut,
     PlTotalsOut,
     PurchaseOut,
+    SaleInvoiceOut,
     SaleOut,
     SheetIn,
     SheetOut,
@@ -54,6 +55,7 @@ from app.schemas.vehicle_pl import (
     TripOut,
     TripRowOut,
 )
+from app.services import party_invoices
 from app.services.expense_bills import METHOD_OF_MODE, MODE_OF_METHOD, size_kb
 
 READ = "fleet.trip_pl.read"
@@ -192,6 +194,8 @@ class Context:
     files: dict[uuid.UUID, File]
     #: Each sheet worked out, by sheet id.
     calcs: dict[str, pl.SheetCalc]
+    #: The live invoice (LIN-27) each sale line is on, by sale id.
+    invoices: dict[uuid.UUID, party_invoices.InvoiceRef]
 
 
 async def _by_id(db: AsyncSession, model: Any, ids: Iterable[uuid.UUID | None]) -> dict[uuid.UUID, Any]:
@@ -229,6 +233,7 @@ async def build_context(db: AsyncSession, bundles: Sequence[SheetBundle]) -> Con
         bills=bills,
         files=await _by_id(db, File, file_ids),
         calcs={str(b.sheet.id): pl.calculate_sheet(domain_sheet(b, bills)) for b in bundles},
+        invoices=await party_invoices.live_invoices_of(db, [s.id for b in bundles for s in b.sales]),
     )
 
 
@@ -435,6 +440,11 @@ def _item_name(ctx: Context, item_id: uuid.UUID) -> str:
     return item.name if item else ""
 
 
+def _sale_invoice(ctx: Context, sale_id: uuid.UUID) -> SaleInvoiceOut | None:
+    ref = ctx.invoices.get(sale_id)
+    return None if ref is None else SaleInvoiceOut(id=ref.id, number=ref.number, status=ref.status)
+
+
 def trip_out(t: Trip, b: SheetBundle, ctx: Context, calc: pl.TripCalc) -> TripOut:
     purchases = [p for p in b.purchases if p.trip_id == t.id]
     sales = [s for s in b.sales if s.trip_id == t.id]
@@ -496,6 +506,7 @@ def trip_out(t: Trip, b: SheetBundle, ctx: Context, calc: pl.TripCalc) -> TripOu
                 invoice_number=s.invoice_number,
                 po_attachment=_attachment(ctx, s.po_file_id),
                 dc_attachment=_attachment(ctx, s.dc_file_id),
+                invoice=_sale_invoice(ctx, s.id),
                 **calc.sales[str(s.id)].wire(),
             )
             for s in sales
@@ -1045,6 +1056,41 @@ def _check_en_route(lines: Sequence[_Line]) -> None:
         _positive(e.amount, f"{line.where}.amount")
 
 
+async def _check_invoiced(
+    db: AsyncSession,
+    body: SheetIn,
+    existing: SheetBundle | None,
+    sale_lines: Sequence[_Line],
+    sale_values: Sequence[dict[str, Any]],
+) -> None:
+    """A sale line on a draft or issued invoice (LIN-27) stays as it was billed: on its trip, with
+    every figure and name the invoice prints. To change it, delete the draft or cancel the invoice."""
+    if existing is None:
+        return
+    old_sales = {s.id: s for s in existing.sales}
+    live = await party_invoices.live_invoices_of(db, old_sales)
+    if not live:
+        return
+    numbers = {t.id: t.trip_number for t in existing.trips}
+    kept = {
+        ln.body.id: (ln, v) for ln, v in zip(sale_lines, sale_values, strict=True) if ln.body.id is not None
+    }
+    for sale_id, ref in sorted(
+        live.items(), key=lambda kv: (numbers.get(old_sales[kv[0]].trip_id, ""), kv[0])
+    ):
+        old = old_sales[sale_id]
+        problem = {"code": "sale-invoiced", "tripNumber": numbers.get(old.trip_id, ""), **ref.wire()}
+        if body.site_id != existing.sheet.site_id:
+            # The site is the invoice's seller and scope: not moved from under it.
+            raise refuse({**problem, "field": "siteId"})
+        if sale_id not in kept:
+            raise refuse(problem)
+        line, values = kept[sale_id]
+        moved = line.trip_index is None or body.trips[line.trip_index].id != old.trip_id
+        if moved or any(getattr(old, k) != values[k] for k in party_invoices.BILLED_FIELDS):
+            raise refuse({**problem, "field": line.where})
+
+
 async def save_sheet(
     db: AsyncSession, access: Access, calendar: TenantCalendar, body: SheetIn, existing: SheetBundle | None
 ) -> uuid.UUID:
@@ -1229,6 +1275,7 @@ async def save_sheet(
             if m.reference in references:
                 raise refuse({"code": "reference-used", "field": line.where, "reference": m.reference})
             references.add(m.reference)
+    await _check_invoiced(db, body, existing, sale_lines, sale_values)
     _check_en_route(en_route_lines)
     for line in en_route_lines:
         _not_after_today(line.body.date, calendar, f"{line.where}.date")
@@ -1351,6 +1398,10 @@ async def save_sheet(
         ],
         base,
     )
+    # A cancelled invoice keeps its copy of a sale line deleted here, and lets go of it (LIN-27).
+    await party_invoices.let_go_of_sales(
+        db, [i for i in old_sales if i not in {ln.body.id for ln in sale_lines}]
+    )
     await _sync(
         db,
         TripSale,
@@ -1413,6 +1464,19 @@ async def save_sheet(
             for i, ln in enumerate(en_route_lines)
         ],
         base,
+    )
+    # A payment taken off the sheet, or changed in who, which way, how much or which trip,
+    # loses its matches to invoices: the invoice shows that money as due again (LIN-27).
+    kept_payments = {ln.body.id: ln for ln in payment_lines if ln.body.id is not None}
+    await party_invoices.release_payments(
+        db,
+        [
+            old.id
+            for old in old_payments.values()
+            if (ln := kept_payments.get(old.id)) is None
+            or (old.party_id, old.direction, old.amount, old.trip_id)
+            != (ln.body.party_id, ln.body.direction, ln.body.amount, trip_id_of(ln))
+        ],
     )
     await _sync(
         db,
@@ -1493,7 +1557,19 @@ async def _sync(
 
 
 async def delete_sheet(db: AsyncSession, bundle: SheetBundle) -> None:
-    """A sheet, its trips and every line. The audit log keeps what was there."""
+    """A sheet, its trips and every line. The audit log keeps what was there.
+
+    Not while a sale line on it is on a draft or issued invoice (LIN-27): a
+    cancelled invoice keeps its copy of the lines and lets go of them."""
+    live = await party_invoices.live_invoices_of(db, [s.id for s in bundle.sales])
+    if live:
+        numbers = {t.id: t.trip_number for t in bundle.trips}
+        sale = min((s for s in bundle.sales if s.id in live), key=lambda s: numbers.get(s.trip_id, ""))
+        raise refuse(
+            {"code": "sale-invoiced", "tripNumber": numbers.get(sale.trip_id, ""), **live[sale.id].wire()}
+        )
+    await party_invoices.let_go_of_sales(db, [s.id for s in bundle.sales])
+    await party_invoices.release_payments(db, [p.id for p in bundle.payments])
     trip_ids = [t.id for t in bundle.trips]
     purchase_ids = [p.id for p in bundle.purchases]
     if purchase_ids:

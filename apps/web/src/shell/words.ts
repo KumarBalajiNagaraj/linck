@@ -1,6 +1,10 @@
 import type { Alert } from '@linck/mock';
 import type { Density } from '@linck/tokens';
 import { words } from '../i18n/words.js';
+import type { RealPart } from './connected.js';
+
+/** "bills", "bills and breakdowns", "bills, breakdowns and orders". */
+const andList = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
 
 /** The shell's words: top bar, menus, alerts, the session sheet. */
 export const shellWords = words({
@@ -59,12 +63,23 @@ export const shellWords = words({
     noAccessEyebrow: 'No access',
     noAccess: 'You cannot open this page',
     askAdmin: 'Ask your admin to give you access.',
+    /** Live only: the top of a screen not on the API yet (SampleBanner.tsx). */
+    sample: {
+      lead: 'Sample data.',
+      notConnected: 'This screen is not connected to your company yet.',
+      /** A screen whose named counts are the API's, and the rest sample (shell/connected.ts). */
+      except: (parts: string[]) => `Sample data, except the ${andList(parts)}.`,
+      parts: { bills: 'bills', breakdowns: 'breakdowns', orders: 'orders' } satisfies Record<RealPart, string>,
+      restNotConnected: 'The rest is not connected to your company yet.',
+    },
     board: {
       priority: { highest: 'Most urgent', high: 'Urgent', medium: 'Soon' },
       noneNow: (definition: string) => `None now — ${definition.charAt(0).toLowerCase()}${definition.slice(1)}`,
     },
     palette: {
       placeholder: 'Vehicle no., invoice no., customer or page',
+      /** Live: only pages and actions are found until the records are on the API. */
+      placeholderLive: 'Page name',
       results: 'Results',
       groups: { navigate: 'Pages', record: 'Records', action: 'Start', recent: 'Recent', likely: 'Your pages' },
       tags: { screen: 'page', vehicle: 'vehicle', invoice: 'invoice', customer: 'customer', trip: 'trip', indent: 'request', action: 'start' } as Record<string, string>,
@@ -136,12 +151,20 @@ export const shellWords = words({
     noAccessEyebrow: 'அனுமதி இல்லை',
     noAccess: 'இந்தப் பக்கத்தைத் திறக்க முடியாது',
     askAdmin: 'அனுமதி தர உங்கள் அட்மினிடம் கேளுங்கள்.',
+    sample: {
+      lead: 'மாதிரி விவரங்கள்.',
+      notConnected: 'இந்தப் பக்கம் இன்னும் உங்கள் நிறுவனத்துடன் இணைக்கப்படவில்லை.',
+      except: (parts) => `${parts.join(', ')} தவிர, மற்றவை மாதிரி விவரங்கள்.`,
+      parts: { bills: 'பில்கள்', breakdowns: 'பழுதுகள்', orders: 'ஆர்டர்கள்' },
+      restNotConnected: 'அவை இன்னும் உங்கள் நிறுவனத்துடன் இணைக்கப்படவில்லை.',
+    },
     board: {
       priority: { highest: 'மிக அவசரம்', high: 'அவசரம்', medium: 'விரைவில்' },
       noneNow: (definition) => `இப்போது இல்லை — ${definition}`,
     },
     palette: {
       placeholder: 'வண்டி எண், இன்வாய்ஸ் எண், வாடிக்கையாளர் அல்லது பக்கம்',
+      placeholderLive: 'பக்கத்தின் பெயர்',
       results: 'முடிவுகள்',
       groups: { navigate: 'பக்கங்கள்', record: 'பதிவுகள்', action: 'தொடங்கு', recent: 'சமீபத்தியவை', likely: 'உங்கள் பக்கங்கள்' },
       tags: { screen: 'பக்கம்', vehicle: 'வண்டி', invoice: 'இன்வாய்ஸ்', customer: 'வாடிக்கையாளர்', trip: 'ட்ரிப்', indent: 'கோரிக்கை', action: 'தொடங்கு' },

@@ -13,10 +13,15 @@
  *   3. Feed `sessionToAppState(payload)` into the store, and take
  *      `PersonaSwitcher` + `TenantShapeSwitcher` out of the shell. Done for
  *      live mode; the demo keeps both, since it has no server to own them.
- *   4. Only then swap the mock selectors screen by screen. Not yet: live mode
- *      signs in for real, with real permissions and the real menu, over the
- *      same mock data. The shell being on the real session while a screen is
- *      still on mock data is fine; the reverse is not.
+ *   4. Only then swap the mock selectors screen by screen. Under way: the
+ *      expense chain reads and writes `/expenses` (features/expenses/bills.ts);
+ *      customers, orders and breakdowns read and write `/customers`,
+ *      `/purchase-orders` and `/breakdowns` (features/sales/customers.ts,
+ *      orders.ts, features/fleet/breakdowns.ts); and every screen not yet on
+ *      the API says "Sample data" at its top (shell/connected.ts lists the
+ *      ones that are). The shell being on the real session while a screen is
+ *      still on mock data is fine, as long as the screen says so; the reverse
+ *      is not.
  *
  * Keep this file shaped exactly like the endpoint. It is the one place the
  * frontend states what it needs from the backend, and it is easier to argue
@@ -48,7 +53,7 @@ export interface SessionOrganization {
   baseCurrency: string;
   timezone: string;
   fiscalYearStartMonth: number;
-  /** `block` | `review_queue` | `off` — how hard segregation of duties bites. */
+  /** `review_queue` (the default: a second signature is allowed, with a reason, and goes to review) or `hard_block` (refused). The API reads it (app/api/access.py); the web does not yet. */
   segregationEnforcement: string;
 }
 

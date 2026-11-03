@@ -4,6 +4,7 @@ import { can } from '@linck/domain';
 import { DENSITIES, type Density } from '@linck/tokens';
 import { ALERTS, documentExposure, expensesForSite, fleetCounts, INDENTS, EXTRACTION_JOBS, pendingVerification, SITES } from '@linck/mock';
 import { Button, StatusStamp, UiWordsProvider } from '@linck/ui';
+import { LIVE } from '../auth/api.js';
 import { signOut } from '../auth/auth.js';
 import { PERSONAS } from '../auth/personas.js';
 import type { SessionRole } from '../auth/session.js';
@@ -16,7 +17,9 @@ import { Mark } from './Mark.js';
 import { MODULES, navLabel, WORKSPACES, type ModuleKey } from './nav-manifest.js';
 import { useApp } from './store.js';
 import { shellWords } from './words.js';
-import { useExpenses } from '../features/expenses/expenseStore.js';
+import { useBills } from '../features/expenses/bills.js';
+import { downAt } from '../features/fleet/breakdownApi.js';
+import { useBreakdowns } from '../features/fleet/breakdowns.js';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { persona, siteScope, enabledModules, density, theme, signedIn, setPersona, setSiteScope, setEnabledModules, setDensity, toggleTheme } =
@@ -132,38 +135,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span aria-hidden="true">⌕</span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => setAlertsOpen((v) => !v)}
-          className="relative flex h-11 shrink-0 items-center gap-1 px-1.5 text-[13px] md:h-8 md:gap-1.5 md:px-2"
-          style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
-          title={t.alerts}
-        >
-          <span aria-hidden="true">◔</span>
-          {/*
-            A tabular integer, never a bare red dot — "how many" is the point.
-            And the critical count is written out separately rather than being
-            carried by the colour of the total: "12" in red says something is
-            wrong without saying how much, which is the exact failure LAW 2
-            exists to prevent. The glyph carries the severity too, so this
-            still reads in greyscale.
-          */}
-          <span className="num tabular-nums text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-            {ALERTS.length}
-          </span>
-          {criticalAlerts > 0 ? (
-            <span
-              className="num tabular-nums text-[12px] font-medium"
-              style={{ color: 'var(--status-critical)' }}
-              title={t.urgentAlerts(criticalAlerts)}
-            >
-              <span aria-hidden="true" className="mr-0.5 text-[9px]">
-                ▲
-              </span>
-              {criticalAlerts}
+        {/* The alerts are the demo's sample data. Live, a signed-in person
+            must never read them as their company's, so there are none yet. */}
+        {LIVE ? null : (
+          <button
+            type="button"
+            onClick={() => setAlertsOpen((v) => !v)}
+            className="relative flex h-11 shrink-0 items-center gap-1 px-1.5 text-[13px] md:h-8 md:gap-1.5 md:px-2"
+            style={{ color: 'var(--text-secondary)', borderRadius: 'var(--r-1)' }}
+            title={t.alerts}
+          >
+            <span aria-hidden="true">◔</span>
+            {/*
+              A tabular integer, never a bare red dot — "how many" is the point.
+              And the critical count is written out separately rather than being
+              carried by the colour of the total: "12" in red says something is
+              wrong without saying how much, which is the exact failure LAW 2
+              exists to prevent. The glyph carries the severity too, so this
+              still reads in greyscale.
+            */}
+            <span className="num tabular-nums text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+              {ALERTS.length}
             </span>
-          ) : null}
-        </button>
+            {criticalAlerts > 0 ? (
+              <span
+                className="num tabular-nums text-[12px] font-medium"
+                style={{ color: 'var(--status-critical)' }}
+                title={t.urgentAlerts(criticalAlerts)}
+              >
+                <span aria-hidden="true" className="mr-0.5 text-[9px]">
+                  ▲
+                </span>
+                {criticalAlerts}
+              </span>
+            ) : null}
+          </button>
+        )}
 
         <DensityToggle density={density} onChange={setDensity} />
 
@@ -454,7 +461,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="md:hidden" style={{ height: `calc(60px + env(safe-area-inset-bottom))` }} />
         </main>
 
-        {alertsOpen ? <AlertDrawer onClose={() => setAlertsOpen(false)} /> : null}
+        {alertsOpen && !LIVE ? <AlertDrawer onClose={() => setAlertsOpen(false)} /> : null}
       </div>
 
       <BottomTabs workspaces={visible} activeKey={active?.key} badges={badges} />
@@ -600,8 +607,21 @@ function BottomTabs({
 }
 
 function useBadges(siteScope: string | null): Record<string, { count: number; tone: 'critical' | 'neutral' }> {
-  const bills = useExpenses((s) => s.bills);
+  const { bills } = useBills();
+  const breakdowns = useBreakdowns().rows;
   return useMemo(() => {
+    // The bill counts read the bills the expense screens read: live, the API's.
+    const expenses = {
+      pending_expenses: { count: expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length, tone: 'neutral' as const },
+      awaiting_director: { count: expensesForSite(siteScope, null, bills).filter((e) => e.status === 'validated').length, tone: 'neutral' as const },
+    };
+    // Every other count is the demo's sample data. Live, none is shown
+    // against a real company's menu until its screen is on the API — but
+    // the vehicles off the road, which live are the breakdown register's.
+    if (LIVE) {
+      const down = downAt(breakdowns, siteScope);
+      return { ...expenses, breakdowns: { count: down, tone: down > 0 ? 'critical' : 'neutral' } };
+    }
     const docs = documentExposure(siteScope);
     const fleet = fleetCounts(siteScope);
     return {
@@ -610,10 +630,9 @@ function useBadges(siteScope: string | null): Record<string, { count: number; to
       extraction_queue: { count: EXTRACTION_JOBS.length, tone: 'neutral' },
       open_indents: { count: INDENTS.filter((i) => i.status === 'submitted').length, tone: 'neutral' },
       breakdowns: { count: fleet.breakdown, tone: fleet.breakdown > 0 ? 'critical' : 'neutral' },
-      pending_expenses: { count: expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length, tone: 'neutral' },
-      awaiting_director: { count: expensesForSite(siteScope, null, bills).filter((e) => e.status === 'validated').length, tone: 'neutral' },
+      ...expenses,
     };
-  }, [siteScope, bills]);
+  }, [siteScope, bills, breakdowns]);
 }
 
 function ScopeSwitcher({

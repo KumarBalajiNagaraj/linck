@@ -36,7 +36,9 @@ class SessionOrganization(CamelModel):
     base_currency: str
     timezone: str
     fiscal_year_start_month: int
-    # `block` | `review_queue` | `off`: how hard segregation of duties bites.
+    # `review_queue` (the default: a second signature is allowed, with a reason,
+    # and goes to review) or `hard_block` (refused). app/api/access.py reads it;
+    # any other value behaves as `review_queue`.
     segregation_enforcement: str
 
 

@@ -73,6 +73,8 @@ ROLES: dict[str, RoleSpec] = {
         (
             "sales.invoice.read",
             "sales.invoice.write",
+            # LIN-27: cancelling an issued invoice is accounts' work.
+            "sales.invoice.cancel",
             "sales.trip.read",
             "finance.receipt.read",
             "finance.receipt.verify",
@@ -116,6 +118,9 @@ ROLES: dict[str, RoleSpec] = {
             # LIN-22: enters trips, and sees each trip's profit.
             "fleet.trip_pl.read",
             "fleet.trip_pl.write",
+            # LIN-27: and makes the customers' invoices from those trips.
+            "sales.invoice.read",
+            "sales.invoice.write",
         ),
     ),
     "production_incharge": RoleSpec(

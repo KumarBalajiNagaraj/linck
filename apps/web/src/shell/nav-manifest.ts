@@ -102,6 +102,8 @@ export const WORKSPACES: Workspace[] = [
       { key: 'diesel-summary', label: 'Diesel report', ta: 'டீசல் அறிக்கை', route: '/fleet/diesel-summary', permission: 'fleet.expense.read' },
       // LIN-22: trip sheets and each trip's profit.
       { key: 'vehicle-pl', label: 'Vehicle P&L', ta: 'வண்டி லாப நஷ்டம்', route: '/fleet/pl', permission: 'fleet.trip_pl.read' },
+      // LIN-27: GST invoices made from those trips.
+      { key: 'trip-invoices', label: 'Trip invoices', ta: 'ட்ரிப் இன்வாய்ஸ்கள்', route: '/fleet/pl/invoices', permission: 'sales.invoice.read' },
       { key: 'docs', label: 'Documents', ta: 'ஆவணங்கள்', route: '/compliance/documents', permission: 'compliance.document.read', badge: 'expiring_docs' },
       // Inter-state movement is material here, so the e-way bill console is a
       // first-class destination and not a tab hidden inside dispatch.
@@ -161,6 +163,7 @@ export const WORKSPACES: Workspace[] = [
       },
       { key: 'expense-bills', label: 'Expense bills', ta: 'செலவு பில்கள்', route: '/finance/expenses', permission: 'finance.expense.read' },
       { key: 'finance-pl', label: 'Profit reports', ta: 'லாப நஷ்ட அறிக்கை', route: '/finance/pl', permission: 'finance.pl_report.read' },
+      { key: 'finance-invoices', label: 'Trip invoices', ta: 'ட்ரிப் இன்வாய்ஸ்கள்', route: '/finance/invoices', permission: 'sales.invoice.read' },
     ],
   },
   {

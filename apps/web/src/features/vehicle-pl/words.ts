@@ -421,6 +421,9 @@ export const sheetWords = words({
       'name-used': 'That name is already in the list.',
       'code-used': 'That code is already used.',
       'gstin-set': 'This party already has a GSTIN.',
+      // LIN-27: a sale line on a draft or issued invoice stays as billed.
+      'sale-invoiced': (trip: string, invoice: string | null) =>
+        invoice ? `${trip} is on invoice ${invoice}. Cancel the invoice to change it.` : `${trip} is on a draft invoice. Delete the draft to change it.`,
       required: 'Fill this in',
       positive: 'More than zero',
       afterToday: 'Not after today',
@@ -643,6 +646,8 @@ export const sheetWords = words({
       'name-used': 'இந்தப் பெயர் ஏற்கனவே பட்டியலில் உள்ளது.',
       'code-used': 'இந்தக் குறியீடு ஏற்கனவே உள்ளது.',
       'gstin-set': 'இவருக்கு ஏற்கனவே ஜிஎஸ்டி எண் உள்ளது.',
+      'sale-invoiced': (trip: string, invoice: string | null) =>
+        invoice ? `${trip} இன்வாய்ஸ் ${invoice} இல் உள்ளது. மாற்ற, இன்வாய்ஸை ரத்து செய்யவும்.` : `${trip} வரைவு இன்வாய்ஸில் உள்ளது. மாற்ற, வரைவை நீக்கவும்.`,
       required: 'இதை நிரப்பவும்',
       positive: 'பூஜ்யத்தை விட அதிகம்',
       afterToday: 'இன்றைக்குப் பின் கூடாது',

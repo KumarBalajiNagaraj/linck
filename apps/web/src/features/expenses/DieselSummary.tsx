@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
 import { formatDate, formatINR, summarizeDiesel } from '@linck/domain';
-import { DRIVERS, expensesForSite, VEHICLES, type ExpenseBill } from '@linck/mock';
+import { expensesForSite, type ExpenseBill } from '@linck/mock';
 import { Chip, DataTable, EmptyState, IdCell, MoneyCell, PageHeader, Provisional, QuantityCell, Section, type Column } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
-import { useExpenses } from './expenseStore.js';
+import { driverLabel, useBills, vehicleLabel } from './bills.js';
+import { BillsNotHere } from './ExpenseRegister.js';
 import { expenseWords } from './words.js';
 
 /**
@@ -37,7 +38,8 @@ const paise = (b: ExpenseBill) => Math.round(Number.parseFloat(b.amount) * 100);
 
 export function DieselSummary() {
   const { siteScope } = useApp();
-  const bills = useExpenses((s) => s.bills);
+  const list = useBills();
+  const { bills } = list;
   const [view, setView] = useViewParam(VIEWS, 'vehicle');
   const t = useWords(expenseWords);
   const w = t.summary;
@@ -60,8 +62,8 @@ export function DieselSummary() {
             ? w.noVehicle
             : w.driverNotKnown
           : view === 'vehicle'
-            ? (VEHICLES.find((v) => v.id === line.key)?.displayReg ?? line.key)
-            : (DRIVERS.find((d) => d.id === line.key)?.name ?? line.key),
+            ? (vehicleLabel(line.key) ?? line.key)
+            : (driverLabel(line.key) ?? line.key),
       unchecked: (unchecked.get(line.key) ?? 0) / 100,
     }));
   }, [diesel, view, w]);
@@ -128,7 +130,7 @@ export function DieselSummary() {
           columns={columns}
           rows={lines}
           rowKey={(l) => l.key}
-          empty={<EmptyState fact={w.none} />}
+          empty={list.state !== 'ready' ? <BillsNotHere list={list} /> : <EmptyState fact={w.none} />}
         />
       </Section>
       <div className="h-10" />

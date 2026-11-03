@@ -102,10 +102,22 @@ export const PERSONA_HOME_RULES: ReadonlyArray<{ permission: string; route: stri
   { permission: 'field.trip.read', route: '/field' },
 ];
 
-export function resolveHome(grants: Grants, pinned?: string | null): string {
+/**
+ * Someone no rule fits — a member admin with no desk of their own, say —
+ * lands on the first page of their own menu they may open, never on a page
+ * that turns them away. `menu` is that menu in its order, already cut to the
+ * modules the tenant has; `siteId` is the scope they land in. '/overview' is
+ * left only for a person who may open nothing at all.
+ */
+export function resolveHome(
+  grants: Grants,
+  pinned?: string | null,
+  menu: ReadonlyArray<{ permission: string; route: string }> = [],
+  siteId: string | null = null,
+): string {
   if (pinned) return pinned;
   for (const rule of PERSONA_HOME_RULES) {
     if (can(grants, rule.permission)) return rule.route;
   }
-  return '/overview';
+  return menu.find((item) => can(grants, item.permission, { siteId }))?.route ?? '/overview';
 }

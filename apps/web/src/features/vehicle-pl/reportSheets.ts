@@ -1,6 +1,7 @@
 import type { PlTotals } from '@linck/domain';
 import type { PlMonthRow, PlOutstandingRow, PlOutstandingTotal, PlReport, PlSheetRow, PlTripReportRow, PlVehicleRow } from '@linck/mock';
 import type { Cell, ReportSheet } from './exporters.js';
+import type { CustomerPlRow } from './insights.js';
 import type { plWords } from './words.js';
 
 /**
@@ -141,7 +142,10 @@ export function outstandingSheet(
       { header: w.col.gstin, kind: 'text' },
       { header: w.col.trips, kind: 'number' },
       { header: `${w.col.billed} ₹`, kind: 'money' },
-      { header: `${role === 'customer' ? w.col.received : w.col.paid} ₹`, kind: 'money' },
+      {
+        header: `${role === 'customer' ? w.col.received : w.col.paid} ₹`,
+        kind: 'money',
+      },
       { header: `${w.col.due} ₹`, kind: 'money' },
       { header: w.col.status, kind: 'text' },
       { header: w.col.since, kind: 'date' },
@@ -149,5 +153,16 @@ export function outstandingSheet(
     ],
     rows: report.rows.map((r) => [r.name, r.gstin, r.trips, r.billed, r.settled, r.due, w.status[r.status], r.firstDate, r.lastDate]),
     total: [w.total, null, null, report.total.billed, report.total.settled, report.total.due, null, null, null],
+  };
+}
+
+export function customersPlSheet(w: W, rows: CustomerPlRow[], total: PlTotals, subtitle: string): ReportSheet {
+  return {
+    name: w.sheets.customersPl,
+    title: `${w.title} — ${w.sheets.customersPl}`,
+    subtitle,
+    columns: [{ header: w.col.customer, kind: 'text' }, { header: w.col.trips, kind: 'number' }, ...money(w)],
+    rows: rows.map((r) => [r.name, r.trips, ...moneyCells(r)]),
+    total: [w.total, rows.reduce((n, r) => n + r.trips, 0), ...moneyCells(total)],
   };
 }

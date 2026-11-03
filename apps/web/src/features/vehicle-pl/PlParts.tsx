@@ -1,7 +1,9 @@
+import { useCallback } from 'react';
 import type { PlTotals } from '@linck/domain';
 import { Chip, KpiTile, TileRow } from '@linck/ui';
 import { useInrCompact } from '../../i18n/format.js';
 import { useWords } from '../../i18n/words.js';
+import { change, type PreviousRange } from './insights.js';
 import { todayIso } from './plStore.js';
 import { plWords } from './words.js';
 
@@ -45,11 +47,14 @@ export function FilterBar({
   onChange,
   vehicles,
   customers,
+  extra,
 }: {
   value: FilterState;
   onChange: (next: FilterState) => void;
   vehicles?: { id: string; label: string }[] | undefined;
   customers?: { id: string; label: string }[] | undefined;
+  /** A toggle that belongs with the period chips: "Losses only". */
+  extra?: React.ReactNode;
 }) {
   const w = useWords(plWords);
   const pickPeriod = (period: PeriodKey) => onChange({ ...value, period, ...periodRange(period) });
@@ -61,6 +66,12 @@ export function FilterBar({
             {w.period[p]}
           </Chip>
         ))}
+        {extra ? (
+          <>
+            <span aria-hidden="true" className="mx-1 w-px self-stretch" style={{ background: 'var(--border-default)' }} />
+            {extra}
+          </>
+        ) : null}
       </div>
       <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap md:items-end">
         <label className="col-span-2 flex min-w-0 flex-col gap-1 md:w-[300px]">
@@ -125,22 +136,55 @@ export function FilterBar({
 
 const negative = (money: string) => money.startsWith('-');
 
-/** The four tiles above a list or report: sales, profit, what the road cost, what is due. */
-export function PlTiles({ total, asOf }: { total: PlTotals; asOf: string }) {
+/** The words for the period before: "vs same days last month". */
+export function useAgainst() {
+  const w = useWords(plWords);
+  return useCallback((p: PreviousRange) => (p.key === 'daysBefore' ? w.against.daysBefore(p.days) : w.against[p.key]), [w]);
+}
+
+/** The period to compare with, and the words that name it ("vs same days last month"). */
+export interface Comparison {
+  totals: PlTotals;
+  against: string;
+}
+
+/**
+ * "▲ ₹2.10 L (12.3%) vs same days last month". The arrow is the mark, so a
+ * rise and a fall read apart without colour; a fall in profit alone spends
+ * the attention colour, because that is the figure the owner acts on.
+ */
+export function useChangeLine() {
   const w = useWords(plWords);
   const inr = useInrCompact();
+  return (now: string, before: string, against: string): { text: string; fell: boolean } => {
+    const c = change(now, before);
+    if (c.direction === 'same') return { text: w.same(against), fell: false };
+    const arrow = c.direction === 'up' ? '▲' : '▼';
+    const amount = inr(c.delta.startsWith('-') ? c.delta.slice(1) : c.delta);
+    return { text: w.changeLine(arrow, amount, c.pct === null ? null : Math.abs(c.pct).toFixed(1), against), fell: c.direction === 'down' };
+  };
+}
+
+/** The four tiles above a list or report: sales, profit, what the road cost, what is due — each set against the last period where there is one. */
+export function PlTiles({ total, asOf, previous }: { total: PlTotals; asOf: string; previous?: Comparison | null | undefined }) {
+  const w = useWords(plWords);
+  const inr = useInrCompact();
+  const changeLine = useChangeLine();
   const loss = negative(total.net);
   const stamp = { asOf, source: w.title, freshness: 'live' as const };
+  const salesChange = previous ? changeLine(total.sales, previous.totals.sales, previous.against) : null;
+  const profitChange = previous ? changeLine(total.net, previous.totals.net, previous.against) : null;
+  const ofSales = total.profitPct === null ? w.tiles.noSales : w.tiles.ofSales(total.profitPct.toFixed(2));
   return (
     <TileRow className="grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-      <KpiTile eyebrow={w.tiles.sales} value={inr(total.sales)} delta={{ text: w.tiles.trips(total.trips) }} {...stamp} />
+      <KpiTile eyebrow={w.tiles.sales} value={inr(total.sales)} delta={{ text: salesChange ? `${w.tiles.trips(total.trips)} · ${salesChange.text}` : w.tiles.trips(total.trips) }} {...stamp} />
       <KpiTile
         eyebrow={loss ? w.tiles.loss : w.tiles.profit}
         value={inr(loss ? total.net.slice(1) : total.net)}
         hero
         delta={{
-          text: total.profitPct === null ? w.tiles.noSales : w.tiles.ofSales(total.profitPct.toFixed(2)),
-          tone: loss ? 'critical' : 'neutral',
+          text: profitChange ? `${ofSales} · ${profitChange.text}` : ofSales,
+          tone: loss ? 'critical' : profitChange?.fell ? 'attention' : 'neutral',
         }}
         {...stamp}
       />
@@ -150,12 +194,7 @@ export function PlTiles({ total, asOf }: { total: PlTotals; asOf: string }) {
         delta={{ text: w.tiles.km(total.distanceKm.toLocaleString('en-IN'), total.mileageKmpl === null ? null : total.mileageKmpl.toFixed(2)) }}
         {...stamp}
       />
-      <KpiTile
-        eyebrow={w.tiles.customerDue}
-        value={inr(total.customerDue)}
-        delta={{ text: `${w.tiles.vendorDue}: ${inr(total.vendorDue)}`, tone: negative(total.vendorDue) ? 'neutral' : 'neutral' }}
-        {...stamp}
-      />
+      <KpiTile eyebrow={w.tiles.customerDue} value={inr(total.customerDue)} delta={{ text: `${w.tiles.vendorDue}: ${inr(total.vendorDue)}` }} {...stamp} />
     </TileRow>
   );
 }

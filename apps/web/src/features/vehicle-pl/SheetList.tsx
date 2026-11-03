@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { can, formatDate } from '@linck/domain';
+import { can, formatDate, sumPl } from '@linck/domain';
 import { NOW, VEHICLES, type PlSheetRow, type PlTripReportRow } from '@linck/mock';
 import { Button, Chip, DataTable, EmptyState, IdCell, MoneyCell, PageHeader, QuantityCell, Stacked, type Column } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
 import { downloadXlsx, PrintView, type ReportSheet } from './exporters.js';
-import { FilterBar, NO_FILTER, PlTiles, type FilterState } from './PlParts.js';
+import { previousRange } from './insights.js';
+import { FilterBar, NO_FILTER, PlTiles, useAgainst, type Comparison, type FilterState } from './PlParts.js';
 import { listSheets, NEW_PATH, READ_KEYS, reportUnits, sheetPath, sheetsTotal, tripReport, usePl, usePlBook, WRITE, type SheetFilter } from './plStore.js';
 import { sheetsSheet, tripsSheet } from './reportSheets.js';
 import { plWords } from './words.js';
@@ -28,11 +29,27 @@ export function SheetList() {
   const [view, setView] = useViewParam(VIEWS, 'sheets');
   const [filter, setFilter] = useState<FilterState>(NO_FILTER);
   const [printing, setPrinting] = useState<ReportSheet[] | null>(null);
+  const [lossesOnly, setLossesOnly] = useState(false);
+  const againstWords = useAgainst();
   const f: SheetFilter = { from: filter.from || null, to: filter.to || null, q: filter.q, vehicleId: filter.vehicleId || null, customerId: filter.customerId || null };
 
-  const rows = useMemo(() => listSheets(book, persona.grants, READ_KEYS, f), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
-  const trips = useMemo(() => tripReport(book, reportUnits(book, persona.grants, READ_KEYS, f)), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
+  const allRows = useMemo(() => listSheets(book, persona.grants, READ_KEYS, f), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
+  const allTrips = useMemo(() => tripReport(book, reportUnits(book, persona.grants, READ_KEYS, f)), [book, persona.grants, f.from, f.to, f.q, f.vehicleId, f.customerId]);
+  // "Losses only": the sheets and trips that lost money, and their totals.
+  const rows = useMemo(() => (lossesOnly ? allRows.filter((r) => r.pl.net.startsWith('-')) : allRows), [allRows, lossesOnly]);
+  const trips = useMemo(() => {
+    if (!lossesOnly) return allTrips;
+    const lost = allTrips.rows.filter((r) => r.kind === 'trip' && r.pl.net.startsWith('-'));
+    return { rows: lost, total: sumPl(lost.map((r) => r.pl), lost.length) };
+  }, [allTrips, lossesOnly]);
   const total = view === 'sheets' ? sheetsTotal(rows) : trips.total;
+  // The trip-wise total one period back, for the ▲▼ on the Trips view's tiles.
+  const prev = previousRange(filter.period, filter.from, filter.to);
+  const previous = useMemo((): Comparison | null => {
+    if (!prev || lossesOnly) return null;
+    const t = tripReport(book, reportUnits(book, persona.grants, READ_KEYS, { ...f, from: prev.from, to: prev.to })).total;
+    return t.trips === 0 ? null : { totals: t, against: againstWords(prev) };
+  }, [book, persona.grants, prev?.from, prev?.to, prev?.key, f.q, f.vehicleId, f.customerId, lossesOnly, againstWords]);
   const writable = VEHICLES.some((v) => can(persona.grants, WRITE, { siteId: v.siteId }));
 
   const vehicles = useMemo(() => {
@@ -83,11 +100,15 @@ export function SheetList() {
     { key: 'pct', header: w.col.pct, type: 'num', render: (r) => (r.pl.profitPct === null ? '—' : r.pl.profitPct.toFixed(2)) },
   ];
 
+  const showAll = () => {
+    setFilter(NO_FILTER);
+    setLossesOnly(false);
+  };
   const empty =
     book.sheets.length === 0 ? (
       <EmptyState fact={w.noSheets} />
     ) : (
-      <EmptyState fact={w.noneMatch} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />
+      <EmptyState fact={w.noneMatch} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: showAll }} />
     );
 
   return (
@@ -114,8 +135,18 @@ export function SheetList() {
           </Chip>
         ))}
       </div>
-      <FilterBar value={filter} onChange={setFilter} vehicles={vehicles} customers={customers} />
-      <PlTiles total={total} asOf={formatDate(NOW)} />
+      <FilterBar
+        value={filter}
+        onChange={setFilter}
+        vehicles={vehicles}
+        customers={customers}
+        extra={
+          <Chip active={lossesOnly} onClick={() => setLossesOnly(!lossesOnly)}>
+            {w.lossesOnly}
+          </Chip>
+        }
+      />
+      <PlTiles total={total} asOf={formatDate(NOW)} previous={view === 'trips' ? previous : null} />
       {view === 'sheets' ? (
         <DataTable
           columns={sheetColumns}

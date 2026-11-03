@@ -9,8 +9,9 @@
     DELETE /sheets/{id}/trips/{tripId}/close take that back                            close
     GET    /masters                          vendors, customers, materials, GST rates
     POST   /parties                          a vendor or customer added from the sheet write
-    PATCH  /parties/{id}                     a GSTIN or phone typed on a line, saved   write
+    PATCH  /parties/{id}                     a GSTIN, phone or address, saved          write*
     POST   /parties/{id}/locations           a purchase or delivery location, saved    write
+    PATCH  /parties/{id}/locations/{locId}   a location's address and state            write*
     POST   /materials                        a material: HSN, unit, default GST rate   write
     PATCH  /materials/{id}                   correct a material, or retire it          write
     POST   /gst-rates                        a GST rate lines may be billed at         write
@@ -26,7 +27,9 @@
 
     under /vehicle-pl. readers: fleet.trip_pl.read or finance.pl_report.read;
     write: fleet.trip_pl.write; close: finance.receipt.verify; report:
-    finance.pl_report.read.
+    finance.pl_report.read. write*: fleet.trip_pl.write or sales.invoice.write,
+    since whoever makes invoices (LIN-27, app/api/party_invoices.py) keeps the
+    addresses and delivery states they print.
 
 A sheet is read where fleet.trip_pl.read or finance.pl_report.read reaches its
 site, and written where fleet.trip_pl.write does: whoever enters a sheet sees
@@ -55,6 +58,7 @@ from app.api.problems import gone, invalid, needs_permission, refuse
 from app.core.settings import get_settings
 from app.core.storage import UploadRefused, clean_file_name, file_store, read_capped, stored_file_response
 from app.domain import vehicle_pl as pl
+from app.domain.party_invoice import GST_STATES
 from app.models.core import File, Site
 from app.models.finance import ExpenseBill
 from app.models.logistics import DieselLine, EnRouteExpense, Trip, TripSheet
@@ -72,6 +76,7 @@ from app.schemas.vehicle_pl import (
     LinkedSheetOut,
     LocationIn,
     LocationOut,
+    LocationPatch,
     MastersOut,
     MaterialIn,
     MaterialOut,
@@ -266,7 +271,12 @@ def party_out(p: Party, locations: list[PartyLocation]) -> PartyOut:
         phone=p.phone,
         contact_name=p.contact_name,
         roles=list(p.party_roles),
-        locations=[LocationOut(id=x.id, name=x.name) for x in locations if x.party_id == p.id],
+        locations=[
+            LocationOut(id=x.id, name=x.name, address=x.address, state_code=x.state_code)
+            for x in locations
+            if x.party_id == p.id
+        ],
+        address=p.address,
     )
 
 
@@ -353,6 +363,7 @@ async def add_party(body: PartyIn, current: CurrentSessionDep) -> PartyOut:
             gstin=body.gstin,
             contact_name=body.contact_name,
             phone=body.phone,
+            address=body.address,
             served_from_site_id=body.site_id if body.role == "customer" else None,
         )
         db.add(party)
@@ -364,20 +375,32 @@ async def add_party(body: PartyIn, current: CurrentSessionDep) -> PartyOut:
     return party_out(party, await _locations(db, [party.id]))
 
 
-async def _party_to_write(current: CurrentSessionDep, party_id: uuid.UUID) -> Party:
-    if not (await access_for(current)).can(WRITE):
-        raise needs_permission(WRITE)
+#: Whoever makes invoices from trips (LIN-27) may keep the addresses and states they print.
+INVOICE_WRITE = "sales.invoice.write"
+
+
+async def _party_to_write(current: CurrentSessionDep, party_id: uuid.UUID, *keys: str) -> Party:
+    access = await access_for(current)
+    keys = keys or (WRITE,)
+    if not any(access.can(k) for k in keys):
+        raise needs_permission(keys[0])
     party = await current.db.get(Party, party_id, with_for_update=True)
     if party is None:
         raise gone()
     return party
 
 
+def _state(code: str | None) -> str | None:
+    if code is not None and code not in GST_STATES:
+        raise invalid("stateCode", "not a state")
+    return code
+
+
 @router.patch("/parties/{party_id}", response_model=PartyOut)
 async def update_party(party_id: uuid.UUID, body: PartyPatch, current: CurrentSessionDep) -> PartyOut:
     """A GSTIN typed on a line, saved into the master; only where the master has none,
-    so a line never rewrites a firm's registered GSTIN."""
-    party = await _party_to_write(current, party_id)
+    so a line never rewrites a firm's registered GSTIN. Or the billing address an invoice prints."""
+    party = await _party_to_write(current, party_id, WRITE, INVOICE_WRITE)
     if body.gstin is not None and body.gstin != party.gstin:
         if not gstin_is_valid(body.gstin):
             raise invalid("gstin", "not a valid GSTIN")
@@ -386,6 +409,8 @@ async def update_party(party_id: uuid.UUID, body: PartyPatch, current: CurrentSe
         party.gstin = body.gstin
     if body.phone is not None:
         party.phone = body.phone
+    if body.address is not None:
+        party.address = body.address
     try:
         await current.db.flush()
     except IntegrityError as exc:
@@ -395,9 +420,37 @@ async def update_party(party_id: uuid.UUID, body: PartyPatch, current: CurrentSe
 
 @router.post("/parties/{party_id}/locations", response_model=PartyOut, status_code=status.HTTP_201_CREATED)
 async def add_location(party_id: uuid.UUID, body: LocationIn, current: CurrentSessionDep) -> PartyOut:
-    """A purchase or delivery location typed on a line, saved into the party's master."""
+    """A purchase or delivery location typed on a line, saved into the party's master, with its
+    address and state when given (filling in a location that has none yet)."""
     party = await _party_to_write(current, party_id)
+    state = _state(body.state_code)
     await _add_locations(current.db, party, [body.name])
+    location = next(
+        x for x in await _locations(current.db, [party.id]) if x.name.lower() == body.name.lower()
+    )
+    if body.address and not location.address:
+        location.address = body.address
+    if state and not location.state_code:
+        location.state_code = state
+    await current.db.flush()
+    return party_out(party, await _locations(current.db, [party.id]))
+
+
+@router.patch("/parties/{party_id}/locations/{location_id}", response_model=PartyOut)
+async def update_location(
+    party_id: uuid.UUID, location_id: uuid.UUID, body: LocationPatch, current: CurrentSessionDep
+) -> PartyOut:
+    """A delivery location's address and state: the state is the place of supply an invoice for
+    goods delivered there takes, so it decides CGST and SGST or IGST (LIN-27)."""
+    party = await _party_to_write(current, party_id, WRITE, INVOICE_WRITE)
+    location = await current.db.get(PartyLocation, location_id, with_for_update=True)
+    if location is None or location.party_id != party.id:
+        raise gone()
+    if body.address is not None:
+        location.address = body.address
+    if body.state_code is not None:
+        location.state_code = _state(body.state_code)
+    await current.db.flush()
     return party_out(party, await _locations(current.db, [party.id]))
 
 

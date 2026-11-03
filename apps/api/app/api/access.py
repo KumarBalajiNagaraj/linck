@@ -13,11 +13,13 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, false, select, text, true
+from sqlalchemy import ColumnElement, false, select, text, true, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentSession, Grant, load_grants
 from app.models.core import Organization
+from app.models.sales import InvoiceSeries
 
 
 @dataclass(frozen=True)
@@ -141,3 +143,43 @@ async def next_serial(db: AsyncSession, table: str, organization_id: uuid.UUID, 
         )
     ).scalar_one()
     return int(current) + 1
+
+
+async def next_invoice_serial(
+    db: AsyncSession, organization_id: uuid.UUID, gst_registration_id: uuid.UUID, financial_year: str
+) -> tuple[uuid.UUID, int]:
+    """The next number of a GSTIN's statutory series for a financial year (LIN-27): (series id, serial).
+
+    next_serial's sibling, for the series GST keeps per GSTIN rather than per
+    tenant. The same transaction-scoped advisory lock serialises two people
+    issuing at once, with UNIQUE (series, serial) on sales.invoices behind it.
+    The count lives on the series row, not in max(serial), so a number once
+    taken is never handed out again, and it is taken inside the transaction
+    that issues the invoice, so an issue that fails gives its number back: no
+    gap and no duplicate.
+    """
+    await db.execute(
+        text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"sales.invoice_series:{organization_id}:{gst_registration_id}:{financial_year}"},
+    )
+    await db.execute(
+        insert(InvoiceSeries)
+        .values(
+            organization_id=organization_id,
+            gst_registration_id=gst_registration_id,
+            financial_year=financial_year,
+        )
+        .on_conflict_do_nothing(index_elements=["organization_id", "gst_registration_id", "financial_year"])
+    )
+    row = (
+        await db.execute(
+            update(InvoiceSeries)
+            .where(
+                InvoiceSeries.gst_registration_id == gst_registration_id,
+                InvoiceSeries.financial_year == financial_year,
+            )
+            .values(last_serial=InvoiceSeries.last_serial + 1)
+            .returning(InvoiceSeries.id, InvoiceSeries.last_serial)
+        )
+    ).one()
+    return row.id, int(row.last_serial)

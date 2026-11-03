@@ -1,0 +1,289 @@
+{
+  "about": "Golden figures for party invoices (LIN-27), worked by hand. Read by packages/domain/src/party-invoice.test.ts and apps/api/tests/test_party_invoice_domain.py. Money is a string; quantities may be strings or numbers.",
+  "invoices": [
+    {
+      "name": "one trip, intra-state: M-Sand with transport, CGST and SGST at 2.5% each",
+      "supply": "intra",
+      "lines": [{ "id": "l1", "quantity": "6.5", "rate": "4200.00", "transport": "2500.00", "gstRatePct": "5", "hsnCode": "2517" }],
+      "expect": {
+        "supply": "intra",
+        "lines": {
+          "l1": { "amount": "27300.00", "transport": "2500.00", "taxable": "29800.00", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "745.00", "sgst": "745.00", "igst": "0.00", "total": "31290.00" }
+        },
+        "taxable": "29800.00",
+        "cgst": "745.00",
+        "sgst": "745.00",
+        "igst": "0.00",
+        "tax": "1490.00",
+        "beforeRounding": "31290.00",
+        "roundOff": "0.00",
+        "total": "31290.00",
+        "words": "Rupees Thirty One Thousand Two Hundred Ninety Only",
+        "byHsn": [{ "hsnCode": "2517", "gstRatePct": 5, "taxable": "29800.00", "cgst": "745.00", "sgst": "745.00", "igst": "0.00", "tax": "1490.00" }]
+      }
+    },
+    {
+      "name": "three trips for one builder: 7.25 × 3825.50 is 27734.875, so 27734.88; the total rounds up 14 paise",
+      "supply": "intra",
+      "lines": [
+        { "id": "a", "quantity": "4.5", "rate": "3800.00", "transport": null, "gstRatePct": "5", "hsnCode": "2517" },
+        { "id": "b", "quantity": 7.25, "rate": "3825.50", "transport": "1850.00", "gstRatePct": 5, "hsnCode": "2517" },
+        { "id": "c", "quantity": "30.4", "rate": "1015.75", "transport": "0", "gstRatePct": "5", "hsnCode": "2517" }
+      ],
+      "expect": {
+        "supply": "intra",
+        "lines": {
+          "a": { "amount": "17100.00", "transport": "0.00", "taxable": "17100.00", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "427.50", "sgst": "427.50", "igst": "0.00", "total": "17955.00" },
+          "b": { "amount": "27734.88", "transport": "1850.00", "taxable": "29584.88", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "739.62", "sgst": "739.62", "igst": "0.00", "total": "31064.12" },
+          "c": { "amount": "30878.80", "transport": "0.00", "taxable": "30878.80", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "771.97", "sgst": "771.97", "igst": "0.00", "total": "32422.74" }
+        },
+        "taxable": "77563.68",
+        "cgst": "1939.09",
+        "sgst": "1939.09",
+        "igst": "0.00",
+        "tax": "3878.18",
+        "beforeRounding": "81441.86",
+        "roundOff": "0.14",
+        "total": "81442.00",
+        "words": "Rupees Eighty One Thousand Four Hundred Forty Two Only",
+        "byHsn": [{ "hsnCode": "2517", "gstRatePct": 5, "taxable": "77563.68", "cgst": "1939.09", "sgst": "1939.09", "igst": "0.00", "tax": "3878.18" }]
+      }
+    },
+    {
+      "name": "inter-state: IGST at the whole rate, and the total rounds down 25 paise",
+      "supply": "inter",
+      "lines": [
+        { "id": "x", "quantity": 8, "rate": "4450.00", "transport": "6500.00", "gstRatePct": "5", "hsnCode": "2517" },
+        { "id": "y", "quantity": "5.75", "rate": "4380.00", "gstRatePct": "5", "hsnCode": "2517" }
+      ],
+      "expect": {
+        "supply": "inter",
+        "lines": {
+          "x": { "amount": "35600.00", "transport": "6500.00", "taxable": "42100.00", "gstRatePct": 5, "cgstPct": 0, "sgstPct": 0, "igstPct": 5, "cgst": "0.00", "sgst": "0.00", "igst": "2105.00", "total": "44205.00" },
+          "y": { "amount": "25185.00", "transport": "0.00", "taxable": "25185.00", "gstRatePct": 5, "cgstPct": 0, "sgstPct": 0, "igstPct": 5, "cgst": "0.00", "sgst": "0.00", "igst": "1259.25", "total": "26444.25" }
+        },
+        "taxable": "67285.00",
+        "cgst": "0.00",
+        "sgst": "0.00",
+        "igst": "3364.25",
+        "tax": "3364.25",
+        "beforeRounding": "70649.25",
+        "roundOff": "-0.25",
+        "total": "70649.00",
+        "words": "Rupees Seventy Thousand Six Hundred Forty Nine Only",
+        "byHsn": [{ "hsnCode": "2517", "gstRatePct": 5, "taxable": "67285.00", "cgst": "0.00", "sgst": "0.00", "igst": "3364.25", "tax": "3364.25" }]
+      }
+    },
+    {
+      "name": "half a rupee rounds up, away from zero",
+      "supply": "intra",
+      "lines": [{ "id": "h", "quantity": 1, "rate": "4990.00", "transport": null, "gstRatePct": 5, "hsnCode": "2517" }],
+      "expect": {
+        "supply": "intra",
+        "lines": {
+          "h": { "amount": "4990.00", "transport": "0.00", "taxable": "4990.00", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "124.75", "sgst": "124.75", "igst": "0.00", "total": "5239.50" }
+        },
+        "taxable": "4990.00",
+        "cgst": "124.75",
+        "sgst": "124.75",
+        "igst": "0.00",
+        "tax": "249.50",
+        "beforeRounding": "5239.50",
+        "roundOff": "0.50",
+        "total": "5240.00",
+        "words": "Rupees Five Thousand Two Hundred Forty Only",
+        "byHsn": [{ "hsnCode": "2517", "gstRatePct": 5, "taxable": "4990.00", "cgst": "124.75", "sgst": "124.75", "igst": "0.00", "tax": "249.50" }]
+      }
+    },
+    {
+      "name": "mixed rates and HSNs: the tax is added up by HSN and rate, a 0% line carries none",
+      "supply": "intra",
+      "lines": [
+        { "id": "m1", "quantity": 5, "rate": "4000.00", "gstRatePct": 5, "hsnCode": "2517" },
+        { "id": "m2", "quantity": 10, "rate": "315.00", "gstRatePct": 18, "hsnCode": "6810" },
+        { "id": "m3", "quantity": 2.333, "rate": "999.99", "transport": "125.50", "gstRatePct": "5", "hsnCode": "2517" },
+        { "id": "m4", "quantity": 3, "rate": "150.00", "gstRatePct": 0, "hsnCode": "2516" }
+      ],
+      "expect": {
+        "supply": "intra",
+        "lines": {
+          "m1": { "amount": "20000.00", "transport": "0.00", "taxable": "20000.00", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "500.00", "sgst": "500.00", "igst": "0.00", "total": "21000.00" },
+          "m2": { "amount": "3150.00", "transport": "0.00", "taxable": "3150.00", "gstRatePct": 18, "cgstPct": 9, "sgstPct": 9, "igstPct": 0, "cgst": "283.50", "sgst": "283.50", "igst": "0.00", "total": "3717.00" },
+          "m3": { "amount": "2332.98", "transport": "125.50", "taxable": "2458.48", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "61.46", "sgst": "61.46", "igst": "0.00", "total": "2581.40" },
+          "m4": { "amount": "450.00", "transport": "0.00", "taxable": "450.00", "gstRatePct": 0, "cgstPct": 0, "sgstPct": 0, "igstPct": 0, "cgst": "0.00", "sgst": "0.00", "igst": "0.00", "total": "450.00" }
+        },
+        "taxable": "26058.48",
+        "cgst": "844.96",
+        "sgst": "844.96",
+        "igst": "0.00",
+        "tax": "1689.92",
+        "beforeRounding": "27748.40",
+        "roundOff": "-0.40",
+        "total": "27748.00",
+        "words": "Rupees Twenty Seven Thousand Seven Hundred Forty Eight Only",
+        "byHsn": [
+          { "hsnCode": "2516", "gstRatePct": 0, "taxable": "450.00", "cgst": "0.00", "sgst": "0.00", "igst": "0.00", "tax": "0.00" },
+          { "hsnCode": "2517", "gstRatePct": 5, "taxable": "22458.48", "cgst": "561.46", "sgst": "561.46", "igst": "0.00", "tax": "1122.92" },
+          { "hsnCode": "6810", "gstRatePct": 18, "taxable": "3150.00", "cgst": "283.50", "sgst": "283.50", "igst": "0.00", "tax": "567.00" }
+        ]
+      }
+    },
+    {
+      "name": "odd paise: CGST and SGST are each rounded, so ₹100.10 at 5% carries ₹5.00 of tax, not the ₹5.01 one rate gives",
+      "supply": "intra",
+      "lines": [
+        { "id": "p1", "quantity": 1, "rate": "100.10", "gstRatePct": 5, "hsnCode": "2517" },
+        { "id": "p2", "quantity": 3, "rate": "33.33", "transport": "0.01", "gstRatePct": 5, "hsnCode": "2517" }
+      ],
+      "expect": {
+        "supply": "intra",
+        "lines": {
+          "p1": { "amount": "100.10", "transport": "0.00", "taxable": "100.10", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "2.50", "sgst": "2.50", "igst": "0.00", "total": "105.10" },
+          "p2": { "amount": "99.99", "transport": "0.01", "taxable": "100.00", "gstRatePct": 5, "cgstPct": 2.5, "sgstPct": 2.5, "igstPct": 0, "cgst": "2.50", "sgst": "2.50", "igst": "0.00", "total": "105.00" }
+        },
+        "taxable": "200.10",
+        "cgst": "5.00",
+        "sgst": "5.00",
+        "igst": "0.00",
+        "tax": "10.00",
+        "beforeRounding": "210.10",
+        "roundOff": "-0.10",
+        "total": "210.00",
+        "words": "Rupees Two Hundred Ten Only",
+        "byHsn": [{ "hsnCode": "2517", "gstRatePct": 5, "taxable": "200.10", "cgst": "5.00", "sgst": "5.00", "igst": "0.00", "tax": "10.00" }]
+      }
+    }
+  ],
+  "rounding": [
+    { "amount": "31290.00", "expect": { "total": "31290.00", "roundOff": "0.00" } },
+    { "amount": "81441.86", "expect": { "total": "81442.00", "roundOff": "0.14" } },
+    { "amount": "70649.25", "expect": { "total": "70649.00", "roundOff": "-0.25" } },
+    { "amount": "5239.50", "expect": { "total": "5240.00", "roundOff": "0.50" } },
+    { "amount": "5239.49", "expect": { "total": "5239.00", "roundOff": "-0.49" } },
+    { "amount": "0.49", "expect": { "total": "0.00", "roundOff": "-0.49" } }
+  ],
+  "words": [
+    { "amount": "0", "expect": "Rupees Zero Only" },
+    { "amount": "1", "expect": "Rupees One Only" },
+    { "amount": "15", "expect": "Rupees Fifteen Only" },
+    { "amount": "40", "expect": "Rupees Forty Only" },
+    { "amount": "99", "expect": "Rupees Ninety Nine Only" },
+    { "amount": "100", "expect": "Rupees One Hundred Only" },
+    { "amount": "101", "expect": "Rupees One Hundred One Only" },
+    { "amount": "1000.00", "expect": "Rupees One Thousand Only" },
+    { "amount": "1010", "expect": "Rupees One Thousand Ten Only" },
+    { "amount": "100000", "expect": "Rupees One Lakh Only" },
+    { "amount": "120000", "expect": "Rupees One Lakh Twenty Thousand Only" },
+    { "amount": "1999999", "expect": "Rupees Nineteen Lakh Ninety Nine Thousand Nine Hundred Ninety Nine Only" },
+    { "amount": "10000000", "expect": "Rupees One Crore Only" },
+    { "amount": "12345678", "expect": "Rupees One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight Only" },
+    { "amount": "1005000.50", "expect": "Rupees Ten Lakh Five Thousand and Fifty Paise Only" },
+    { "amount": "0.75", "expect": "Rupees Zero and Seventy Five Paise Only" },
+    { "amount": "2000000000", "expect": "Rupees Two Hundred Crore Only" },
+    { "amount": "1000000000000", "expect": "Rupees One Lakh Crore Only" },
+    {
+      "amount": "12345678901234.56",
+      "expect": "Rupees Twelve Lakh Thirty Four Thousand Five Hundred Sixty Seven Crore Eighty Nine Lakh One Thousand Two Hundred Thirty Four and Fifty Six Paise Only"
+    }
+  ],
+  "placeOfSupply": [
+    {
+      "name": "delivered in the seller's state: intra-state",
+      "input": { "deliveryStates": ["33", null], "buyerGstin": "33AABCU9603R1ZU", "sellerState": "33" },
+      "expect": { "stateCode": "33", "basis": "delivery_location" },
+      "supply": "intra"
+    },
+    {
+      "name": "a Tamil Nadu builder's site in Karnataka: the delivery decides, not the GSTIN",
+      "input": { "deliveryStates": ["29"], "buyerGstin": "33AABCU9603R1ZU", "sellerState": "33" },
+      "expect": { "stateCode": "29", "basis": "delivery_location" },
+      "supply": "inter"
+    },
+    {
+      "name": "no delivery state yet: the buyer's GSTIN state",
+      "input": { "deliveryStates": [null, null], "buyerGstin": "29AAACM1234F1Z1", "sellerState": "33" },
+      "expect": { "stateCode": "29", "basis": "buyer_gstin" },
+      "supply": "inter"
+    },
+    {
+      "name": "no delivery state and no GSTIN (B2C): the seller's own state",
+      "input": { "deliveryStates": [], "buyerGstin": null, "sellerState": "33" },
+      "expect": { "stateCode": "33", "basis": "seller_state" },
+      "supply": "intra"
+    },
+    {
+      "name": "delivered to two states: one invoice cannot have two places of supply",
+      "input": { "deliveryStates": ["33", "29", "33"], "buyerGstin": null, "sellerState": "33" },
+      "expect": { "problem": "places-differ", "states": ["29", "33"] },
+      "supply": null
+    }
+  ],
+  "gstinStates": [
+    { "gstin": "33AABCU9603R1ZU", "expect": "33" },
+    { "gstin": " 29aaacm1234f1z1 ", "expect": "29" },
+    { "gstin": "URD", "expect": null },
+    { "gstin": null, "expect": null }
+  ],
+  "numbers": [
+    { "prefix": "INV", "financialYear": "26-27", "serial": 1, "expect": "INV/26-27/0001", "valid": true },
+    { "prefix": "KBM", "financialYear": "26-27", "serial": 42, "expect": "KBM/26-27/0042", "valid": true },
+    { "prefix": "INV", "financialYear": "26-27", "serial": 12345, "expect": "INV/26-27/12345", "valid": true },
+    { "prefix": "ABCD", "financialYear": "26-27", "serial": 99999, "expect": "ABCD/26-27/99999", "valid": true },
+    { "prefix": "ABCD", "financialYear": "26-27", "serial": 100000, "expect": "ABCD/26-27/100000", "valid": false }
+  ],
+  "invoiceNumberShapes": [
+    { "value": "INV/26-27/0001", "valid": true },
+    { "value": "inv-0001", "valid": true },
+    { "value": "INV 26-27/0001", "valid": false },
+    { "value": "INV#0001", "valid": false },
+    { "value": "", "valid": false },
+    { "value": "INV/2026-2027/001", "valid": false }
+  ],
+  "matching": [
+    {
+      "name": "the trips' own payments first, then the sheet's, each oldest first, never past what is due",
+      "due": "50000.00",
+      "candidates": [
+        { "paymentId": "m-s1", "onTrip": false, "paidOn": "2026-08-01", "free": "30000.00" },
+        { "paymentId": "m-t2", "onTrip": true, "paidOn": "2026-08-05", "free": "20000" },
+        { "paymentId": "m-t1", "onTrip": true, "paidOn": "2026-08-03", "free": "10000.00" }
+      ],
+      "expect": [
+        { "paymentId": "m-t1", "amount": "10000.00" },
+        { "paymentId": "m-t2", "amount": "20000.00" },
+        { "paymentId": "m-s1", "amount": "20000.00" }
+      ]
+    },
+    {
+      "name": "a part payment leaves the rest due",
+      "due": "31290.00",
+      "candidates": [{ "paymentId": "m1", "onTrip": true, "paidOn": "2026-08-04", "free": "15000" }],
+      "expect": [{ "paymentId": "m1", "amount": "15000.00" }]
+    },
+    {
+      "name": "nothing due takes nothing",
+      "due": "0.00",
+      "candidates": [{ "paymentId": "m1", "onTrip": true, "paidOn": "2026-08-04", "free": "15000.00" }],
+      "expect": []
+    },
+    {
+      "name": "a payment another invoice took in full is passed over; one day's payments go by id",
+      "due": "1000",
+      "candidates": [
+        { "paymentId": "b", "onTrip": true, "paidOn": "2026-08-04", "free": "500" },
+        { "paymentId": "a", "onTrip": true, "paidOn": "2026-08-04", "free": "0.00" },
+        { "paymentId": "c", "onTrip": true, "paidOn": "2026-08-04", "free": "700.00" }
+      ],
+      "expect": [
+        { "paymentId": "b", "amount": "500.00" },
+        { "paymentId": "c", "amount": "500.00" }
+      ]
+    }
+  ],
+  "money": [
+    { "total": "31290.00", "received": "0.00", "status": "due", "due": "31290.00" },
+    { "total": "31290.00", "received": "15000.00", "status": "part_paid", "due": "16290.00" },
+    { "total": "31290.00", "received": "31290.00", "status": "paid", "due": "0.00" },
+    { "total": "0.00", "received": "0.00", "status": "paid", "due": "0.00" }
+  ]
+}

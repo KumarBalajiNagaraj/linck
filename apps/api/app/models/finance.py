@@ -181,6 +181,54 @@ class TripPayment(Base):
     updated_at: Mapped[datetime] = updated_at()
 
 
+class InvoiceReceipt(Base):
+    """Money received on a trip sheet, matched to an issued invoice (LIN-27).
+
+    The payments stay where LIN-22 records them (trip_payments, the workbook's
+    BA); a row here says how much of one of them went to one invoice. Only an
+    issued invoice receives money: the row carries its invoice's status through
+    the composite key, and the check refuses any other, so an invoice cannot be
+    cancelled while money is still matched to it — cancelling lets the money go
+    first, back to be matched to the invoice that replaces it.
+
+    What one payment gives across invoices, and what one invoice takes, never
+    exceed the payment or the invoice: the API checks both with the trip sheets
+    and the invoice locked (app/services/party_invoices.py). A payment changed
+    or deleted on its sheet loses its matches, which the invoice then shows as
+    money to match again.
+    """
+
+    __tablename__ = "invoice_receipts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id"),
+        UniqueConstraint("organization_id", "invoice_id", "trip_payment_id"),
+        ForeignKeyConstraint(
+            ["organization_id", "invoice_id", "invoice_status"],
+            ["sales.invoices.organization_id", "sales.invoices.id", "sales.invoices.status"],
+            ondelete="RESTRICT",
+            onupdate="CASCADE",
+        ),
+        tenant_fk("trip_payment_id", "finance.trip_payments"),
+        tenant_fk("matched_by", "core.users"),
+        Index("ix_invoice_receipts_trip_payment", "organization_id", "trip_payment_id"),
+        CheckConstraint("invoice_status = 'issued'", name="only_on_issued_invoices"),
+        CheckConstraint("amount > 0", name="amount_positive"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = pk()
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    invoice_status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'issued'"))
+    trip_payment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    matched_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    matched_by_name: Mapped[str] = mapped_column(Text, nullable=False)
+    matched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class WhatsAppImportBatch(Base):
     """One import of driver slips, from the live inbox or a group's chat export."""
 

@@ -143,6 +143,10 @@ class Tenant:
 # children: most of these tables carry the audit trigger, so deleting them
 # writes fresh audit rows, and clearing the log any earlier would leave them.
 _TEARDOWN_ORDER = [
+    "finance.invoice_receipts",
+    "sales.invoice_lines",
+    "sales.invoices",
+    "sales.invoice_series",
     "finance.trip_payments",
     "sales.trip_closures",
     "sales.trip_sales",
@@ -191,11 +195,24 @@ _DELETE_AUDIT = """
 """
 
 
+# An issued invoice is never deleted and a number series never shrinks: migration
+# 0031's guard triggers refuse it, a superuser included. Sweeping a test tenant
+# away is the one time that must happen, so those tables are emptied with the
+# session's triggers off, and in the order their keys need.
+_GUARDED = {"sales.invoice_lines", "sales.invoices", "sales.invoice_series"}
+
+
 def _delete_orgs(cur: psycopg.Cursor, org_ids: list[uuid.UUID]) -> None:
     if not org_ids:
         return
     for table in _TEARDOWN_ORDER:
-        cur.execute(f"DELETE FROM {table} WHERE organization_id = ANY(%s)", (org_ids,))
+        if table in _GUARDED:
+            cur.execute("SET session_replication_role = replica")
+        try:
+            cur.execute(f"DELETE FROM {table} WHERE organization_id = ANY(%s)", (org_ids,))
+        finally:
+            if table in _GUARDED:
+                cur.execute("SET session_replication_role = origin")
     cur.execute(_DELETE_AUDIT, {"ids": org_ids})
     cur.execute("DELETE FROM core.organizations WHERE id = ANY(%s)", (org_ids,))
 

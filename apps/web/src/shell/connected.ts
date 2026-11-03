@@ -45,6 +45,11 @@ const CONNECTED: Readonly<Record<string, Connection>> = {
   '/fleet/pl/sheets/$sheetId': 'api',
   '/overview/pl': 'api',
   '/finance/pl': 'api',
+  // LIN-21: the trip invoices made from those trips (LIN-27), on /vehicle-pl/invoices.
+  '/fleet/pl/invoices': 'api',
+  '/fleet/pl/invoices/$invoiceId': 'api',
+  '/finance/invoices': 'api',
+  '/finance/invoices/$invoiceId': 'api',
   // LIN-10: the news digest is built on the server.
   '/overview/industry': 'api',
   // The boards: these counts are the API's; their other counts are not yet.

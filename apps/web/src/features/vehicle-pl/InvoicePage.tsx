@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { can, formatDate, GST_STATES } from '@linck/domain';
-import { NOW, type PlInvoiceDetail, type PlInvoicePatch } from '@linck/mock';
+import type { PlInvoiceDetail, PlInvoicePatch } from '@linck/mock';
 import { Button, ConfirmModal, EmptyState, Modal, PageHeader, Section } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
+import { now } from '../expenses/bills.js';
 import { sheetPath } from './plStore.js';
 import { CTRL, FIELD_BOX } from './PlParts.js';
-import { INVOICE_CANCEL, INVOICE_READ, INVOICE_WRITE, invoiceDetail, invoicesBase, RECEIVE, useInvoices, useInvoiceWorld, type InvoiceResult } from './invoiceStore.js';
+import { useInvoice, useInvoiceMoves } from './invoices.js';
+import { INVOICE_CANCEL, INVOICE_READ, INVOICE_WRITE, invoicesBase, RECEIVE, type InvoiceProblem } from './invoiceStore.js';
 import { inrSigned, invoiceProblemText, stateName } from './invoiceText.js';
 import { InvoiceStamp } from './InvoiceStamp.js';
 import { invoiceWords } from './invoiceWords.js';
@@ -28,17 +30,21 @@ export function InvoicePage() {
   const base = invoicesBase(pathname);
   const { invoiceId } = useParams({ strict: false }) as { invoiceId?: string };
   const { persona } = useApp();
-  const world = useInvoiceWorld();
-  const store = useInvoices();
-  const record = world.invoices.find((x) => x.id === invoiceId) ?? null;
-  const detail = useMemo(() => (record ? invoiceDetail(world, record) : null), [world, record]);
+  const read = useInvoice(invoiceId);
+  const moves = useInvoiceMoves();
+  const detail = read.data;
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState<'issue' | 'delete' | 'cancel' | null>(null);
   const [printing, setPrinting] = useState(false);
   const closePrint = useCallback(() => setPrinting(false), []);
   useEffect(() => setProblem(null), [invoiceId]);
 
-  if (!record || !detail || !can(persona.grants, INVOICE_READ, { siteId: record.siteId })) {
+  // Live only: on its way, or not read for a reason other than its not being there.
+  if (read.state === 'loading') return <EmptyState fact={w.page.loading} />;
+  if (read.state === 'failed' && read.problem && read.problem.code !== 'invoice-gone' && read.problem.code !== 'needs-permission') {
+    return <EmptyState fact={w.page.failed} because={invoiceProblemText(read.problem, w)} action={{ label: w.retry, onClick: read.retry }} />;
+  }
+  if (!detail || !can(persona.grants, INVOICE_READ, { siteId: detail.siteId })) {
     return (
       <div className="pl-screen">
         <PageHeader eyebrow={w.page.eyebrow} title={w.page.notFound} actions={<Button onClick={() => void navigate({ to: base })}>{w.page.back}</Button>} />
@@ -47,14 +53,16 @@ export function InvoicePage() {
     );
   }
 
-  const who = { name: persona.name, grants: persona.grants };
-  const at = { siteId: record.siteId };
+  const id = detail.id;
+  const at = { siteId: detail.siteId };
   const canWrite = can(persona.grants, INVOICE_WRITE, at);
   const canCancel = can(persona.grants, INVOICE_CANCEL, at);
   const canReceive = can(persona.grants, RECEIVE, at);
-  const done = (result: InvoiceResult) => {
-    setProblem(result.ok ? null : invoiceProblemText(result.problem, w));
-    return result.ok;
+  /** A move's answer: the refusal shown under the header, or nothing. True when it went through. */
+  const done = async (answer: Promise<InvoiceProblem | null>): Promise<boolean> => {
+    const refused = await answer;
+    setProblem(refused ? invoiceProblemText(refused, w) : null);
+    return refused === null;
   };
   const title = detail.invoiceNumber ? w.page.title(detail.invoiceNumber) : w.page.draftTitle;
   const by =
@@ -106,9 +114,15 @@ export function InvoicePage() {
           <TaxInvoice invoice={detail} />
         </div>
         <aside className="min-w-0 lg:self-start" style={{ borderLeft: '1px solid var(--border-subtle)' }}>
-          {detail.status === 'draft' && canWrite && <DraftForm key={record.id} invoice={detail} onSave={(patch) => done(store.patch(record.id, patch, who))} />}
+          {detail.status === 'draft' && canWrite && <DraftForm key={id} invoice={detail} onSave={(patch) => done(moves.patch.run({ id, patch }))} />}
           <TaxNote invoice={detail} />
-          <Money invoice={detail} canReceive={canReceive} onMatch={(paymentId) => done(store.match(record.id, paymentId ? { paymentId } : {}, who))} onUndo={(receiptId) => done(store.unmatch(record.id, receiptId, who))} />
+          <Money
+            invoice={detail}
+            canReceive={canReceive}
+            busy={moves.match.busy || moves.unmatch.busy}
+            onMatch={(paymentId) => void done(moves.match.run({ id, paymentId }))}
+            onUndo={(receiptId) => void done(moves.unmatch.run({ id, receiptId }))}
+          />
           <Trips invoice={detail} />
         </aside>
       </div>
@@ -116,7 +130,7 @@ export function InvoicePage() {
       <ConfirmModal
         open={asking === 'issue'}
         onClose={() => setAsking(null)}
-        onConfirm={() => done(store.issue(record.id, who))}
+        onConfirm={() => void done(moves.issue.run(id))}
         title={w.page.confirmIssue.title}
         consequence={w.page.confirmIssue.consequence(detail.seller.gstin)}
         confirmLabel={w.page.confirmIssue.yes}
@@ -126,7 +140,9 @@ export function InvoicePage() {
         open={asking === 'delete'}
         onClose={() => setAsking(null)}
         onConfirm={() => {
-          if (done(store.remove(record.id, who))) void navigate({ to: base });
+          void done(moves.remove.run(id)).then((gone) => {
+            if (gone) void navigate({ to: base });
+          });
         }}
         title={w.page.confirmDelete.title}
         consequence={w.page.confirmDelete.consequence}
@@ -138,9 +154,9 @@ export function InvoicePage() {
         open={asking === 'cancel'}
         number={detail.invoiceNumber ?? ''}
         onClose={() => setAsking(null)}
-        onCancel={(reason) => done(store.cancel(record.id, reason, who))}
+        onCancel={(reason) => void done(moves.cancel.run({ id, reason }))}
       />
-      {printing && <InvoicePrint invoice={detail} printedOn={formatDate(NOW)} onClose={closePrint} />}
+      {printing && <InvoicePrint invoice={detail} printedOn={formatDate(now())} onClose={closePrint} />}
     </div>
   );
 }
@@ -148,7 +164,7 @@ export function InvoicePage() {
 const STATE_CODES = Object.keys(GST_STATES).sort();
 
 /** What a draft may still be told before it is issued. */
-function DraftForm({ invoice, onSave }: { invoice: PlInvoiceDetail; onSave: (patch: PlInvoicePatch) => boolean }) {
+function DraftForm({ invoice, onSave }: { invoice: PlInvoiceDetail; onSave: (patch: PlInvoicePatch) => Promise<boolean> }) {
   const w = useWords(invoiceWords);
   const [pos, setPos] = useState(invoice.placeOfSupply);
   const [billTo, setBillTo] = useState(invoice.buyer.address);
@@ -196,7 +212,7 @@ function DraftForm({ invoice, onSave }: { invoice: PlInvoiceDetail; onSave: (pat
           <textarea className="min-h-[48px] w-full px-2 py-1.5 text-[14px]" style={FIELD_BOX} maxLength={500} value={notes} onChange={(e) => (setNotes(e.target.value), setSaved(false))} />
         </label>
         <div className="flex items-center gap-3">
-          <Button variant="primary" disabled={!changed} onClick={() => setSaved(onSave(patch))}>
+          <Button variant="primary" disabled={!changed} onClick={() => void onSave(patch).then(setSaved)}>
             {w.page.edit.save}
           </Button>
           {saved && !changed && (
@@ -229,7 +245,20 @@ function Figure({ label, value, strong }: { label: string; value: string; strong
 }
 
 /** What the invoice has received, from which payments on its trips, and what is still due. */
-function Money({ invoice, canReceive, onMatch, onUndo }: { invoice: PlInvoiceDetail; canReceive: boolean; onMatch: (paymentId: string | null) => void; onUndo: (receiptId: string) => void }) {
+function Money({
+  invoice,
+  canReceive,
+  busy,
+  onMatch,
+  onUndo,
+}: {
+  invoice: PlInvoiceDetail;
+  canReceive: boolean;
+  /** Live: a match on its way; the buttons wait. Never in the demo. */
+  busy: boolean;
+  onMatch: (paymentId: string | null) => void;
+  onUndo: (receiptId: string) => void;
+}) {
   const w = useWords(invoiceWords);
   const modes = useWords(sheetWords).modes;
   const m = w.page.money;
@@ -280,7 +309,11 @@ function Money({ invoice, canReceive, onMatch, onUndo }: { invoice: PlInvoiceDet
                       {m.by(r.matchedBy)}
                     </span>
                   </span>
-                  {canReceive && <Button onClick={() => onUndo(r.id)}>{m.undo}</Button>}
+                  {canReceive && (
+                    <Button disabled={busy} onClick={() => onUndo(r.id)}>
+                      {m.undo}
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -290,7 +323,11 @@ function Money({ invoice, canReceive, onMatch, onUndo }: { invoice: PlInvoiceDet
                   <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                     {m.unmatched}
                   </span>
-                  {canReceive && due && <Button onClick={() => onMatch(null)}>{m.matchAll}</Button>}
+                  {canReceive && due && (
+                    <Button disabled={busy} onClick={() => onMatch(null)}>
+                      {m.matchAll}
+                    </Button>
+                  )}
                 </div>
                 <ul className="flex flex-col">
                   {invoice.unmatched.map((u) => (
@@ -308,7 +345,11 @@ function Money({ invoice, canReceive, onMatch, onUndo }: { invoice: PlInvoiceDet
                           </span>
                         )}
                       </span>
-                      {canReceive && due && <Button onClick={() => onMatch(u.paymentId)}>{m.match}</Button>}
+                      {canReceive && due && (
+                        <Button disabled={busy} onClick={() => onMatch(u.paymentId)}>
+                          {m.match}
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -353,7 +394,7 @@ function Trips({ invoice }: { invoice: PlInvoiceDetail }) {
 }
 
 /** Cancel with a reason, kept on the record. */
-function CancelModal({ open, number, onClose, onCancel }: { open: boolean; number: string; onClose: () => void; onCancel: (reason: string) => boolean }) {
+function CancelModal({ open, number, onClose, onCancel }: { open: boolean; number: string; onClose: () => void; onCancel: (reason: string) => void }) {
   const w = useWords(invoiceWords);
   const c = w.page.confirmCancel;
   const [reason, setReason] = useState('');

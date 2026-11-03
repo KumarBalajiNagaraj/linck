@@ -3,13 +3,14 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { can, decimal, formatDate, saleFigures } from '@linck/domain';
 import type { PlInvoiceTripRow, PlSaleInvoice, PlSheetRecord } from '@linck/mock';
 import { Button, Section } from '@linck/ui';
-import { LIVE } from '../../auth/api.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
-import { INVOICE_READ, INVOICE_WRITE, invoicePath, liveInvoices, tripsToInvoice, useInvoices, useInvoiceWorld } from './invoiceStore.js';
+import { useMakeInvoice, useSheetTripsToInvoice } from './invoices.js';
+import { INVOICE_READ, INVOICE_WRITE, invoicePath } from './invoiceStore.js';
 import { invoiceProblemText } from './invoiceText.js';
 import { invoiceWords } from './invoiceWords.js';
 import { inrExact } from './PlParts.js';
+import { usePlMasters } from './sheets.js';
 
 interface Row {
   key: string;
@@ -31,26 +32,22 @@ interface Row {
  * trips at a time — to make the invoice from. The sheet is at one site, so
  * every pick here bills under one GSTIN.
  */
-export function SheetInvoices(props: { record: PlSheetRecord; invoiced: Map<string, PlSaleInvoice> }) {
-  // Until the invoices are on the API too (the next change), live shows none rather than the demo's.
-  return LIVE ? null : <DemoSheetInvoices record={props.record} />;
-}
-
-function DemoSheetInvoices({ record }: { record: PlSheetRecord }) {
+export function SheetInvoices({ record, invoiced }: { record: PlSheetRecord; invoiced: Map<string, PlSaleInvoice> }) {
   const w = useWords(invoiceWords);
   const { persona } = useApp();
   const navigate = useNavigate();
-  const world = useInvoiceWorld();
-  const make = useInvoices((s) => s.make);
+  const parties = usePlMasters().data.parties;
+  const toInvoice = useSheetTripsToInvoice(record).data;
+  const make = useMakeInvoice();
   const [picked, setPicked] = useState<{ customerId: string; tripIds: string[] } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const readable = can(persona.grants, INVOICE_READ, { siteId: record.siteId });
   const writable = can(persona.grants, INVOICE_WRITE, { siteId: record.siteId });
 
   const rows = useMemo<Row[]>(() => {
-    const live = liveInvoices(world.invoices);
-    const free = new Map(tripsToInvoice(world, persona.grants, { sheetId: record.id }).map((r) => [`${r.tripId}:${r.customerId}`, r]));
-    const names = new Map(world.parties.map((p) => [p.id, p.name]));
+    const live = invoiced;
+    const free = new Map(toInvoice.map((r) => [`${r.tripId}:${r.customerId}`, r]));
+    const names = new Map(parties.map((p) => [p.id, p.name]));
     const out: Row[] = [];
     const trips = [...record.trips].sort((a, b) => (a.date === b.date ? a.tripNumber.localeCompare(b.tripNumber) : a.date < b.date ? -1 : 1));
     for (const trip of trips) {
@@ -78,7 +75,7 @@ function DemoSheetInvoices({ record }: { record: PlSheetRecord }) {
       }
     }
     return out;
-  }, [world, persona.grants, record]);
+  }, [invoiced, toInvoice, parties, record]);
 
   if (!readable || rows.length === 0) return null;
 
@@ -95,9 +92,9 @@ function DemoSheetInvoices({ record }: { record: PlSheetRecord }) {
   };
   const pickedRows = rows.filter(isPicked);
   const pickedTotal = pickedRows.map((r) => r.free?.total ?? '0.00').reduce((a, b) => decimal.toFixed(decimal.add(decimal.dec(a), decimal.dec(b)), 2), '0.00');
-  const makeIt = () => {
+  const makeIt = async () => {
     if (!picked) return;
-    const result = make(picked.customerId, picked.tripIds, { name: persona.name, grants: persona.grants });
+    const result = await make.run({ customerId: picked.customerId, tripIds: picked.tripIds });
     if (!result.ok) {
       setProblem(invoiceProblemText(result.problem, w));
       return;
@@ -165,7 +162,7 @@ function DemoSheetInvoices({ record }: { record: PlSheetRecord }) {
               {problem ?? (picked ? w.picked(pickedRows.length, inrExact(pickedTotal)) : '')}
             </span>
             {picked && <Button onClick={() => { setPicked(null); setProblem(null); }}>{w.clear}</Button>}
-            <Button variant="primary" disabled={!picked} onClick={makeIt}>
+            <Button variant="primary" disabled={!picked || make.busy} onClick={() => void makeIt()}>
               {w.makeInvoice}
             </Button>
           </div>

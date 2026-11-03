@@ -23,6 +23,10 @@ describe('which live screens say "sample data"', () => {
       '/fleet/pl/sheets/$sheetId',
       '/overview/pl',
       '/finance/pl',
+      '/fleet/pl/invoices',
+      '/fleet/pl/invoices/$invoiceId',
+      '/finance/invoices',
+      '/finance/invoices/$invoiceId',
     ]) {
       expect(connectionOf(route), route).toBe('api');
     }
@@ -39,9 +43,8 @@ describe('which live screens say "sample data"', () => {
     expect(others).toContain('/fleet/vehicles');
     expect(others).toContain('/sales/invoices');
     expect(others).toContain('/sales/dispatch');
-    // The trip invoices are sample data until they move to the API.
-    expect(connectionOf('/fleet/pl/invoices')).toBe('sample');
-    expect(connectionOf('/finance/invoices/$invoiceId')).toBe('sample');
+    // Sales' own invoice ledger is not the trip invoices: still sample data.
+    expect(connectionOf('/sales/invoices')).toBe('sample');
   });
 
   it('says so in both languages', () => {

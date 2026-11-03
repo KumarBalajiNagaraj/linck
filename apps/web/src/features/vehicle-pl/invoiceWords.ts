@@ -58,6 +58,10 @@ const trips = (n: number) => (n === 1 ? '1 trip' : `${n} trips`);
 export const invoiceWords = words({
   en: {
     title: 'Trip invoices',
+    // Live only: the API has not answered yet, or could not.
+    loading: 'Getting the invoices…',
+    failed: 'Could not get the invoices.',
+    retry: 'Try again',
     eyebrow: 'Vehicle P&L',
     financeEyebrow: 'Accounts',
     tabs: { invoices: 'Invoices', toInvoice: 'To invoice' },
@@ -149,6 +153,8 @@ export const invoiceWords = words({
       issuedNote: 'Issued. Nothing on it can change now.',
       cancelledNote: (reason: string) => `Cancelled: ${reason}. Its trips can be invoiced again.`,
       notFound: 'No such invoice',
+      loading: 'Getting the invoice…',
+      failed: 'Could not get the invoice.',
       notFoundWhy: 'It may be a deleted draft.',
       edit: {
         title: 'Before issuing',
@@ -314,6 +320,9 @@ export const invoiceWords = words({
   },
   ta: {
     title: 'ட்ரிப் இன்வாய்ஸ்கள்',
+    loading: 'இன்வாய்ஸ்களை எடுக்கிறது…',
+    failed: 'இன்வாய்ஸ்களை எடுக்க முடியவில்லை.',
+    retry: 'மீண்டும் முயல்',
     eyebrow: 'வண்டி லாப நஷ்டம்',
     financeEyebrow: 'கணக்கு',
     tabs: { invoices: 'இன்வாய்ஸ்கள்', toInvoice: 'இன்வாய்ஸ் போட வேண்டியவை' },
@@ -405,6 +414,8 @@ export const invoiceWords = words({
       issuedNote: 'போட்டாச்சு. இனி இதில் எதையும் மாற்ற முடியாது.',
       cancelledNote: (reason) => `ரத்து செய்தது: ${reason}. இதன் ட்ரிப்களுக்கு மீண்டும் போடலாம்.`,
       notFound: 'இந்த இன்வாய்ஸ் இல்லை',
+      loading: 'இன்வாய்ஸை எடுக்கிறது…',
+      failed: 'இன்வாய்ஸை எடுக்க முடியவில்லை.',
       notFoundWhy: 'நீக்கிய வரைவாக இருக்கலாம்.',
       edit: {
         title: 'போடுவதற்கு முன்',

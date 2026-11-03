@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import { can, decimal, formatDate } from '@linck/domain';
-import { NOW, SITES, type PlInvoiceRow, type PlInvoiceStatus, type PlInvoiceTripRow } from '@linck/mock';
+import type { PlInvoiceRow, PlInvoiceStatus, PlInvoiceTripRow } from '@linck/mock';
 import { Button, Chip, DataTable, EmptyState, IdCell, KpiTile, MoneyCell, PageHeader, Stacked, TileRow, type Column } from '@linck/ui';
 import { useInrCompact } from '../../i18n/format.js';
 import { useWords } from '../../i18n/words.js';
 import { useApp } from '../../shell/store.js';
 import { useViewParam } from '../../shell/useViewParam.js';
+import { now, useSiteName } from '../expenses/bills.js';
 import { downloadXlsx, PrintView, type ReportSheet } from './exporters.js';
-import { INVOICE_WRITE, invoicePath, invoicesBase, FINANCE_INVOICES_PATH, listInvoices, tripsToInvoice, useInvoices, useInvoiceWorld, type InvoiceFilter } from './invoiceStore.js';
+import { useInvoiceCustomers, useInvoiceList, useMakeInvoice, useTripsToInvoice } from './invoices.js';
+import { INVOICE_WRITE, invoicePath, invoicesBase, FINANCE_INVOICES_PATH, type InvoiceFilter, type InvoiceProblem } from './invoiceStore.js';
 import { InvoiceStamp } from './InvoiceStamp.js';
 import { inrSigned, invoiceProblemText, type InvoiceWords } from './invoiceText.js';
 import { invoiceWords } from './invoiceWords.js';
@@ -49,8 +51,8 @@ export function InvoiceList() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const base = invoicesBase(pathname);
   const { persona } = useApp();
-  const world = useInvoiceWorld();
-  const make = useInvoices((s) => s.make);
+  const siteName = useSiteName();
+  const make = useMakeInvoice();
   const [view, setView] = useViewParam(VIEWS, 'invoices');
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   const [picked, setPicked] = useState<PlInvoiceTripRow[]>([]);
@@ -65,24 +67,17 @@ export function InvoiceList() {
     to: filter.to || null,
     q: filter.q,
   };
-  const list = useMemo(() => listInvoices(world, persona.grants, f), [world, persona.grants, f.status, f.money, f.customerId, f.from, f.to, f.q]);
-  const all = useMemo(() => listInvoices(world, persona.grants, {}), [world, persona.grants]);
-  const trips = useMemo(
-    () => tripsToInvoice(world, persona.grants, { customerId: filter.customerId || null, from: filter.from || null, to: filter.to || null, q: filter.q }),
-    [world, persona.grants, filter.customerId, filter.from, filter.to, filter.q],
-  );
+  const listed = useInvoiceList(f);
+  const allListed = useInvoiceList({});
+  const tripsRead = useTripsToInvoice({ customerId: filter.customerId || null, from: filter.from || null, to: filter.to || null, q: filter.q });
+  const list = listed.data;
+  const all = allListed.data;
+  const trips = tripsRead.data;
   const ready = trips.filter((r) => r.blocked === null);
   const blocked = trips.filter((r) => r.blocked !== null);
   const shownTrips = filter.ready ? ready : blocked;
 
-  const customers = useMemo(
-    () =>
-      world.parties
-        .filter((p) => p.roles.includes('customer'))
-        .map((p) => ({ id: p.id, label: p.name }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [world.parties],
-  );
+  const customers = useInvoiceCustomers(all);
 
   const issued = list.rows.filter((r) => r.status === 'issued');
   const drafts = list.rows.filter((r) => r.status === 'draft');
@@ -90,7 +85,7 @@ export function InvoiceList() {
     const n = decimal.toNumber(decimal.dec(whole));
     return n > 0 ? ((decimal.toNumber(decimal.dec(part)) / n) * 100).toFixed(0) : '0';
   };
-  const stamp = { asOf: formatDate(NOW), source: w.tiles.source, freshness: 'live' as const };
+  const stamp = { asOf: formatDate(now()), source: w.tiles.source, freshness: 'live' as const };
 
   /* ------------------------------------------------------- picking trips */
 
@@ -109,9 +104,9 @@ export function InvoiceList() {
     if (isPicked(r)) setPicked(picked.filter((x) => !(x.tripId === r.tripId && x.customerId === r.customerId)));
     else if (pickable(r)) setPicked([...picked, r]);
   };
-  const makeIt = () => {
+  const makeIt = async () => {
     if (!first) return;
-    const result = make(first.customerId, picked.map((r) => r.tripId), { name: persona.name, grants: persona.grants });
+    const result = await make.run({ customerId: first.customerId, tripIds: picked.map((r) => r.tripId) });
     if (!result.ok) {
       setProblem(invoiceProblemText(result.problem, w));
       return;
@@ -179,7 +174,7 @@ export function InvoiceList() {
         </span>
       ),
     },
-    { key: 'vehicle', header: w.col.vehicle, render: (r) => <Stacked primary={r.registrationNumber} secondary={SITES.find((s) => s.id === r.siteId)?.name ?? ''} /> },
+    { key: 'vehicle', header: w.col.vehicle, render: (r) => <Stacked primary={r.registrationNumber} secondary={siteName(r.siteId)} /> },
     { key: 'customer', header: w.col.customer, render: (r) => <Stacked primary={r.customerName} secondary={r.customerGstin ?? w.noGstin} /> },
     { key: 'material', header: w.col.material, render: (r) => r.materials.join(', ') },
     { key: 'total', header: w.col.sale, type: 'money', unit: '₹', render: (r) => <MoneyCell value={r.total} /> },
@@ -203,13 +198,17 @@ export function InvoiceList() {
   const register = (): ReportSheet => registerSheet(w, list.rows, subtitle);
 
   const emptyInvoices =
-    all.rows.length === 0 ? (
+    listed.state !== 'ready' ? (
+      <NotRead read={listed} />
+    ) : allListed.state === 'ready' && all.rows.length === 0 ? (
       <EmptyState fact={w.noInvoices} because={w.noInvoicesWhy} action={{ label: w.tabs.toInvoice, onClick: () => setView('toInvoice') }} />
     ) : (
       <EmptyState fact={w.noneMatch} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />
     );
   const emptyTrips =
-    filter.q || filter.from || filter.to || filter.customerId ? (
+    tripsRead.state !== 'ready' ? (
+      <NotRead read={tripsRead} />
+    ) : filter.q || filter.from || filter.to || filter.customerId ? (
       <EmptyState fact={w.noTripsMatch} because={w.noneMatchWhy} action={{ label: w.showAll, onClick: () => setFilter(NO_FILTER) }} />
     ) : (
       <EmptyState fact={w.noTrips} />
@@ -226,7 +225,7 @@ export function InvoiceList() {
         actions={
           view === 'invoices' ? (
             <div className="flex flex-wrap justify-end gap-2">
-              <Button onClick={() => downloadXlsx(`trip-invoices-${formatDate(NOW)}`, [register()])}>{w.excel}</Button>
+              <Button onClick={() => downloadXlsx(`trip-invoices-${formatDate(now())}`, [register()])}>{w.excel}</Button>
               <Button onClick={() => setPrinting([register()])}>{w.print}</Button>
             </div>
           ) : undefined
@@ -349,14 +348,14 @@ export function InvoiceList() {
               >
                 {w.clear}
               </Button>
-              <Button variant="primary" disabled={picked.length === 0} onClick={makeIt}>
+              <Button variant="primary" disabled={picked.length === 0 || make.busy} onClick={() => void makeIt()}>
                 {w.makeInvoice}
               </Button>
             </div>
           )}
         </>
       )}
-      {printing && <PrintView sheets={printing} printedOn={formatDate(NOW)} onClose={() => setPrinting(null)} />}
+      {printing && <PrintView sheets={printing} printedOn={formatDate(now())} onClose={() => setPrinting(null)} />}
     </div>
   );
 }
@@ -396,4 +395,11 @@ function registerSheet(w: InvoiceWords, rows: readonly PlInvoiceRow[], subtitle:
     ]),
     total: [w.total, null, null, null, null, sum(issued.map((r) => r.taxable)), sum(issued.map((r) => r.tax)), sum(issued.map((r) => r.total)), sum(issued.map((r) => r.received)), sum(issued.map((r) => r.due)), null],
   };
+}
+
+/** Live only: the invoices or trips on their way, or not read, with a way to ask again. */
+function NotRead({ read }: { read: { state: 'loading' | 'ready' | 'failed'; problem: InvoiceProblem | null; retry: () => void } }) {
+  const w = useWords(invoiceWords);
+  if (read.state === 'loading') return <EmptyState fact={w.loading} />;
+  return <EmptyState fact={w.failed} {...(read.problem ? { because: invoiceProblemText(read.problem, w) } : {})} action={{ label: w.retry, onClick: read.retry }} />;
 }

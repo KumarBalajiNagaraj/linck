@@ -17,11 +17,14 @@
  *      expense chain reads and writes `/expenses` (features/expenses/bills.ts);
  *      customers, orders and breakdowns read and write `/customers`,
  *      `/purchase-orders` and `/breakdowns` (features/sales/customers.ts,
- *      orders.ts, features/fleet/breakdowns.ts); and every screen not yet on
- *      the API says "Sample data" at its top (shell/connected.ts lists the
- *      ones that are). The shell being on the real session while a screen is
- *      still on mock data is fine, as long as the screen says so; the reverse
- *      is not.
+ *      orders.ts, features/fleet/breakdowns.ts); the vehicle P&L's trip
+ *      sheets and reports, and the trip invoices made from them, read and
+ *      write `/vehicle-pl` and `/vehicle-pl/invoices`
+ *      (features/vehicle-pl/sheets.ts, invoices.ts). That is every screen
+ *      whose API is built; every other screen says "Sample data" at its top
+ *      (shell/connected.ts lists the ones that are on the API). The shell
+ *      being on the real session while a screen is still on mock data is
+ *      fine, as long as the screen says so; the reverse is not.
  *
  * Keep this file shaped exactly like the endpoint. It is the one place the
  * frontend states what it needs from the backend, and it is easier to argue

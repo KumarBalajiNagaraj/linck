@@ -94,7 +94,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | Fitness certification costs and other costs | Built |
 | Insurance, road tax, insurance end date, permit dates — manually entered | Partial — the register displays them; **there is nowhere to enter them** |
 | The hard rule: invoice does not close until cross-verified | Partial — enforced in the UI, not yet in the database, and a page refresh erases it |
-| Billing | Partial — GST tax invoices are made from trips, issued, printed, cancelled, and counted against the payments on their trips (LIN-27; the API is built, the screens run on sample data). The sales invoice ledger is still read-only |
+| Billing | Partial — GST tax invoices are made from trips, issued, printed, cancelled, and counted against the payments on their trips; on the API in live mode (LIN-27, LIN-21). The sales invoice ledger is still read-only |
 | Expense management | Built — the fleet and store managers upload scanned bills (diesel, repair, tyre, spares, toll), or bring diesel slips in from WhatsApp; the bill is checked, approved by the director, passed by accounts and paid. On the API in live mode (LIN-20, LIN-21) |
 | Ad-hoc expenses | Not started |
 | Vehicle EMI | Not started |

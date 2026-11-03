@@ -13,7 +13,6 @@ And only a migration may change it: the app role reads it and nothing more.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import psycopg
@@ -23,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.core.db import engine, tenant_session
+from app.domain.roles import ROLES
 
 REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / "apps" / "web" / "src"
@@ -52,13 +52,11 @@ async def test_every_permission_the_web_app_uses_is_in_the_catalogue(source: Pat
     assert missing == [], f"{source.relative_to(REPO)} uses keys no migration creates: {missing}"
 
 
-async def test_every_seeded_role_grant_is_in_the_catalogue() -> None:
-    sys.path.insert(0, str(REPO / "apps" / "api"))
-    from scripts.seed_dev import ROLES  # noqa: PLC0415 — the seed is a script, imported only here
-
+async def test_every_role_grant_is_in_the_catalogue() -> None:
+    """The roles both the dev seed and scripts/create_org.py create."""
     granted = {key for spec in ROLES.values() for key in spec.permissions}
     missing = sorted(granted - await _catalogue())
-    assert missing == [], f"seed_dev.py grants keys no migration creates: {missing}"
+    assert missing == [], f"app/domain/roles.py grants keys no migration creates: {missing}"
 
 
 # Every way to change the catalogue's rows. The catalogue is every tenant's at

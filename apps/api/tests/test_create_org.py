@@ -1,31 +1,28 @@
 """scripts/create_org.py: the first company and its admin, so somebody can sign in.
 
-It runs as the migration role, which owns the tables and is still held to row
-level security because every core table FORCEs it. So these tests run it the
-same way, and then check what matters: running it twice writes nothing the
-second time; every row it wrote is the company's own, visible under that
-tenant's context and no other; and the admin it registered can actually sign
-in and is handed the director's desks. A superuser's URL works the same.
+It runs as the app role, through tenant_session, as the API does: here that is
+the suite's own engine, and conftest fails the run if that role could bypass a
+policy. Then what matters: running it twice writes nothing the second time;
+every row it wrote is the company's own, visible under that tenant's context
+and no other; the admin it registered can actually sign in and is handed the
+director's desks; and an email another company holds is refused with nothing
+kept, because sign-in could then find neither person.
 """
 
 from __future__ import annotations
 
-import os
+import re
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 
 import psycopg
 import pytest
-from conftest import ADMIN_URL, DATABASE, HOST, PORT, SLUG_PREFIX, Tenant, _delete_orgs
+from conftest import SLUG_PREFIX, Tenant, _delete_orgs
 from sqlalchemy import text
 
 from app.core.db import tenant_session
+from app.domain.roles import ALL_MODULES, ROLES, role_grants
 from scripts import create_org
-from scripts.seed_dev import ALL_MODULES, ROLES, role_grants
-
-MIGRATOR_URL = os.environ.get(
-    "LINCK_TEST_MIGRATOR_URL", f"postgresql+psycopg://linck_migrator:linck_migrator@{HOST}:{PORT}/{DATABASE}"
-)
 
 #: Every table the script writes, and so every one that must hold only the company's own rows.
 WRITTEN = (
@@ -50,15 +47,13 @@ def created(admin: psycopg.Connection) -> Iterator[list[uuid.UUID]]:
 
 
 @pytest.fixture
-def company(created: list[uuid.UUID], capsys: pytest.CaptureFixture[str]) -> Callable[..., dict]:
-    """`company(*extra, url=...)` runs the script for a fresh company, and says what it printed."""
+def company(created: list[uuid.UUID], capsys: pytest.CaptureFixture[str]) -> Callable[..., Awaitable[dict]]:
+    """`await company(*extra)` runs the script for a fresh company, and says what it printed."""
 
-    def _run(*extra: str, slug: str | None = None, email: str | None = None, url: str = MIGRATOR_URL) -> dict:
+    async def _run(*extra: str, slug: str | None = None, email: str | None = None) -> dict:
         slug = slug or f"{SLUG_PREFIX}co-{uuid.uuid4().hex[:8]}"
         email = email or f"owner-{uuid.uuid4().hex[:8]}@Example.com"
         argv = [
-            "--database-url",
-            url,
             "--name",
             "Vaigai Blue Metals",
             "--slug",
@@ -77,7 +72,7 @@ def company(created: list[uuid.UUID], capsys: pytest.CaptureFixture[str]) -> Cal
             "Selvi Raman",
             *extra,
         ]
-        code = create_org.main(argv)
+        code = await create_org.main(argv)
         org_id = create_org.org_id_for(slug)
         if org_id not in created:
             created.append(org_id)
@@ -103,13 +98,19 @@ def _counts(admin: psycopg.Connection, org_id: uuid.UUID) -> dict[str, int]:
     return counts
 
 
-def _add(slug: str, *add_user: str, name: str | None = None, url: str = MIGRATOR_URL) -> int:
-    argv = ["--database-url", url, "--org", slug, "--add-user", *add_user]
-    return create_org.main([*argv, "--name", name] if name else argv)
+async def _add(slug: str, *add_user: str, name: str | None = None) -> int:
+    argv = ["--org", slug, "--add-user", *add_user]
+    return await create_org.main([*argv, "--name", name] if name else argv)
 
 
-def test_a_new_company_gets_its_entity_site_roles_and_admin(company, admin: psycopg.Connection) -> None:
-    run = company()
+def _orgs(admin: psycopg.Connection, org_id: uuid.UUID) -> int:
+    with admin.cursor() as cur:
+        cur.execute("SELECT count(*) FROM core.organizations WHERE id = %s", (org_id,))
+        return cur.fetchone()[0]  # type: ignore[index]
+
+
+async def test_a_new_company_gets_its_entity_site_roles_and_admin(company, admin: psycopg.Connection) -> None:
+    run = await company()
     assert run["code"] == 0, run["err"]
     org = run["org_id"]
 
@@ -135,7 +136,7 @@ def test_a_new_company_gets_its_entity_site_roles_and_admin(company, admin: psyc
         )
         assert cur.fetchall() == [("PLT-VGI", "Vaigai crusher plant", "crusher_plant", "33")]
 
-        # The roles seed_dev.py defines, each granting exactly what it grants for these modules.
+        # The roles app/domain/roles.py defines, each granting exactly what it grants for these modules.
         cur.execute("SELECT key, module FROM core.permissions")
         expected, _ = role_grants(ALL_MODULES, dict(cur.fetchall()))
         cur.execute(
@@ -162,32 +163,29 @@ def test_a_new_company_gets_its_entity_site_roles_and_admin(company, admin: psyc
             (user_id,),
         )
         assert cur.fetchall() == [("executive", None), ("org_admin", None)]
+    # Asked of the resolver sign-in itself calls, before the run committed.
+    assert f"checked  Google sign-in as {run['email']} finds them here" in run["out"]
 
 
-def test_running_it_again_writes_nothing(company, admin: psycopg.Connection) -> None:
-    first = company()
+async def test_running_it_again_writes_nothing(company, admin: psycopg.Connection) -> None:
+    first = await company()
     before = _counts(admin, first["org_id"])
     assert before["core.users"] == 1 and before["core.audit_logs"] > 0
 
-    again = company(slug=first["slug"], email=first["email"])
+    again = await company(slug=first["slug"], email=first["email"])
     assert again["code"] == 0, again["err"]
     # Not one audit row either: nothing was inserted, and nothing was updated to itself.
     assert _counts(admin, first["org_id"]) == before
     assert "added" not in again["out"]
-    assert f"kept   user {first['email']}" in again["out"]
-
-    # The same through a superuser's URL, which RLS does not hold back.
-    with_admin = company(slug=first["slug"], email=first["email"], url=ADMIN_URL)
-    assert with_admin["code"] == 0, with_admin["err"]
-    assert _counts(admin, first["org_id"]) == before
+    assert f"kept     user {first['email']}" in again["out"]
 
 
 async def test_every_row_is_the_company_s_own_under_rls(
     company, admin: psycopg.Connection, tenant_b: Tenant
 ) -> None:
-    run = company()
+    run = await company()
     org = run["org_id"]
-    assert _add(run["slug"], "ravi.k@example.com", "fleet", "PLT-VGI", name="Ravi K") == 0
+    assert await _add(run["slug"], "ravi.k@example.com", "fleet", "PLT-VGI", name="Ravi K") == 0
     written = {table: n for table, n in _counts(admin, org).items() if table in WRITTEN}
     assert all(n > 0 for n in written.values()), written
 
@@ -217,7 +215,7 @@ async def test_every_row_is_the_company_s_own_under_rls(
 
 
 async def test_the_admin_signs_in_to_the_director_s_desks(company, api) -> None:  # type: ignore[no-untyped-def]
-    run = company()
+    run = await company()
     client = api()
     signed_in = await client.post("/auth/dev-login", json={"email": run["email"]})
     assert signed_in.status_code == 200, signed_in.text
@@ -237,10 +235,10 @@ async def test_the_admin_signs_in_to_the_director_s_desks(company, api) -> None:
 
 
 async def test_someone_added_at_one_site_is_scoped_to_it(company, api) -> None:  # type: ignore[no-untyped-def]
-    run = company()
-    assert _add(run["slug"], "Anbu.Driver@Example.com", "driver", "plt-vgi", name="Anbu S") == 0
+    run = await company()
+    assert await _add(run["slug"], "Anbu.Driver@Example.com", "driver", "plt-vgi", name="Anbu S") == 0
     # Again, unchanged: an assignment is found by its scope.
-    assert _add(run["slug"], "anbu.driver@example.com", "driver", "PLT-VGI") == 0
+    assert await _add(run["slug"], "anbu.driver@example.com", "driver", "PLT-VGI") == 0
 
     client = api()
     assert (
@@ -256,29 +254,29 @@ async def test_someone_added_at_one_site_is_scoped_to_it(company, api) -> None: 
     }
 
 
-def test_add_user_refuses_what_it_cannot_do(company, capsys: pytest.CaptureFixture[str]) -> None:
-    run = company()
-    elsewhere = company()
+async def test_add_user_refuses_what_it_cannot_do(company, capsys: pytest.CaptureFixture[str]) -> None:
+    run = await company()
+    elsewhere = await company()
     refusals = [
         (("ravi@example.com", "plumber"), "Ravi K", "no role called 'plumber'"),
         (("ravi@example.com", "fleet", "NOPE"), "Ravi K", "no site NOPE here. The sites are: PLT-VGI"),
         (("ravi@example.com", "fleet"), None, "give their name with --name"),
         (("not-an-email", "fleet"), "Ravi K", "is not an email address"),
+        (("ravi@gmail", "fleet"), "Ravi K", "is not an email address"),
         # Sign-in would match both companies, and refuses to choose between them.
         ((elsewhere["email"], "accounts"), "Ravi K", "already registered in another company"),
     ]
     capsys.readouterr()
     for args, name, says in refusals:
-        assert _add(run["slug"], *args, name=name) == 2, args
+        assert await _add(run["slug"], *args, name=name) == 2, args
         assert says in capsys.readouterr().err, args
-    assert (
-        _add(f"{SLUG_PREFIX}nobody-{uuid.uuid4().hex[:6]}", "ravi@example.com", "fleet", name="Ravi K") == 2
-    )
+    nobody = f"{SLUG_PREFIX}nobody-{uuid.uuid4().hex[:6]}"
+    assert await _add(nobody, "ravi@example.com", "fleet", name="Ravi K") == 2
     assert "there is no company" in capsys.readouterr().err
 
 
-def test_a_company_without_fleet_has_no_fleet_roles(company, admin: psycopg.Connection, capsys) -> None:  # type: ignore[no-untyped-def]
-    run = company("--modules", "production,sales,stores,finance")
+async def test_a_company_without_fleet_has_no_fleet_roles(company, admin: psycopg.Connection, capsys) -> None:  # type: ignore[no-untyped-def]
+    run = await company("--modules", "production,sales,stores,finance")
     assert run["code"] == 0, run["err"]
     with admin.cursor() as cur:
         cur.execute("SELECT key FROM core.roles WHERE organization_id = %s", (run["org_id"],))
@@ -291,24 +289,104 @@ def test_a_company_without_fleet_has_no_fleet_roles(company, admin: psycopg.Conn
         modules = {m for (m,) in cur.fetchall()}
     assert "fleet_manager" not in keys and "driver" not in keys
     assert modules <= {"core", "production", "sales", "stores", "finance"}
-    assert _add(run["slug"], "d@example.com", "driver", name="D") == 2
+    assert await _add(run["slug"], "d@example.com", "driver", name="D") == 2
     assert "its module (fleet) is not switched on" in capsys.readouterr().err
 
 
-def test_a_slug_another_company_holds_is_refused(company, make_tenant: Callable[..., Tenant], admin) -> None:  # type: ignore[no-untyped-def]
+async def test_a_slug_another_company_holds_is_refused(
+    company, make_tenant: Callable[..., Tenant], admin
+) -> None:  # type: ignore[no-untyped-def]
     other = make_tenant("slug-holder")
     with admin.cursor() as cur:
         cur.execute("SELECT slug FROM core.organizations WHERE id = %s", (other.org_id,))
         (taken,) = cur.fetchone()
-    run = company(slug=taken)
+    run = await company(slug=taken)
     assert run["code"] == 2
     assert "is taken by another company" in run["err"]
 
 
-def test_a_pinned_company_warns_about_an_address_off_its_domain(company) -> None:  # type: ignore[no-untyped-def]
+async def test_a_pinned_company_warns_about_an_address_off_its_domain(company, capsys) -> None:  # type: ignore[no-untyped-def]
     """A company pinned to Workspace domains admits only their accounts; registering
     anyone else is allowed (their address may be an alias) but said out loud."""
-    run = company("--hosted-domain", "vaigai.example")
+    run = await company("--hosted-domain", "vaigai.example")
     assert run["code"] == 0, run["err"]
     assert "lets in only Google Workspace accounts on vaigai.example" in run["out"]
-    assert _add(run["slug"], "accounts@vaigai.example", "accounts", name="Lakshmi N") == 0
+    assert await _add(run["slug"], "accounts@vaigai.example", "accounts", name="Lakshmi N") == 0
+    assert "checked  Google sign-in as accounts@vaigai.example finds them here" in capsys.readouterr().out
+
+
+async def test_an_admin_another_company_holds_is_refused_and_nothing_kept(  # type: ignore[no-untyped-def]
+    company,
+    admin: psycopg.Connection,
+    make_tenant: Callable[..., Tenant],
+    make_user: Callable[..., uuid.UUID],
+) -> None:
+    """core.resolve_pending_user refuses an email two companies have registered
+    (migration 0003), so registering it again would lock out both people. Only the
+    resolver sees across tenants; asked inside the transaction, its refusal takes
+    the new company with it, not just the admin."""
+    email = f"taken-{uuid.uuid4().hex[:8]}@example.com"
+    make_user(make_tenant("holder"), email, "Someone Else", status="invited")
+
+    run = await company(email=email)
+
+    assert run["code"] == 2
+    assert "already registered in another company" in run["err"]
+    assert _orgs(admin, run["org_id"]) == 0
+
+
+async def test_it_will_not_run_where_the_api_would_not_start(  # type: ignore[no-untyped-def]
+    company, admin: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As a superuser or a BYPASSRLS role every policy is inert, so the writes would
+    prove nothing and could go where the app's cannot. It asks the API's own boot
+    check, so the two turn away the same databases."""
+
+    async def superuser() -> list[str]:
+        return ["connected as 'postgres', which is a superuser"]
+
+    monkeypatch.setattr(create_org, "check_rls_posture", superuser)
+
+    run = await company()
+
+    assert run["code"] == 2
+    assert "the API would not start against this database" in run["err"]
+    assert _orgs(admin, run["org_id"]) == 0
+
+
+@pytest.mark.parametrize(
+    ("extra", "says"),
+    [
+        # Daman and Diu, merged into 26 in 2020: no new site is there.
+        (("--state", "25"), "--state is the two-digit GST state code"),
+        (("--state", "TN"), "--state is the two-digit GST state code"),
+        # One mistyped domain would shut out everyone the company registers.
+        (("--hosted-domain", "@vaigai.example"), "is not a domain"),
+        (("--entity-code", "S M B M"), "the entity code"),
+        (("--admin-name", "   "), "a new company needs --admin-name"),
+    ],
+)
+async def test_plainly_wrong_input_is_refused_before_connecting(  # type: ignore[no-untyped-def]
+    company, admin: psycopg.Connection, extra: tuple[str, ...], says: str
+) -> None:
+    run = await company(*extra)
+    assert run["code"] == 2
+    assert says in run["err"]
+    assert _orgs(admin, run["org_id"]) == 0
+
+
+def test_the_choices_it_offers_are_the_ones_the_database_takes(admin: psycopg.Connection) -> None:
+    """The script lists modules, entity types and site types to refuse a typo before
+    connecting; the check constraints decide. If the two drift, it refuses what the
+    database takes, or offers what the database refuses."""
+    with admin.cursor() as cur:
+        for constraint, offered in (
+            ("ck_organization_modules_module_known", ALL_MODULES),
+            ("ck_legal_entities_entity_type_known", create_org.ENTITY_TYPES),
+            ("ck_sites_site_type_known", create_org.SITE_TYPES),
+        ):
+            cur.execute(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s", (constraint,)
+            )
+            [(definition,)] = cur.fetchall()
+            assert set(re.findall(r"'([a-z_]+)'", definition)) == set(offered), constraint

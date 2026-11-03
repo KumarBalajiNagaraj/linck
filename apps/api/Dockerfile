@@ -42,7 +42,8 @@ COPY --from=build /app/.venv /app/.venv
 COPY apps/api/alembic.ini ./
 COPY apps/api/alembic ./alembic
 COPY apps/api/app ./app
-COPY apps/api/scripts/bootstrap_roles.py ./scripts/
+# create_org registers people from the App Platform console (docs/DEPLOY.md step 8).
+COPY apps/api/scripts/bootstrap_roles.py apps/api/scripts/create_org.py ./scripts/
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \

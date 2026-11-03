@@ -163,14 +163,14 @@ with DigitalOcean's command-line tool, `doctl`.
 ## 8. Register your company and yourself
 
 Nobody can sign in until they are registered: Linck matches a Google account to a
-person already in it, and never makes one up. Do this once, now, while your computer
-can still reach the database (step 3.7).
+person already in it, and never makes one up. You register people from the app's own
+console. It already holds the app's database password, so there is nothing to copy
+and no IP address to add.
 
-1. In the repository on your computer:
+1. **App Platform** → **linck-api** → **Console**. If it asks for a component, choose **api**.
+2. Paste this, with your own details in place of the examples, and press Enter:
    ```sh
-   cd apps/api
-   export LINCK_MIGRATION_DATABASE_URL='<the URL after = on the second line from step 4.2>'
-   uv run python -m scripts.create_org \
+   cd /app && python -m scripts.create_org \
      --name "Your Company Name" --entity-type partnership \
      --site-code PLT-1 --site-name "Main crusher plant" --site-type crusher_plant \
      --admin-email you@gmail.com --admin-name "Your Name"
@@ -180,23 +180,29 @@ can still reach the database (step 3.7).
    - `--site-type`: `head_office`, `quarry`, `crusher_plant`, `stockyard`, `depot`, `workshop`,
      `weighbridge_point` or `fuel_point`. `--state` is the site's GST state code; it is `33`
      (Tamil Nadu) unless you say otherwise.
-2. It lists what it added and ends with the company id and the command to register
-   others. It is safe to run again: it only adds what is missing.
-3. Register each person who will sign in: their Google account, their role, and their
-   site code (leave the site out for someone who works across the whole company).
+3. It lists what it added, checks that Google sign-in finds you, and ends with the
+   company id and the command to register others. It is safe to run again: it only
+   adds what is missing.
+4. Register each person who will sign in, in the same console: their Google account,
+   their role, and their site code (leave the site out for someone who works across
+   the whole company).
    ```sh
-   uv run python -m scripts.create_org --org <the slug it printed> \
+   cd /app && python -m scripts.create_org --org <the slug it printed> \
      --add-user ravi@gmail.com fleet PLT-1 --name "Ravi K"
    ```
    Roles: `director`, `accounts`, `fleet`, `sales`, `stores`, `production`, `weighbridge`,
    `driver`, `admin`. One Google account belongs to one company.
-4. Close the terminal, so the password is not left in it.
+
+To run these from your computer instead, with the repository up to date: add your IP to
+the database's trusted sources (step 3.7), then in `apps/api` run
+`export LINCK_DATABASE_URL='<the URL after = on the first line from step 4.2>'`, and the
+same commands with `uv run` in place of `cd /app &&`. Remove your IP again afterwards.
 
 ## 9. Lock the database door
 
 1. **Databases** → **linck-db** → **Settings** → **Trusted sources** → **Edit**.
 2. Make sure **linck-api** (the app) is in the list. If it is not, type its name and add it.
-3. Remove your own IP address, unless you will run step 4 or step 8 again soon. **Save**.
+3. Remove your own IP address, unless you will run step 4 again soon. **Save**.
 
 ## 10. Point Vercel at the API
 
@@ -256,8 +262,8 @@ free tier is the default (`LINCK_AI_MODEL=gemini-2.5-flash`). To use another fre
 **Deploys.** Every push to `main` deploys the API. The **migrate** job runs first; if
 it fails, the deploy stops and the old version keeps running.
 
-**Register someone new.** Add your IP to the database's trusted sources (step 3.7),
-run step 8.3 for them, then remove your IP again. They can sign in straight away.
+**Register someone new.** Open the app's **Console** (step 8.1) and run step 8.4 for
+them. They can sign in straight away.
 
 **Roll back.** **App Platform** → **linck-api** → **Activity**. Find the last good
 deploy, open its **...** menu, choose **Rollback**. Then revert the bad commit on
@@ -304,6 +310,7 @@ The monthly bill is roughly:
   keeps each company's rows apart (no BYPASSRLS). The API refuses to start if it ever could.
 - Only the **migrate** job holds `linck_migrator`, the role that changes the database. The API never does.
 - `doadmin` is used only on your computer, only for step 4. It is not in App Platform.
+- Registering people (step 8) runs in the app's console as `linck_app` too. It needs nothing stronger.
 - `linck_identity` and `linck_audit` cannot sign in at all; they only own two
   database functions.
 - The Spaces key reaches one bucket. The bucket is private; files go out only

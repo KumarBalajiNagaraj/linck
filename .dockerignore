@@ -10,6 +10,7 @@
 !apps/api/alembic/
 !apps/api/app/
 !apps/api/scripts/bootstrap_roles.py
+!apps/api/scripts/create_org.py
 
 **/__pycache__
 **/*.pyc

@@ -1,5 +1,7 @@
 import type { Receipt, Trip } from '@linck/mock';
 import { words } from '../../i18n/words.js';
+import type { RecordProblem } from '../../shell/recordApi.js';
+import type { CustomerGap, OrderGap } from './salesApi.js';
 
 /**
  * The sales screens' words, in English and Tamil (LIN-23, docs/WRITING.md).
@@ -15,6 +17,111 @@ import { words } from '../../i18n/words.js';
 /** English needs "1 load" and "2 loads"; Tamil says லோடு for any count. */
 const loads = (n: number) => `${n} ${n === 1 ? 'load' : 'loads'}`;
 const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+
+/* ---------------------------------------------------------------- refusals */
+
+/** Who holds each key, in words a person knows. */
+const WHO_EN: Record<string, string> = {
+  'sales.customer.read': 'the sales desk',
+  'sales.customer.write': 'the sales desk',
+  'sales.order.read': 'the sales desk',
+  'sales.order.write': 'the sales desk',
+  'sales.order.approve': 'a sales manager',
+};
+const WHO_TA: Record<string, string> = {
+  'sales.customer.read': 'விற்பனைப் பிரிவு',
+  'sales.customer.write': 'விற்பனைப் பிரிவு',
+  'sales.order.read': 'விற்பனைப் பிரிவு',
+  'sales.order.write': 'விற்பனைப் பிரிவு',
+  'sales.order.approve': 'சேல்ஸ் மேனேஜர்',
+};
+
+/**
+ * A value the API would not store, said as the fix (docs/WRITING.md rule 3).
+ * `field` is the request's name for it. The API's own note is English for
+ * the log and is never shown.
+ */
+function invalidEn(field: string): string {
+  switch (field) {
+    case 'name':
+      return 'Type the name';
+    case 'gstin':
+      return 'Type the 15-letter GST no., or leave it blank';
+    case 'servedFromSiteId':
+    case 'siteId':
+      return 'Pick our site';
+    case 'creditLimit':
+      return 'Type the credit limit, like 5,00,000';
+    case 'paymentTermsDays':
+      return 'Credit days are 0 to 365';
+    case 'phone':
+      return 'Phone is up to 20 digits';
+    case 'contactName':
+      return 'Shorten the contact name';
+    case 'site':
+      return 'Shorten where to deliver';
+    case 'customerId':
+      return 'Pick the customer again';
+    case 'customerPoRef':
+      return 'Type their order no.';
+    case 'productCode':
+      return 'Pick the material';
+    case 'orderedUnits':
+      return 'Type the units, like 40';
+    case 'ratePerUnit':
+      return 'Type the rate, like 4,825.50';
+    case 'deliverBy':
+      return 'Pick the deliver-by date';
+    case 'deliverySite':
+      return 'Type where to deliver';
+    case 'reason':
+      return 'Shorten the reason';
+    default:
+      return 'Check the details, then try again';
+  }
+}
+function invalidTa(field: string): string {
+  switch (field) {
+    case 'name':
+      return 'பெயர் டைப் செய்யுங்கள்';
+    case 'gstin':
+      return '15 எழுத்து ஜிஎஸ்டி எண் டைப் செய்யுங்கள், அல்லது காலியாக விடுங்கள்';
+    case 'servedFromSiteId':
+    case 'siteId':
+      return 'நம் சைட்டைத் தேர்ந்தெடுங்கள்';
+    case 'creditLimit':
+      return 'கடன் வரம்பு டைப் செய்யுங்கள், உதா. 5,00,000';
+    case 'paymentTermsDays':
+      return 'கடன் நாட்கள் 0 முதல் 365 வரை';
+    case 'phone':
+      return 'போன் எண் 20 இலக்கங்களுக்குள்';
+    case 'contactName':
+      return 'தொடர்பு நபர் பெயரைச் சுருக்குங்கள்';
+    case 'site':
+      return 'டெலிவரி இடத்தைச் சுருக்குங்கள்';
+    case 'customerId':
+      return 'வாடிக்கையாளரை மீண்டும் தேர்ந்தெடுங்கள்';
+    case 'customerPoRef':
+      return 'அவர்கள் ஆர்டர் எண் டைப் செய்யுங்கள்';
+    case 'productCode':
+      return 'பொருளைத் தேர்ந்தெடுங்கள்';
+    case 'orderedUnits':
+      return 'யூனிட் டைப் செய்யுங்கள், உதா. 40';
+    case 'ratePerUnit':
+      return 'விலை டைப் செய்யுங்கள், உதா. 4,825.50';
+    case 'deliverBy':
+      return 'டெலிவரி கெடு தேதியைத் தேர்ந்தெடுங்கள்';
+    case 'deliverySite':
+      return 'டெலிவரி இடம் டைப் செய்யுங்கள்';
+    case 'reason':
+      return 'காரணத்தைச் சுருக்குங்கள்';
+    default:
+      return 'விவரங்களைச் சரிபார்த்து, மீண்டும் முயலுங்கள்';
+  }
+}
+
+/** Which record a refusal is about: it says "this order" or "this customer". */
+type Subject = 'customer' | 'order';
 
 /* ------------------------------------------------------------ shared words */
 
@@ -57,6 +164,41 @@ export const salesWords = words({
       payments: 'Payments received',
       salesDesk: 'Loads, orders and invoices',
     },
+    save: 'Save',
+    cancel: 'Cancel',
+    saving: 'Saving…',
+    retry: 'Try again',
+    stillNeeded: (list: string[]) => `Still needed: ${list.join(', ')}`,
+    /**
+     * Why a customer or an order could not be saved, read or moved: live, the
+     * API's refusal, or the API not answering. `status` is an order's status
+     * in words.
+     */
+    problem: (p: RecordProblem, subject: Subject, status: (s: string) => string): string => {
+      switch (p.code) {
+        case 'needs-permission':
+          return `Only ${WHO_EN[p.permission] ?? 'someone else'} can do this here.`;
+        case 'wrong-step':
+          return `Not now — this order is "${status(p.status)}".`;
+        case 'needs-reason':
+          return 'Write the reason, then reject.';
+        case 'gstin-used':
+          return `GST no. ${p.gstin} is already on another customer.`;
+        case 'gone':
+          return subject === 'order' ? 'This order is no longer here.' : 'This customer is no longer here.';
+        case 'invalid':
+          return `${invalidEn(p.field)}.`;
+        case 'signed-out':
+          return 'You were signed out. Sign in again.';
+        case 'offline':
+          return 'Linck did not answer. Check the internet, then try again.';
+        case 'server':
+          return p.status > 0 ? `Linck had a problem (error ${p.status}). Try again.` : 'Linck had a problem. Try again.';
+        // Not a refusal the sales desk's requests are ever given.
+        case 'vehicle-already-down':
+          return 'Check the details, then try again.';
+      }
+    },
   },
   ta: {
     eyebrow: 'விற்பனை',
@@ -90,6 +232,35 @@ export const salesWords = words({
       customers: 'வாடிக்கையாளர்கள்',
       payments: 'வந்த பணம்',
       salesDesk: 'லோடு, ஆர்டர், இன்வாய்ஸ்',
+    },
+    save: 'சேமி',
+    cancel: 'ரத்து',
+    saving: 'சேமிக்கிறது…',
+    retry: 'மீண்டும் முயல்',
+    stillNeeded: (list) => `இன்னும் தேவை: ${list.join(', ')}`,
+    problem: (p, subject, status) => {
+      switch (p.code) {
+        case 'needs-permission':
+          return `இதை ${WHO_TA[p.permission] ?? 'வேறொருவர்'} மட்டுமே செய்ய முடியும்.`;
+        case 'wrong-step':
+          return `இப்போது முடியாது — ஆர்டர் "${status(p.status)}" நிலையில் உள்ளது.`;
+        case 'needs-reason':
+          return 'காரணம் எழுதி, பிறகு நிராகரியுங்கள்.';
+        case 'gstin-used':
+          return `ஜிஎஸ்டி எண் ${p.gstin} ஏற்கனவே வேறொரு வாடிக்கையாளருக்கு உள்ளது.`;
+        case 'gone':
+          return subject === 'order' ? 'இந்த ஆர்டர் இப்போது இல்லை.' : 'இந்த வாடிக்கையாளர் இப்போது இல்லை.';
+        case 'invalid':
+          return `${invalidTa(p.field)}.`;
+        case 'signed-out':
+          return 'நீங்கள் வெளியேற்றப்பட்டீர்கள். மீண்டும் உள்நுழையுங்கள்.';
+        case 'offline':
+          return 'Linck பதில் தரவில்லை. இணையத்தைச் சரிபார்த்து, மீண்டும் முயலுங்கள்.';
+        case 'server':
+          return p.status > 0 ? `Linck-இல் பிழை (${p.status}). மீண்டும் முயலுங்கள்.` : 'Linck-இல் பிழை. மீண்டும் முயலுங்கள்.';
+        case 'vehicle-already-down':
+          return 'விவரங்களைச் சரிபார்த்து, மீண்டும் முயலுங்கள்.';
+      }
     },
   },
 });
@@ -150,6 +321,35 @@ export const customerWords = words({
     creditLimit: 'Credit limit',
     moneyDue: 'Money due',
     groups: { details: 'Details', money: 'Money', orders: 'Orders' },
+    /** Live: served from a site this person is not scoped to, so its name is not theirs to read. */
+    otherSite: 'Another site',
+    add: 'Add customer',
+    newTitle: 'New customer',
+    change: 'Change',
+    changeTitle: 'Change customer',
+    name: 'Name',
+    deliverTo: 'Deliver to',
+    contactName: 'Contact name',
+    phone: 'Phone',
+    creditLimitRupees: 'Credit limit ₹',
+    gstHint: 'Blank if they have none',
+    daysHint: '0 for cash',
+    needs: {
+      name: 'Name',
+      gstin: 'GST no.',
+      ourSite: 'Our site',
+      creditLimit: 'Credit limit',
+      creditDays: 'Credit days',
+    } satisfies Record<CustomerGap, string>,
+    wrong: {
+      gstin: 'Type all 15 letters and digits, or leave it blank.',
+      creditDays: '0 to 365 days.',
+      creditLimit: 'Type rupees, like 5,00,000.',
+    },
+    readAs: (v: string) => `Read as ${v}`,
+    cannotChange: 'Only the sales desk at its site can change this.',
+    loading: 'Getting the customers…',
+    failed: 'Could not get the customers.',
   },
   ta: {
     title: 'வாடிக்கையாளர்கள்',
@@ -167,6 +367,34 @@ export const customerWords = words({
     creditLimit: 'கடன் வரம்பு',
     moneyDue: 'பாக்கி',
     groups: { details: 'விவரம்', money: 'பணம்', orders: 'ஆர்டர்' },
+    otherSite: 'வேறு சைட்',
+    add: 'வாடிக்கையாளர் சேர்',
+    newTitle: 'புது வாடிக்கையாளர்',
+    change: 'மாற்று',
+    changeTitle: 'வாடிக்கையாளர் விவரம் மாற்று',
+    name: 'பெயர்',
+    deliverTo: 'டெலிவரி இடம்',
+    contactName: 'தொடர்பு நபர்',
+    phone: 'போன்',
+    creditLimitRupees: 'கடன் வரம்பு ₹',
+    gstHint: 'இல்லையென்றால் காலியாக விடுங்கள்',
+    daysHint: 'ரொக்கத்துக்கு 0',
+    needs: {
+      name: 'பெயர்',
+      gstin: 'ஜிஎஸ்டி எண்',
+      ourSite: 'நம் சைட்',
+      creditLimit: 'கடன் வரம்பு',
+      creditDays: 'கடன் நாட்கள்',
+    },
+    wrong: {
+      gstin: '15 எழுத்தும் எண்ணும் டைப் செய்யுங்கள், அல்லது காலியாக விடுங்கள்.',
+      creditDays: '0 முதல் 365 நாட்கள்.',
+      creditLimit: 'ரூபாய் டைப் செய்யுங்கள், உதா. 5,00,000.',
+    },
+    readAs: (v) => `${v} எனப் படித்தது`,
+    cannotChange: 'இதை அதன் சைட்டின் விற்பனைப் பிரிவு மட்டுமே மாற்ற முடியும்.',
+    loading: 'வாடிக்கையாளர்களை எடுக்கிறது…',
+    failed: 'வாடிக்கையாளர்களை எடுக்க முடியவில்லை.',
   },
 });
 
@@ -193,6 +421,32 @@ export const orderWords = words({
     rejectYes: 'Yes, reject',
     rejectWhat: (units: string, material: string, amount: string) => `${units} units of ${material} · ${amount}`,
     rejectNote: 'You cannot undo this. They must send a new order.',
+    /** Live: the API keeps why an order was turned down, and refuses one without a reason. */
+    reason: 'Reason (needed)',
+    add: 'Add order',
+    newTitle: 'New order',
+    theirRef: 'Their order no.',
+    pickCustomer: 'Pick the customer',
+    unitsLabel: 'Units',
+    rateLabel: 'Rate ₹ / unit',
+    needs: {
+      customer: 'Customer',
+      ref: 'Their order no.',
+      material: 'Material',
+      units: 'Units',
+      rate: 'Rate',
+      deliverBy: 'Deliver by',
+      deliverTo: 'Deliver to',
+      ourSite: 'Our site',
+    } satisfies Record<OrderGap, string>,
+    wrong: {
+      units: 'Type units, like 40.',
+      rate: 'Type rupees, like 4,825.50.',
+      deliverBy: 'Pick today or a later day.',
+    },
+    valueIs: (amount: string) => `Amount ${amount}`,
+    loading: 'Getting the orders…',
+    failed: 'Could not get the orders.',
   },
   ta: {
     title: 'ஆர்டர்கள்',
@@ -214,6 +468,31 @@ export const orderWords = words({
     rejectYes: 'ஆம், நிராகரி',
     rejectWhat: (units, material, amount) => `${material} ${units} யூனிட் · ${amount}`,
     rejectNote: 'இதை மாற்ற முடியாது. அவர்கள் புது ஆர்டர் தர வேண்டும்.',
+    reason: 'காரணம் (தேவை)',
+    add: 'ஆர்டர் சேர்',
+    newTitle: 'புது ஆர்டர்',
+    theirRef: 'அவர்கள் ஆர்டர் எண்',
+    pickCustomer: 'வாடிக்கையாளரைத் தேர்ந்தெடுங்கள்',
+    unitsLabel: 'யூனிட்',
+    rateLabel: 'யூனிட்டுக்கு விலை ₹',
+    needs: {
+      customer: 'வாடிக்கையாளர்',
+      ref: 'அவர்கள் ஆர்டர் எண்',
+      material: 'பொருள்',
+      units: 'யூனிட்',
+      rate: 'விலை',
+      deliverBy: 'டெலிவரி கெடு',
+      deliverTo: 'டெலிவரி இடம்',
+      ourSite: 'நம் சைட்',
+    },
+    wrong: {
+      units: 'யூனிட் டைப் செய்யுங்கள், உதா. 40.',
+      rate: 'ரூபாய் டைப் செய்யுங்கள், உதா. 4,825.50.',
+      deliverBy: 'இன்று அல்லது பிறகு ஒரு நாளைத் தேர்ந்தெடுங்கள்.',
+    },
+    valueIs: (amount) => `தொகை ${amount}`,
+    loading: 'ஆர்டர்களை எடுக்கிறது…',
+    failed: 'ஆர்டர்களை எடுக்க முடியவில்லை.',
   },
 });
 

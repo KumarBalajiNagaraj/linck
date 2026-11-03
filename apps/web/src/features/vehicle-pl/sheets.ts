@@ -142,6 +142,17 @@ export function rereadPl(client: QueryClient): void {
   void client.invalidateQueries({ queryKey: [PL] });
 }
 
+/**
+ * After a delete: the record is not there, for whoever had it, and is not
+ * asked for again while its page is still open on the way back to its list;
+ * everything else under Vehicle P&L is read again.
+ */
+export function forgetPl(client: QueryClient, kind: 'sheet' | 'invoice', id: string): void {
+  const gone = (key: QueryKey) => key[0] === PL && key[2] === kind && key[3] === id;
+  for (const q of client.getQueryCache().findAll({ queryKey: [PL] })) if (gone(q.queryKey)) client.setQueryData(q.queryKey, null);
+  void client.invalidateQueries({ queryKey: [PL], predicate: (q) => !gone(q.queryKey) });
+}
+
 /* ----------------------------------------------------------- the sheets */
 
 const NO_SHEETS: PlReport<PlSheetRow> = { rows: [], total: api.NO_TOTAL };
@@ -539,15 +550,13 @@ function useDemoDelete(): Move<PlSheetRecord, PlProblem | null> {
 
 function useLiveDelete(): Move<PlSheetRecord, PlProblem | null> {
   const client = useQueryClient();
-  const who = useWho();
   const mutation = useMutation({ mutationFn: (record: PlSheetRecord) => api.deleteSheet(record.id) });
   return {
     busy: mutation.isPending,
     run: async (record) => {
       try {
         await mutation.mutateAsync(record);
-        client.removeQueries({ queryKey: plKey(who, 'sheet', record.id) });
-        rereadPl(client);
+        forgetPl(client, 'sheet', record.id);
         return null;
       } catch (err) {
         rereadPl(client);
@@ -641,12 +650,15 @@ export const useMasterRefusal = create<{ problem: PlProblem | null; set: (p: PlP
 
 function useLiveMasterMoves(): MasterMoves {
   const client = useQueryClient();
+  const who = useWho();
   const problem = useMasterRefusal((s) => s.problem);
   const setProblem = useMasterRefusal((s) => s.set);
   const send = async <T>(request: Promise<T>, idOf: (made: T) => string): Promise<string | null> => {
     setProblem(null);
     try {
       const made = await request;
+      // The masters read again first, so the line's picker offers what it is about to pick.
+      await client.invalidateQueries({ queryKey: plKey(who, 'masters') });
       rereadPl(client);
       return idOf(made);
     } catch (err) {

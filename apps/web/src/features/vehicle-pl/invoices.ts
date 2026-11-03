@@ -18,7 +18,7 @@ import {
   type InvoiceResult,
   type TripFilter,
 } from './invoiceStore.js';
-import { plKey, ready, rereadPl, useLiveRead, useSettled, type Read } from './sheets.js';
+import { forgetPl, plKey, ready, rereadPl, useLiveRead, useSettled, type Read } from './sheets.js';
 
 /**
  * WHERE THE TRIP INVOICES COME FROM — picked once, here, by the mode, as
@@ -253,16 +253,25 @@ function useLiveInvoiceMoves(): InvoiceMoves {
     const had = client.getQueryData<PlInvoiceDetail>(plKey(who, 'invoice', id));
     return had ? api.withReceipts(had, m) : null;
   };
-  const removed = async (id: string) => {
-    await api.deleteDraft(id);
-    client.removeQueries({ queryKey: plKey(who, 'invoice', id) });
-    return null;
+  const removeMutation = useMutation({ mutationFn: (id: string) => api.deleteDraft(id) });
+  const remove: Move<string, InvoiceProblem | null> = {
+    busy: removeMutation.isPending,
+    run: async (id) => {
+      try {
+        await removeMutation.mutateAsync(id);
+        forgetPl(client, 'invoice', id);
+        return null;
+      } catch (err) {
+        rereadPl(client);
+        return api.invoiceProblemOf(err);
+      }
+    },
   };
   return {
     patch: useLiveWrite(({ id, patch }: { id: string; patch: PlInvoicePatch }) => api.patchDraft(id, patch)),
     issue: useLiveWrite((id: string) => api.issueInvoice(id)),
     cancel: useLiveWrite(({ id, reason }: { id: string; reason: string }) => api.cancelInvoice(id, reason)),
-    remove: useLiveWrite((id: string) => removed(id)),
+    remove,
     match: useLiveWrite(({ id, paymentId }: { id: string; paymentId: string | null }) => withMoney(id, api.matchMoney(id, paymentId ? { paymentId } : {}))),
     unmatch: useLiveWrite(({ id, receiptId }: { id: string; receiptId: string }) => withMoney(id, api.unmatchMoney(id, receiptId))),
   };

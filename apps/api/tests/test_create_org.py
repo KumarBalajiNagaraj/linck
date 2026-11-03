@@ -136,7 +136,7 @@ async def test_a_new_company_gets_its_entity_site_roles_and_admin(company, admin
         )
         assert cur.fetchall() == [("PLT-VGI", "Vaigai crusher plant", "crusher_plant", "33")]
 
-        # The roles seed_dev.py defines, each granting exactly what it grants for these modules.
+        # The roles app/domain/roles.py defines, each granting exactly what it grants for these modules.
         cur.execute("SELECT key, module FROM core.permissions")
         expected, _ = role_grants(ALL_MODULES, dict(cur.fetchall()))
         cur.execute(

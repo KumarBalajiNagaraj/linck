@@ -255,6 +255,12 @@ describe('money received', () => {
     const after = receiptsOf(undone.world, part);
     expect(after.receipts).toHaveLength(money.receipts.length - 1);
     expect(after.unmatched.some((u) => u.paymentId === money.receipts[0]!.paymentId)).toBe(true);
+    const zero = matchMoney(undone.world, part.id, { paymentId: money.receipts[0]!.paymentId, amount: '0.00' }, WHO, AT);
+    expect(zero).toMatchObject({ ok: false, problem: { code: 'invalid', field: 'amount', reason: 'more than zero' } });
+    if (!zero.ok) {
+      expect(invoiceProblemText(zero.problem, invoiceWords.en)).toBe('Type an amount above ₹0.');
+      expect(invoiceProblemText(zero.problem, invoiceWords.ta)).toBe('₹0-க்கு மேல் ஒரு தொகையை எழுதவும்.');
+    }
     const back = ok(matchMoney(undone.world, part.id, { paymentId: money.receipts[0]!.paymentId }, WHO, AT));
     expect(receiptsOf(back.world, part).received).toBe(money.received);
     const cancelled = ok(cancelInvoice(world, part.id, 'Wrong rate', WHO, AT));

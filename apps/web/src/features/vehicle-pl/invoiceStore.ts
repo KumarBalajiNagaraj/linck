@@ -540,6 +540,8 @@ export function matchMoney(world: World, id: string, body: { paymentId?: string 
   const due = invoiceDue(got.rec.total, receivedOf(world, id));
   if (!positive(c.free)) return { ok: false, problem: { code: 'payment-matched' } };
   if (!positive(due)) return { ok: false, problem: { code: 'invoice-paid' } };
+  // As the API: a typed amount of zero is refused in words, before "too much" is looked at.
+  if (body.amount && !positive(money(body.amount))) return { ok: false, problem: { code: 'invalid', field: 'amount', reason: 'more than zero' } };
   const less = decimal.cmp(decimal.dec(c.free), decimal.dec(due)) < 0 ? c.free : due;
   const take = body.amount ? money(body.amount) : less;
   if (!positive(take) || decimal.cmp(decimal.dec(take), decimal.dec(less)) > 0) return { ok: false, problem: { code: 'too-much', free: c.free, due } };

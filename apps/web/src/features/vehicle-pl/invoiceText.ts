@@ -14,7 +14,7 @@ export function invoiceProblemText(p: InvoiceProblem, w: InvoiceWords): string {
     case 'needs-permission':
       return p.permission === INVOICE_CANCEL ? w.errors.cancel : p.permission === RECEIVE ? w.errors.receive : p.permission === INVOICE_READ ? w.errors.read : w.errors.write;
     case 'invalid':
-      return p.field === 'reason' ? w.errors.reason : p.field === 'placeOfSupply' ? w.errors.placeOfSupply : w.errors.invalid;
+      return p.field === 'reason' ? w.errors.reason : p.field === 'placeOfSupply' ? w.errors.placeOfSupply : p.field === 'amount' ? w.errors.amount : w.errors.invalid;
     case 'trip-not-for-customer':
     case 'sale-not-gst':
     case 'sale-no-hsn':

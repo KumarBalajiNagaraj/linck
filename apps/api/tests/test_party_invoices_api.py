@@ -1022,6 +1022,12 @@ async def test_money_paid_on_the_trips_is_matched_when_issued_and_can_be_matched
     assert [(u["paymentId"], u["free"]) for u in money["unmatched"]] == [(receipt["paymentId"], "16290.00")]
     r = await api(book.accounts).post(url, json={"paymentId": receipt["paymentId"], "amount": "16290.01"})
     assert (r.status_code, problem(r)) == (409, {"code": "too-much", "free": "16290.00", "due": "16290.00"})
+    for zero in ("0", "0.00"):
+        r = await api(book.accounts).post(url, json={"paymentId": receipt["paymentId"], "amount": zero})
+        assert (r.status_code, problem(r)) == (
+            422,
+            {"code": "invalid", "field": "amount", "reason": "more than zero"},
+        ), "a zero is refused in words, not by the database"
     r = await api(book.accounts).post(url, json={"paymentId": receipt["paymentId"], "amount": "6290.00"})
     assert r.status_code == 200 and r.json()["received"] == "21290.00"
     r = await api(book.accounts).post(url, json={})

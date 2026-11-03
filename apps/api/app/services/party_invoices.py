@@ -697,6 +697,9 @@ async def _match(
             raise refuse({"code": "payment-matched"})
         if due <= 0:
             raise refuse({"code": "invoice-paid"})
+        if amount is not None and amount <= 0:
+            # The database holds every match above zero; a zero is answered here, in words.
+            raise invalid("amount", "more than zero")
         take = amount if amount is not None else min(c.free, due)
         if take > c.free or take > due:
             raise refuse({"code": "too-much", "free": money(c.free), "due": money(due)})

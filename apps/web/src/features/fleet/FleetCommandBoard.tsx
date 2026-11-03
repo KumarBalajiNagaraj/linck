@@ -1,9 +1,12 @@
 import { expensesForSite, fleetAttention } from '@linck/mock';
 import { AsOfStamp, PageHeader } from '@linck/ui';
+import { LIVE } from '../../auth/api.js';
 import { useWords } from '../../i18n/words.js';
 import { DestinationRow, UrgentActionsRow, type BoardDestination, type UrgentAction } from '../../shell/CommandBoard.js';
 import { useApp } from '../../shell/store.js';
 import { useBills } from '../expenses/bills.js';
+import { downAt } from './breakdownApi.js';
+import { useBreakdowns } from './breakdowns.js';
 import { boardWords, fleetWords } from './words.js';
 
 /**
@@ -32,6 +35,14 @@ export function FleetCommandBoard() {
   // rather than the seeded dataset.
   const { bills } = useBills();
   const expensesAwaiting = expensesForSite(siteScope, 'fleet', bills).filter((e) => e.status === 'submitted').length;
+  // Live, the vehicle list is still sample data but the breakdown register is
+  // the API's, so "Broken down" counts the register's breakdowns not fixed and
+  // opens that list — the number on the card is the rows behind the click.
+  // The demo counts its sample vehicles off the road, as it always has.
+  const breakdowns = useBreakdowns().rows;
+  const broken: Pick<UrgentAction, 'count' | 'to' | 'view'> = LIVE
+    ? { count: downAt(breakdowns, siteScope), to: '/fleet/breakdowns', view: 'live' }
+    : { count: counts.breakdown, to: '/fleet/vehicles', view: 'breakdown' };
 
   const destinations: BoardDestination[] = [
     { label: t.go.vehicles, to: '/fleet/vehicles' },
@@ -48,12 +59,10 @@ export function FleetCommandBoard() {
   const urgent: UrgentAction[] = [
     {
       label: t.cards.breakdown[0],
-      count: counts.breakdown,
       definition: t.cards.breakdown[1],
       priority: 'highest',
       accent: 'critical',
-      to: '/fleet/vehicles',
-      view: 'breakdown',
+      ...broken,
     },
     {
       // Idle AND roadworthy: a tipper idle only because its permit lapsed is

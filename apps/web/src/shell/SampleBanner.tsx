@@ -6,13 +6,15 @@ import { shellWords } from './words.js';
  * The top of a live screen that is not on the API yet: it says, plainly, that
  * what follows is sample data. The hatch is the design's mark for "asserted
  * but not yet true" (packages/tokens LAW 3), which is exactly what a sample
- * figure on a real company's screen is.
+ * figure on a real company's screen is. A board with some counts on the API
+ * names them: "Sample data, except the bills and breakdowns."
  */
 export function SampleBanner({ route }: { route: string }) {
   const t = useWords(shellWords).sample;
   const connection = connectionOf(route);
   if (connection === 'api') return null;
-  const [lead, rest] = connection === 'bills' ? [t.exceptBills, t.restNotConnected] : [t.lead, t.notConnected];
+  const [lead, rest] =
+    typeof connection === 'object' ? [t.except(connection.except.map((part) => t.parts[part])), t.restNotConnected] : [t.lead, t.notConnected];
   return (
     <div
       role="note"

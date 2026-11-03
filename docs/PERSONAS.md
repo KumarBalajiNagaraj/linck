@@ -32,7 +32,7 @@ Counting the individual asks in the original brief: **15 built, 16 mock-only, 38
 | Maintenance | 7 (borrowed) | No role of their own, and nowhere to record a repair. |
 | Stores | 4 | Approves indents and uploads the workshop's expense bills. Cannot raise an indent, receive goods, or see an item or a vendor. |
 | Production | 3 | The joint-production model is the best-served thing here. Boulder receipt is missing. |
-| Sales | 8 | Lands on their own command board. Can review and approve customer orders; cannot take a new order or raise an invoice. |
+| Sales | 8 | Lands on their own command board. Keeps the customer list, and takes, approves and rejects orders (live, on the API); cannot raise an invoice. |
 | Driver | 1 (plus one 404) | Effectively not built. |
 | Team admin | 1 | Backend finished, frontend absent. |
 
@@ -148,7 +148,7 @@ This is the strongest persona in the product, and the reasons are specific:
 | 2 | Make "raise an indent" actually raise one — the button has no handler and the palette advertises it | S |
 | 3 | Reconcile the frontend fleet persona with the seeded backend role — they disagree on three permissions | S |
 | 4 | Driver attendance screen — the generator and the chart exist; only the marking action is missing | M |
-| 5 | Breakdown lifecycle: reason code, repair job, per-vehicle Pareto. A read-only breakdown register with downtime and repair cost exists; recording and closing a breakdown there does not | M |
+| 5 | Breakdown lifecycle: reason code, repair job, per-vehicle Pareto. The breakdown register exists, and live a breakdown is recorded, sent to the workshop, costed and closed there, on the API; reason codes, the repair job and the Pareto do not | M |
 | 6 | Service records and schedule — three of the brief's asks rest on this | L |
 | 7 | **Tyre register** — serialised fitment by axle position, km at fit and removal, cost per km | L |
 | 8 | Per-vehicle cost view: diesel, DEF, tyres, services and renewals in one place, per km and per tonne | L |
@@ -164,7 +164,7 @@ This is the strongest persona in the product, and the reasons are specific:
 
 **What exists.** Breakdown is a first-class urgency on the indent queue, and the queue sorts urgency above age. Crusher stoppage capture on the shift form is wear-part specific — jaw plate change, cone liner wear, belt slip — and downtime hours without a reason is the only thing that blocks a save on that screen.
 
-**What does not.** Job cards. Service history. Any asset record for the work to hang off — "Jaw + VSI — KRP 250TPH" exists only as text on three indent rows, and the sheet's "also queued against this asset" works by string equality. "Report breakdown" on Vehicle status is one-way: there is no way to set under-service, no way to clear a breakdown, and no record of what was done.
+**What does not.** Job cards. Service history. Any asset record for the work to hang off — "Jaw + VSI — KRP 250TPH" exists only as text on three indent rows, and the sheet's "also queued against this asset" works by string equality. "Report breakdown" on Vehicle status is one-way: there is no way to set under-service, no way to clear a breakdown there, and no record of what was done. Live, the breakdown register records a breakdown and closes it with its repair cost, but nothing yet joins it to the vehicle's status or to a job.
 
 **Next, in order.**
 
@@ -263,7 +263,7 @@ This is the best-served domain model in the product:
 **Built for them.** The dispatch board, the invoice ledger, the stock board, the e-way bill console, and the vehicle list (to see which lorries are free — not the fleet manager's command board).
 
 - **The sales command board** (`/sales/board`, their landing page) — five urgent-action counts (unraised invoices, orders pending approval, dispatches unconfirmed or delayed, invoices overdue, stock below safety level), each opening its own pre-filtered list via `?view=`, over a row of links to Material Stock, Customers, Purchase Orders, Material Dispatch and Invoices.
-- **Customer and purchase-order databases** (`/sales/customers`, `/sales/orders`) on seeded mock data, with approve / reject on an order awaiting sign-off.
+- **Customer and purchase-order databases** (`/sales/customers`, `/sales/orders`), with approve / reject on an order awaiting sign-off. Live they are on the API: the desk adds and changes customers and takes orders, a rejection keeps its reason, and a customer's money due is left out until invoices are on the API too. The demo shows seeded data.
 
 - **The trip cost sheet** — revenue and cash cost on one page per load, with named handling for the three kinds of load that earn nothing: returned, cancelled, own-use. A returned load shows zero revenue against full cost, which is exactly the number the business needs to see.
 - **Quantity basis rides beside every quantity**, and weighbridge variance is drawn as a trend rather than an invoice block. Moisture alone moves apparent density 8–15%.
@@ -278,7 +278,7 @@ This is the best-served domain model in the product:
 | Transport costing in detail | Partial — the numbers are pre-computed, not derived from a duty log |
 | e-Way bill after loading | Partial — Part B can be keyed; **Part A cannot be raised**, which is literally the ask |
 | Coordinate with production on loading | Partial |
-| **Receives orders** | Partial — customer purchase orders can be listed, approved and rejected (mock data); taking a new order is not built |
+| **Receives orders** | Partial — live, an order is taken, approved or rejected on the API; nothing is loaded against it yet, because dispatch is still mock |
 | **Orders drivers to do the transport** | **Not started** — the driver is inherited from the vehicle and rendered read-only |
 | Generates invoices | Not started — and neither the persona nor the backend role grants invoice-write to sales |
 | Payment type flexibility | Partial — only a method field |
@@ -359,7 +359,7 @@ And the delegation the owner actually asked for — "admins in *their* team" —
 
 ## The three things that block everything else
 
-**1. Wire the web app to the API.** Every roadmap item above is a mock until this happens. The cutover is four steps, written in the header of `apps/web/src/auth/session.ts`: ship the endpoint, await it before mounting the router, feed the mapper into the store while deleting both demo switchers, then migrate screens off mock data one at a time. LIN-21 did the first three: with `VITE_API_URL` set, people sign in and the shell runs on the real session. The fourth has begun with the expense chain, from upload to payment; every screen still on mock data says so in a banner. The rest of the fourth is what remains. Diesel entry is the right next screen — highest frequency, and named in Phase 1 as a paper-replacing surface.
+**1. Wire the web app to the API.** Every roadmap item above is a mock until this happens. The cutover is four steps, written in the header of `apps/web/src/auth/session.ts`: ship the endpoint, await it before mounting the router, feed the mapper into the store while deleting both demo switchers, then migrate screens off mock data one at a time. LIN-21 did the first three: with `VITE_API_URL` set, people sign in and the shell runs on the real session. The fourth has begun with the expense chain, from upload to payment, then customers, orders and the breakdown register; every screen still on mock data says so in a banner. The rest of the fourth is what remains. Diesel entry is the right next screen — highest frequency, and named in Phase 1 as a paper-replacing surface.
 
 **2. Migrate the finance slice.** The owner's hard rule — an invoice does not close until payment is cross-verified — is currently a UI convention that a page refresh erases. It becomes real as a database trigger. The same migration is what makes the P&L possible.
 

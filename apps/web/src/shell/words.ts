@@ -1,6 +1,10 @@
 import type { Alert } from '@linck/mock';
 import type { Density } from '@linck/tokens';
 import { words } from '../i18n/words.js';
+import type { RealPart } from './connected.js';
+
+/** "bills", "bills and breakdowns", "bills, breakdowns and orders". */
+const andList = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
 
 /** The shell's words: top bar, menus, alerts, the session sheet. */
 export const shellWords = words({
@@ -63,7 +67,9 @@ export const shellWords = words({
     sample: {
       lead: 'Sample data.',
       notConnected: 'This screen is not connected to your company yet.',
-      exceptBills: 'Sample data, except the bills.',
+      /** A screen whose named counts are the API's, and the rest sample (shell/connected.ts). */
+      except: (parts: string[]) => `Sample data, except the ${andList(parts)}.`,
+      parts: { bills: 'bills', breakdowns: 'breakdowns', orders: 'orders' } satisfies Record<RealPart, string>,
       restNotConnected: 'The rest is not connected to your company yet.',
     },
     board: {
@@ -148,7 +154,8 @@ export const shellWords = words({
     sample: {
       lead: 'மாதிரி விவரங்கள்.',
       notConnected: 'இந்தப் பக்கம் இன்னும் உங்கள் நிறுவனத்துடன் இணைக்கப்படவில்லை.',
-      exceptBills: 'பில்கள் தவிர, மற்றவை மாதிரி விவரங்கள்.',
+      except: (parts) => `${parts.join(', ')} தவிர, மற்றவை மாதிரி விவரங்கள்.`,
+      parts: { bills: 'பில்கள்', breakdowns: 'பழுதுகள்', orders: 'ஆர்டர்கள்' },
       restNotConnected: 'அவை இன்னும் உங்கள் நிறுவனத்துடன் இணைக்கப்படவில்லை.',
     },
     board: {

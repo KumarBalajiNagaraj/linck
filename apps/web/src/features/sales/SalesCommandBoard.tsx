@@ -3,6 +3,7 @@ import { AsOfStamp, PageHeader } from '@linck/ui';
 import { useWords } from '../../i18n/words.js';
 import { DestinationRow, UrgentActionsRow, type BoardDestination, type UrgentAction } from '../../shell/CommandBoard.js';
 import { useApp } from '../../shell/store.js';
+import { ordersAt, useOrders } from './orders.js';
 import { boardWords, salesWords } from './words.js';
 
 /**
@@ -23,6 +24,10 @@ export function SalesCommandBoard() {
   const t = useWords(boardWords);
   const s = useWords(salesWords);
   const counts = salesAttention(siteScope);
+  // Orders to approve read the list the orders screen reads: the sample
+  // orders in the demo, live the API's. The other counts are sample data
+  // until loads, invoices and stock are on the API (shell/connected.ts).
+  const ordersWaiting = ordersAt(useOrders().rows, siteScope).filter((p) => p.status === 'pending_approval').length;
 
   // Every non-zero card spends colour — red for the one the brief calls
   // Highest, amber for the rest.
@@ -40,7 +45,7 @@ export function SalesCommandBoard() {
     {
       // Customer purchase orders awaiting sign-off before anything is loaded.
       label: t.toApprove.label,
-      count: counts.ordersPendingApproval,
+      count: ordersWaiting,
       definition: t.toApprove.definition,
       priority: 'high',
       accent: 'attention',
